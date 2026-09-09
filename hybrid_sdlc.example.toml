@@ -1,0 +1,71 @@
+# Hybrid SDLC Toolkit — Example Configuration File
+# Copy this file to hybrid_sdlc.toml in your repository root to configure local inference and test runners.
+
+selected_model = "Qwen/Qwen2.5-Coder-32B-Instruct"
+max_retries = 3
+task_timeout_seconds = 600
+attempt_timeout_seconds = 180
+
+# Candidate local OpenAI-compatible inference servers
+[[server_candidates]]
+url = "http://127.0.0.1:8090/v1"
+model_alias = "Qwen/Qwen2.5-Coder-32B-Instruct"
+
+[[server_candidates]]
+url = "http://127.0.0.1:8089/v1"
+model_alias = "Qwen/Qwen2.5-Coder-14B-Instruct"
+
+# -----------------------------------------------------------------------------
+# Named Command Profiles
+# IMPORTANT: These profiles execute within your trusted repository environment.
+# They are not an OS sandbox; tests run with current user permissions.
+# -----------------------------------------------------------------------------
+
+# Python / Pytest
+[command_profiles.pytest]
+argv = ["pytest", "-v"]
+cwd = "."
+timeout_seconds = 180
+env_allowlist = ["PYTEST_ADDOPTS", "PYTHONPATH"]
+
+# Python / Unittest
+[command_profiles.unittest]
+argv = ["python", "-m", "unittest", "discover", "-s", "tests"]
+cwd = "."
+timeout_seconds = 180
+env_allowlist = ["PYTHONPATH"]
+
+# Node / NPM
+[command_profiles.npm]
+argv = ["npm", "test"]
+cwd = "."
+timeout_seconds = 180
+env_allowlist = ["NODE_ENV"]
+
+# Node / PNPM
+[command_profiles.pnpm]
+argv = ["pnpm", "test"]
+cwd = "."
+timeout_seconds = 180
+env_allowlist = ["NODE_ENV"]
+
+# Node / Vitest
+[command_profiles.vitest]
+argv = ["npx", "vitest", "run"]
+cwd = "."
+timeout_seconds = 180
+env_allowlist = ["NODE_ENV"]
+
+# Rust / Cargo
+[command_profiles.cargo]
+argv = ["cargo", "test"]
+cwd = "."
+timeout_seconds = 300
+env_allowlist = ["RUST_BACKTRACE"]
+
+# Go
+[command_profiles.go]
+argv = ["go", "test", "./..."]
+cwd = "."
+timeout_seconds = 180
+env_allowlist = ["GO111MODULE", "GOPROXY"]
