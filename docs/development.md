@@ -98,6 +98,22 @@ uv run pytest --cov=hybrid_sdlc.security tests/unit/test_security.py
 3. Run the full quality gate.
 4. Update `docs/implementation_tasks.md` to mark the task complete.
 
+## Protected `main` Workflow
+
+Direct development on `main` is disabled. Start each phase or focused task from an up-to-date
+`main`, push the branch, and merge it through a pull request only after all required CI checks
+pass:
+
+```bash
+git switch main
+git pull --ff-only origin main
+git switch -c <task-branch>
+git push -u origin <task-branch>
+```
+
+Do not force-push `main` or bypass its ruleset. CI check names used by the ruleset should remain
+stable; rename them only alongside an intentional ruleset update.
+
 ---
 
 ## Project Layout
