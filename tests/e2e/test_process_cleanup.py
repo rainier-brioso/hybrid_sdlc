@@ -1,4 +1,4 @@
-﻿"""End-to-end tests for cancellation and descendant cleanup (HSDLC-036).
+"""End-to-end tests for cancellation and descendant cleanup (HSDLC-036).
 
 Verifies: interrupting a run terminates fake Aider, test command, and
 grandchildren. Terminal state and lock release are verified after cancellation.
@@ -185,7 +185,7 @@ def test_cancellation_grandchild_cleanup(tmp_path: Path) -> None:
         "env['GC_PID_FILE'] = grandchild_pid_file\n"
         "subprocess.Popen(\n"
         "    [sys.executable, '-c',\n"
-        "     'import os, time; open(os.environ[\"GC_PID_FILE\"], \"w\").write(str(os.getpid())); time.sleep(120)'],\n"
+        '     \'import os, time; open(os.environ["GC_PID_FILE"], "w").write(str(os.getpid())); time.sleep(120)\'],\n'
         "    env=env,\n"
         "    creationflags=getattr(os, 'CREATE_NEW_PROCESS_GROUP', 0)\n"
         ")\n"
