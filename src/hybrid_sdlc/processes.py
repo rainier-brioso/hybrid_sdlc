@@ -269,17 +269,17 @@ def run_bounded_subprocess(
 
     deadline = time.monotonic() + timeout_seconds
     try:
-        while proc.poll() is None:
+        while True:
             if cancel_event is not None and cancel_event.is_set():
                 cancelled = True
+                break
+            if proc.poll() is not None:
                 break
             remaining = deadline - time.monotonic()
             if remaining <= 0:
                 timed_out = True
                 break
-            _end = time.monotonic() + 0.05
-            while proc.poll() is None and time.monotonic() < _end:
-                time.sleep(0.01)
+            time.sleep(0.01)
     except KeyboardInterrupt:
         cancelled = True
     finally:
