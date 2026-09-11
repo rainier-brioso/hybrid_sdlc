@@ -9,10 +9,7 @@ import threading
 import time
 from dataclasses import dataclass
 from pathlib import Path
-from typing import TYPE_CHECKING, Any
-
-if TYPE_CHECKING:
-    import ctypes as _ctypes
+from typing import Any
 
 from hybrid_sdlc.errors import ProcessExecutionError
 
