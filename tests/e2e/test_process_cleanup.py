@@ -172,15 +172,31 @@ def test_cancellation_during_tests_terminates_process(tmp_path: Path) -> None:
 
 def test_cancellation_grandchild_cleanup(tmp_path: Path) -> None:
     repo = create_spec_repo(tmp_path)
-    helpers = repo / "helpers"
-    helpers.mkdir()
+    config_dir = repo / ".hybrid_sdlc"
+    config_dir.mkdir(exist_ok=True)
 
-    # Use the shared fake-aider spawn-child scenario.
-    fake_aider = helpers / "fake_aider.py"
+    # Create a self-contained script that spawns a grandchild process.
+    gc_pid_path = str(repo / "grandchild.pid")
+    fake_aider = config_dir / "fake_aider_grandchild.py"
     fake_aider.write_text(
-        f"import sys; sys.path.insert(0, '{helpers.parent.as_posix()}'); "
-        "from helpers.fake_aider import main; "
-        'main(["spawn-child", "--output-dir", "."])\n',
+        f"import sys, os, subprocess, signal, time\n"
+        f"grandchild_pid_file = {gc_pid_path!r}\n"
+        "env = os.environ.copy()\n"
+        "env['GC_PID_FILE'] = grandchild_pid_file\n"
+        "subprocess.Popen(\n"
+        "    [sys.executable, '-c',\n"
+        "     'import os, time; open(os.environ[\"GC_PID_FILE\"], \"w\").write(str(os.getpid())); time.sleep(120)'],\n"
+        "    env=env,\n"
+        "    creationflags=getattr(os, 'CREATE_NEW_PROCESS_GROUP', 0)\n"
+        ")\n"
+        "print('[fake-aider] Spawned grandchild process')\n"
+        "interrupted = False\n"
+        "def handler(sig, frame):\n"
+        "    global interrupted\n"
+        "    interrupted = True\n"
+        "signal.signal(signal.SIGTERM, handler)\n"
+        "while not interrupted:\n"
+        "    time.sleep(0.5)\n",
         encoding="utf-8",
     )
 
@@ -194,7 +210,7 @@ def test_cancellation_grandchild_cleanup(tmp_path: Path) -> None:
     cancel = threading.Event()
 
     def cancel_quickly() -> None:
-        time.sleep(0.2)
+        time.sleep(1.0)
         cancel.set()
 
     thread = threading.Thread(target=cancel_quickly, daemon=True)
