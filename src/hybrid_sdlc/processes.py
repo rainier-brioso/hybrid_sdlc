@@ -117,6 +117,31 @@ class _WindowsJobObject:
         self.handle = None
 
 
+def process_is_alive(pid: int) -> bool:
+    """Check if a process with the given PID is alive (cross-platform)."""
+    if os.name == "nt":
+        try:
+            import ctypes
+
+            kernel32 = ctypes.windll.kernel32  # type: ignore[attr-defined]
+            process_query_limited_information = 0x00001000  # noqa: N806
+            handle = kernel32.OpenProcess(process_query_limited_information, False, pid)
+            if handle:
+                kernel32.CloseHandle(handle)
+                return True
+            return False
+        except Exception:
+            return False
+    else:
+        try:
+            os.kill(pid, 0)
+            return True
+        except ProcessLookupError:
+            return False
+        except OSError:
+            return False
+
+
 def kill_process_tree(proc: subprocess.Popen[bytes]) -> None:
     """Forcefully terminate a process and all its descendants across OS platforms."""
     pid = proc.pid

@@ -25,6 +25,7 @@ from helpers.repositories import (
 from hybrid_sdlc.aider_runner import run_bounded_loop
 from hybrid_sdlc.command_profiles import CommandProfile
 from hybrid_sdlc.models import RunStatus
+from hybrid_sdlc.processes import process_is_alive
 
 
 class TestRepositoryFactories:
@@ -364,13 +365,7 @@ class TestFakeAiderScenarios:
         assert gc_pid_file.exists(), "spawn-child should have written grandchild.pid"
         gc_pid = int(gc_pid_file.read_text().strip())
         # After cancellation, grandchild should be dead.
-        import ctypes
-
-        kernel32 = ctypes.windll.kernel32
-        PROCESS_QUERY_LIMITED_INFORMATION = 0x00001000  # noqa: N806
-        handle = kernel32.OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION, False, gc_pid)
-        if handle:
-            kernel32.CloseHandle(handle)
+        if process_is_alive(gc_pid):
             raise AssertionError(f"Grandchild process {gc_pid} survived")
 
     def test_e2e_fake_aider_edit_success(self, tmp_path: Path) -> None:

@@ -6,7 +6,6 @@ grandchildren. Terminal state and lock release are verified after cancellation.
 
 from __future__ import annotations
 
-import ctypes
 import os
 import signal
 import sys
@@ -21,6 +20,7 @@ from hybrid_sdlc.aider_runner import run_bounded_loop
 from hybrid_sdlc.command_profiles import CommandProfile
 from hybrid_sdlc.git_tools import acquire_repo_lock
 from hybrid_sdlc.models import RunStatus
+from hybrid_sdlc.processes import process_is_alive
 
 
 def _record_pid_file(path: Path, pid: int) -> None:
@@ -160,13 +160,7 @@ def test_cancellation_during_tests_terminates_process(tmp_path: Path) -> None:
     test_pid_file = repo / "test.pid"
     if test_pid_file.exists():
         test_pid = int(test_pid_file.read_text().strip())
-        import ctypes
-
-        kernel32 = ctypes.windll.kernel32
-        PROCESS_QUERY_LIMITED_INFORMATION = 0x00001000  # noqa: N806
-        handle = kernel32.OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION, False, test_pid)
-        if handle:
-            kernel32.CloseHandle(handle)
+        if process_is_alive(test_pid):
             raise AssertionError(f"Test process {test_pid} survived cancellation")
 
 
@@ -243,17 +237,9 @@ def test_cancellation_grandchild_cleanup(tmp_path: Path) -> None:
         except ProcessLookupError:
             pass  # Expected: process was terminated
         except OSError:
-            import ctypes
-
-            kernel32 = ctypes.windll.kernel32
-            PROCESS_QUERY_LIMITED_INFORMATION = 0x00001000  # noqa: N806
-            handle = kernel32.OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION, False, gc_pid)
-            if handle:
-                kernel32.CloseHandle(handle)
-                raise AssertionError(f"Grandchild process {gc_pid} is still alive") from None
-            pass  # Process doesn't exist
-        else:
-            raise AssertionError(f"Grandchild process {gc_pid} is still alive")
+            pass
+        if process_is_alive(gc_pid):
+            raise AssertionError(f"Grandchild process {gc_pid} is still alive") from None
 
 
 def test_terminal_state_after_cancellation_is_persisted(tmp_path: Path) -> None:
@@ -411,9 +397,5 @@ def test_spawn_child_pid_proves_alive_then_dead(tmp_path: Path) -> None:
     gc_pid = int(gc_pid_file.read_text().strip())
 
     # After cleanup, grandchild should be dead.
-    kernel32 = ctypes.windll.kernel32
-    PROCESS_QUERY_LIMITED_INFORMATION = 0x00001000  # noqa: N806
-    handle = kernel32.OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION, False, gc_pid)
-    if handle:
-        kernel32.CloseHandle(handle)
+    if process_is_alive(gc_pid):
         raise AssertionError(f"Grandchild process {gc_pid} survived cancellation")
