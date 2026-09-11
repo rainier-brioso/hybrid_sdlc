@@ -162,6 +162,7 @@ def test_cancellation_during_tests_terminates_process(tmp_path: Path) -> None:
     if test_pid_file.exists():
         test_pid = int(test_pid_file.read_text().strip())
         import ctypes
+
         kernel32 = ctypes.windll.kernel32
         PROCESS_QUERY_LIMITED_INFORMATION = 0x00001000
         handle = kernel32.OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION, False, test_pid)
@@ -228,6 +229,7 @@ def test_cancellation_grandchild_cleanup(tmp_path: Path) -> None:
             pass  # Expected: process was terminated
         except OSError:
             import ctypes
+
             kernel32 = ctypes.windll.kernel32
             PROCESS_QUERY_LIMITED_INFORMATION = 0x00001000
             handle = kernel32.OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION, False, gc_pid)
@@ -338,7 +340,7 @@ def test_spawn_child_pid_proves_alive_then_dead(tmp_path: Path) -> None:
         "env['GC_PID_FILE'] = grandchild_pid_file\n"
         "subprocess.Popen(\n"
         "    [sys.executable, '-c',\n"
-        "     'import os, time; open(os.environ[\"GC_PID_FILE\"], \"w\").write(str(os.getpid())); time.sleep(120)'],\n"
+        '     \'import os, time; open(os.environ["GC_PID_FILE"], "w").write(str(os.getpid())); time.sleep(120)\'],\n'
         "    env=env,\n"
         "    creationflags=getattr(os, 'CREATE_NEW_PROCESS_GROUP', 0)\n"
         ")\n"

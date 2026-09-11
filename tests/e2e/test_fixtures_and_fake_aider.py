@@ -326,7 +326,7 @@ class TestFakeAiderScenarios:
         fake_aider = helpers / "fake_aider.py"
         fake_aider.write_text(
             "import os, subprocess, sys, time\n"
-            f'pid_file = {repr(pid_file)}\n'
+            f"pid_file = {repr(pid_file)}\n"
             "# Write a file so git detects a diff\n"
             "with open('solution.py', 'w', encoding='utf-8') as f:\n"
             "    f.write('# Solution file\\nVALUE = 42\\n')\n"
@@ -365,6 +365,7 @@ class TestFakeAiderScenarios:
         gc_pid = int(gc_pid_file.read_text().strip())
         # After cancellation, grandchild should be dead.
         import ctypes
+
         kernel32 = ctypes.windll.kernel32
         PROCESS_QUERY_LIMITED_INFORMATION = 0x00001000
         handle = kernel32.OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION, False, gc_pid)
@@ -497,8 +498,7 @@ class TestFakeAiderScenarioIntegration:
         helpers.mkdir()
         fake_aider = helpers / "fake_aider.py"
         fake_aider.write_text(
-            "print('[fake-aider] Failed to edit', file=sys.stderr)\n"
-            "import sys; sys.exit(1)\n",
+            "print('[fake-aider] Failed to edit', file=sys.stderr)\nimport sys; sys.exit(1)\n",
             encoding="utf-8",
         )
 
