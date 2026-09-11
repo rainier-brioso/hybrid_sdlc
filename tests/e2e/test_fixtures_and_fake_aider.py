@@ -367,7 +367,7 @@ class TestFakeAiderScenarios:
         import ctypes
 
         kernel32 = ctypes.windll.kernel32
-        PROCESS_QUERY_LIMITED_INFORMATION = 0x00001000
+        PROCESS_QUERY_LIMITED_INFORMATION = 0x00001000  # noqa: N806
         handle = kernel32.OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION, False, gc_pid)
         if handle:
             kernel32.CloseHandle(handle)

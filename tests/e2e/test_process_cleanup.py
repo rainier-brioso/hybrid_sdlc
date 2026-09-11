@@ -1,4 +1,4 @@
-"""End-to-end tests for cancellation and descendant cleanup (HSDLC-036).
+﻿"""End-to-end tests for cancellation and descendant cleanup (HSDLC-036).
 
 Verifies: interrupting a run terminates fake Aider, test command, and
 grandchildren. Terminal state and lock release are verified after cancellation.
@@ -9,7 +9,6 @@ from __future__ import annotations
 import ctypes
 import os
 import signal
-import subprocess
 import sys
 import threading
 import time
@@ -164,7 +163,7 @@ def test_cancellation_during_tests_terminates_process(tmp_path: Path) -> None:
         import ctypes
 
         kernel32 = ctypes.windll.kernel32
-        PROCESS_QUERY_LIMITED_INFORMATION = 0x00001000
+        PROCESS_QUERY_LIMITED_INFORMATION = 0x00001000  # noqa: N806
         handle = kernel32.OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION, False, test_pid)
         if handle:
             kernel32.CloseHandle(handle)
@@ -231,11 +230,11 @@ def test_cancellation_grandchild_cleanup(tmp_path: Path) -> None:
             import ctypes
 
             kernel32 = ctypes.windll.kernel32
-            PROCESS_QUERY_LIMITED_INFORMATION = 0x00001000
+            PROCESS_QUERY_LIMITED_INFORMATION = 0x00001000  # noqa: N806
             handle = kernel32.OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION, False, gc_pid)
             if handle:
                 kernel32.CloseHandle(handle)
-                raise AssertionError(f"Grandchild process {gc_pid} is still alive")
+                raise AssertionError(f"Grandchild process {gc_pid} is still alive") from None
             pass  # Process doesn't exist
         else:
             raise AssertionError(f"Grandchild process {gc_pid} is still alive")
@@ -397,7 +396,7 @@ def test_spawn_child_pid_proves_alive_then_dead(tmp_path: Path) -> None:
 
     # After cleanup, grandchild should be dead.
     kernel32 = ctypes.windll.kernel32
-    PROCESS_QUERY_LIMITED_INFORMATION = 0x00001000
+    PROCESS_QUERY_LIMITED_INFORMATION = 0x00001000  # noqa: N806
     handle = kernel32.OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION, False, gc_pid)
     if handle:
         kernel32.CloseHandle(handle)

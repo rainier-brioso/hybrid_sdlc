@@ -8,7 +8,6 @@ Raw prompt persistence is confirmed disabled by default.
 from __future__ import annotations
 
 import json
-import os
 import sys
 from pathlib import Path
 
