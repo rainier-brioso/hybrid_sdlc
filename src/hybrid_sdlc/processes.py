@@ -277,10 +277,9 @@ def run_bounded_subprocess(
             if remaining <= 0:
                 timed_out = True
                 break
-            try:
-                proc.wait(timeout=min(0.05, remaining))
-            except subprocess.TimeoutExpired:
-                continue
+            _end = time.monotonic() + 0.05
+            while proc.poll() is None and time.monotonic() < _end:
+                time.sleep(0.01)
     except KeyboardInterrupt:
         cancelled = True
     finally:
