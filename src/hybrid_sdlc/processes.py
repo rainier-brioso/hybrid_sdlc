@@ -106,14 +106,14 @@ class _WindowsJobObject:
             return
         import ctypes
 
-        ctypes.windll.kernel32.TerminateJobObject(self.handle, 1)
+        ctypes.windll.kernel32.TerminateJobObject(self.handle, 1)  # type: ignore[attr-defined]
 
     def close(self) -> None:
         if not self.handle or os.name != "nt":
             return
         import ctypes
 
-        ctypes.windll.kernel32.CloseHandle(self.handle)
+        ctypes.windll.kernel32.CloseHandle(self.handle)  # type: ignore[attr-defined]
         self.handle = None
 
 
@@ -179,7 +179,7 @@ def run_bounded_subprocess(
 
     if os.name == "nt":
         # CREATE_SUSPENDED (0x4) or standard creation
-        popen_kwargs["creationflags"] = subprocess.CREATE_NEW_PROCESS_GROUP
+        popen_kwargs["creationflags"] = subprocess.CREATE_NEW_PROCESS_GROUP  # type: ignore[attr-defined]
     else:
         popen_kwargs["start_new_session"] = True
 
@@ -197,10 +197,10 @@ def run_bounded_subprocess(
         # Assign process to job object
         import ctypes
 
-        process_handle = ctypes.windll.kernel32.OpenProcess(0x1F0FFF, False, proc.pid)
+        process_handle = ctypes.windll.kernel32.OpenProcess(0x1F0FFF, False, proc.pid)  # type: ignore[attr-defined]
         if process_handle:
             job_obj.assign_process(process_handle)
-            ctypes.windll.kernel32.CloseHandle(process_handle)
+            ctypes.windll.kernel32.CloseHandle(process_handle)  # type: ignore[attr-defined]
 
     stdout_chunks: list[bytes] = []
     stderr_chunks: list[bytes] = []
