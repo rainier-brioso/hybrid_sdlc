@@ -9,7 +9,10 @@ import threading
 import time
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any
+from typing import TYPE_CHECKING, Any
+
+if TYPE_CHECKING:
+    import ctypes as _ctypes
 
 from hybrid_sdlc.errors import ProcessExecutionError
 
@@ -42,7 +45,7 @@ class _WindowsJobObject:
         import ctypes
         from ctypes import wintypes
 
-        kernel32 = ctypes.windll.kernel32
+        kernel32 = ctypes.windll.kernel32  # type: ignore[attr-defined]
 
         self.handle = kernel32.CreateJobObjectW(None, None)
         if not self.handle:
@@ -99,7 +102,7 @@ class _WindowsJobObject:
             return False
         import ctypes
 
-        return bool(ctypes.windll.kernel32.AssignProcessToJobObject(self.handle, process_handle))
+        return bool(ctypes.windll.kernel32.AssignProcessToJobObject(self.handle, process_handle))  # type: ignore[attr-defined]
 
     def terminate(self) -> None:
         if not self.handle or os.name != "nt":
