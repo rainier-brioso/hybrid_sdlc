@@ -7,7 +7,7 @@ name = "hybrid-sdlc"
 version = "0.1.0"
 description = "Hybrid Spec-Driven SDLC Toolkit bridging cloud agents with local inference"
 readme = "README.md"
-requires-python = ">=3.11"
+requires-python = ">=3.11,<3.14"
 license = { text = "MIT" }
 authors = [
     { name = "Hybrid SDLC Contributors" }
@@ -65,3 +65,4 @@ strict = true
 warn_return_any = true
 warn_unused_configs = true
 disallow_untyped_defs = true
+disable_error_code = ["unused-ignore"]

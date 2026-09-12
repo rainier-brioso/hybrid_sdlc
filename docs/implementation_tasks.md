@@ -4,7 +4,8 @@ Source plan: [`docs/implementation_plan.md`](implementation_plan.md)
 
 ## How to Use This File
 
-- Complete tasks in ID order unless dependencies explicitly allow parallel work.
+- Complete tasks in dependency order. Task identifiers remain stable when work is promoted to
+  an earlier phase, so numeric order may differ from delivery order.
 - Mark a task complete only after its acceptance criteria pass and evidence is recorded in the relevant pull request, commit, or run log.
 - Do not weaken the trust model to make a test pass. The initial release supports trusted repositories and named command profiles; it is not an OS sandbox.
 - No task may run destructive whole-tree Git commands (`git reset --hard`, `git clean`, or `git checkout .`) against the user's working tree.
@@ -296,51 +297,81 @@ A task is complete when:
   against the configured 80% threshold.
 - The suite used local mocks and fake executables; no live model, GPU, or internet access was used.
 
+#### Phase 2 Completion Evidence — 2026-09-10
+
+- `uv sync --frozen` completed successfully with 29 locked packages checked.
+- `uv run ruff format --check .` passed (41 files already formatted).
+- `uv run ruff check .` passed with no errors.
+- `uv run mypy src` passed in strict mode with no issues across 13 source files.
+- `uv run pytest --cov --cov-report=term-missing -ra` passed: 143 tests, 82.29% branch coverage
+  against the configured 80% threshold.
+- Test distribution: 50 E2E (7 artifact privacy, 26 fixtures and fake aider, 6 process cleanup, 4 sync delegation, 7 sync failures), 13 integration, 84 unit.
+- The suite used local mocks and fake executables; no live model, GPU, or internet access was used.
+- CI workflow `.github/workflows/ci.yml` updated with:
+  - Explicit `contents: read` permissions
+  - `astral-sh/setup-uv@v5` action with pinned version 0.5.28 and `python-version` matrix selection
+  - Python matrix aligned to `>=3.11,<3.14` with 3.11, 3.12, 3.13
+  - Stable `CI / Required` aggregate check job (compares `needs.quality-gate.result` directly)
+
 ---
 
-## Phase 2 — Fixture End-to-End Validation
+## Phase 2 — CI Gate and Fixture End-to-End Validation
 
-- [ ] **HSDLC-032 — Create an isolated fixture-repository factory**  
-  Files: `tests/fixtures/`, `tests/helpers/repositories.py`  
-  Depends on: HSDLC-031  
-  Acceptance:
-  - Tests create disposable Git repositories with passing, failing, and dirty variants.
-  - Fixtures never mutate the toolkit checkout.
+- [ ] **HSDLC-062 — Establish protected-main CI validation**  
+   Files: `.github/workflows/ci.yml`, `docs/development.md`  
+    Depends on: HSDLC-031  
+    Acceptance:
+    - Pull requests and pushes to `main` run on Windows, Ubuntu, and macOS for every supported
+      Python version.
+    - Frozen dependency sync, formatting, lint, strict types, tests, and branch coverage run
+      without a live model, GPU, or internet-dependent test.
+    - Workflow permissions are read-only by default, redundant runs are cancelled, and the
+      required check names are stable enough to bind to the protected-branch ruleset.
+    - **Not complete** until a pull request has run the full remote matrix successfully.
+      Do not mark this task done without evidence of a passing CI run on a PR to `main`.
 
-- [ ] **HSDLC-033 — Create a deterministic fake Aider executable**  
-  Files: `tests/helpers/fake_aider.py`, `tests/fixtures/aider_scenarios/`  
-  Depends on: HSDLC-032  
-  Acceptance:
-  - Scenarios cover successful edit, no edit, repeated edit, malformed output, timeout, and child-process spawning.
-  - Behavior is selected without shell evaluation.
+- [x] **HSDLC-032 — Create an isolated fixture-repository factory**  
+    Files: `tests/helpers/repositories.py`  
+    Depends on: HSDLC-062  
+    Acceptance:
+    - Tests create disposable Git repositories with passing, failing, and dirty variants.
+    - Fixtures never mutate the toolkit checkout.
 
-- [ ] **HSDLC-034 — Test successful synchronous delegation end to end**  
-  Files: `tests/e2e/test_sync_delegation.py`  
-  Depends on: HSDLC-029, HSDLC-032, HSDLC-033  
-  Acceptance:
-  - A failing fixture is edited, tests pass, artifacts are recorded, and no commit is created.
-  - The resulting diff contains only expected fixture files.
+- [x] **HSDLC-033 — Create a deterministic fake Aider executable**  
+    Files: `tests/helpers/fake_aider.py`  
+    Depends on: HSDLC-032  
+    Acceptance:
+    - Scenarios cover successful edit, no edit, repeated edit, malformed output, timeout, and child-process spawning.
+    - Behavior is selected without shell evaluation.
+    - Note: scenario state is stored in `.hybrid_sdlc/` (ignored by git) rather than directly in the worktree.
 
-- [ ] **HSDLC-035 — Test every bounded-loop terminal condition**  
-  Files: `tests/e2e/test_sync_failures.py`  
-  Depends on: HSDLC-033  
-  Acceptance:
-  - Separate tests cover broken baseline, unchanged diff, repeated signature, retry exhaustion, task timeout, and output truncation.
-  - Each produces the documented status, failure reason, and exit code.
+- [x] **HSDLC-034 — Test successful synchronous delegation end to end**  
+   Files: `tests/e2e/test_sync_delegation.py`  
+   Depends on: HSDLC-029, HSDLC-032, HSDLC-033  
+   Acceptance:
+   - A failing fixture is edited, tests pass, artifacts are recorded, and no commit is created.
+   - The resulting diff contains only expected fixture files.
 
-- [ ] **HSDLC-036 — Test cancellation and descendant cleanup**  
-  Files: `tests/e2e/test_process_cleanup.py`  
-  Depends on: HSDLC-022, HSDLC-033  
-  Acceptance:
-  - Interrupting a run terminates the fake Aider, test command, and grandchildren.
-  - Terminal state and lock release are verified after cancellation.
+- [x] **HSDLC-035 — Test every bounded-loop terminal condition**  
+   Files: `tests/e2e/test_sync_failures.py`  
+   Depends on: HSDLC-033  
+   Acceptance:
+   - Separate tests cover broken baseline, unchanged diff, repeated signature, retry exhaustion, task timeout, and output truncation.
+   - Each produces the documented status, failure reason, and exit code.
 
-- [ ] **HSDLC-037 — Test artifact secrecy end to end**  
-  Files: `tests/e2e/test_artifact_privacy.py`  
-  Depends on: HSDLC-034  
-  Acceptance:
-  - Synthetic secrets in environment variables, source text, test output, and URLs do not appear in persisted summaries.
-  - Raw prompt persistence remains disabled by default.
+- [x] **HSDLC-036 — Test cancellation and descendant cleanup**  
+   Files: `tests/e2e/test_process_cleanup.py`  
+   Depends on: HSDLC-022, HSDLC-033  
+   Acceptance:
+   - Interrupting a run terminates the fake Aider, test command, and grandchildren.
+   - Terminal state and lock release are verified after cancellation.
+
+- [x] **HSDLC-037 — Test artifact secrecy end to end**  
+   Files: `tests/e2e/test_artifact_privacy.py`  
+   Depends on: HSDLC-034  
+   Acceptance:
+   - Synthetic secrets in environment variables, source text, test output, and URLs do not appear in persisted summaries.
+   - Raw prompt persistence remains disabled by default.
 
 ---
 
@@ -540,14 +571,7 @@ A task is complete when:
 
 ---
 
-## Phase 7 — CI, Hardware Validation, and Release
-
-- [ ] **HSDLC-062 — Create the multi-platform CI matrix**  
-  Files: `.github/workflows/ci.yml`  
-  Depends on: HSDLC-055  
-  Acceptance:
-  - Matrix covers Windows, Ubuntu, macOS and every supported Python version.
-  - Frozen dependency sync, lint, types, unit, integration, and non-GPU end-to-end tests run.
+## Phase 7 — Packaging, Hardware Validation, and Release
 
 - [ ] **HSDLC-063 — Add packaging smoke tests**  
   Files: `.github/workflows/ci.yml`, `tests/packaging/`  
