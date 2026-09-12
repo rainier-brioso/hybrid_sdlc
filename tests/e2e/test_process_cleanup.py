@@ -13,7 +13,6 @@ import threading
 import time
 from pathlib import Path
 
-import pytest
 from helpers.repositories import create_spec_repo
 
 from hybrid_sdlc.aider_runner import run_bounded_loop
@@ -36,12 +35,14 @@ def test_cancellation_during_aider_terminates_process(tmp_path: Path) -> None:
     # Use a script that records its PID and waits, so we can prove termination.
     slow_aider = helpers / "slow_aider.py"
     slow_aider.write_text(
-        "import os, signal, time; "
-        'open("aider.pid", "w").write(str(os.getpid())); '
-        "done = False; "
-        "def h(s,f): nonlocal done; done=True; "
-        "signal.signal(signal.SIGTERM, h); "
-        "while not done: time.sleep(0.5)",
+        "import os, signal, time\n"
+        "open('aider.pid', 'w').write(str(os.getpid()))\n"
+        "state = {'done': False}\n"
+        "def h(s, f):\n"
+        "    state['done'] = True\n"
+        "signal.signal(signal.SIGTERM, h)\n"
+        "while not state['done']:\n"
+        "    time.sleep(0.5)\n",
         encoding="utf-8",
     )
 
@@ -85,8 +86,7 @@ def test_cancellation_during_aider_terminates_process(tmp_path: Path) -> None:
     if aider_pid_file.exists():
         aider_pid = int(aider_pid_file.read_text().strip())
         # The aider process should have been alive (started) and is now dead.
-        with pytest.raises(AssertionError):
-            os.kill(aider_pid, 0)
+        assert not process_is_alive(aider_pid), f"Aider process {aider_pid} survived cancellation"
     else:
         # Fallback: verify output shows cancellation.
         if result.attempts:
