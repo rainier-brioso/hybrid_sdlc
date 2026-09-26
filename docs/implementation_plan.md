@@ -408,7 +408,8 @@ closure are recorded in `docs/implementation_tasks.md`.
 
 ### 4.2 Multi-Platform CI Matrix
 - **Operating Systems**: `windows-latest`, `ubuntu-latest`, `macos-latest`.
-- **Python Versions**: `3.10`, `3.11`, `3.12`.
+- **Python Versions**: `3.11`, `3.12`, `3.13` through five targeted jobs rather than a full
+  operating-system-by-version cross product.
 - Path separator assertions: explicit verification that both Windows backslashes and POSIX forward slashes are handled without path syntax errors.
 
 ### 4.3 Manual & Hardware Verification

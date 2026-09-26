@@ -318,7 +318,7 @@ A task is complete when:
 
 ## Phase 2 — CI Gate and Fixture End-to-End Validation
 
-- [ ] **HSDLC-062 — Establish protected-main CI validation**  
+- [x] **HSDLC-062 — Establish protected-main CI validation**
    Files: `.github/workflows/ci.yml`, `docs/development.md`  
     Depends on: HSDLC-031  
     Acceptance:
@@ -328,8 +328,8 @@ A task is complete when:
       in the Windows/Python 3.12 quality job without a live model, GPU, or internet-dependent test.
     - Workflow permissions are read-only by default, redundant runs are cancelled, and the
       required check names are stable enough to bind to the protected-branch ruleset.
-    - **Not complete** until a pull request has run all remote jobs successfully.
-      Do not mark this task done without evidence of a passing CI run on a PR to `main`.
+    - Passing PR validation: https://github.com/rainier-brioso/hybrid_sdlc/actions/runs/36259293856
+      (Windows quality, Ubuntu/macOS compatibility, and `CI / Required` all succeeded).
 
 - [x] **HSDLC-032 — Create an isolated fixture-repository factory**  
     Files: `tests/helpers/repositories.py`  
