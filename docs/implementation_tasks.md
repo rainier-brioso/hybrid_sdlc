@@ -378,7 +378,7 @@ A task is complete when:
 
 ## Phase 3 — MCP and Asynchronous Job Lifecycle
 
-- [ ] **HSDLC-038 — Define the persisted job-state machine**  
+- [x] **HSDLC-038 — Define the persisted job-state machine**
   Files: `src/hybrid_sdlc/job_manager.py`, `tests/unit/test_job_manager.py`  
   Depends on: HSDLC-004, HSDLC-015  
   Acceptance:
