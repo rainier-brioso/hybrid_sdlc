@@ -572,7 +572,7 @@ A task is complete when:
 
 ---
 
-## Phase 7 — Packaging, Hardware Validation, and Release
+## Phase 7 — Packaging, Runtime Deployment, Hardware Validation, and Release
 
 - [ ] **HSDLC-063 — Add packaging smoke tests**  
   Files: `.github/workflows/ci.yml`, `tests/packaging/`  
@@ -581,27 +581,36 @@ A task is complete when:
   - Build wheel and source distribution, install each into a clean environment, and run both entry points.
   - Built distributions contain required templates and exclude tests, logs, weights, and local artifacts as intended.
 
-- [ ] **HSDLC-064 — Define the hardware benchmark protocol**  
-  Files: `benchmarks/README.md`, `benchmarks/benchmark_task.json`  
+- [x] **HSDLC-064 — Validate the portable llama.cpp deployment contract**  
+  Files: `compose.yaml`, `.env.example`, `config/model-profiles/`, `docs/llama-server-docker.md`, `tests/unit/test_repository_layout.py`  
   Depends on: HSDLC-034  
   Acceptance:
-  - Protocol pins model repository/revision, GGUF file, llama.cpp version, launch arguments, context, prompt, repository fixture, and ambient assumptions.
-  - Metrics include load VRAM, peak VRAM, prompt tokens/second, generation tokens/second, total duration, and success rate.
+  - Compose mounts model weights read-only, publishes only to host loopback, requests the NVIDIA GPU, and limits llama.cpp to one parallel request.
+  - Worker and interactive profiles are parseable, model paths remain user-owned configuration, and no weights or machine-specific paths are committed.
+  - GPU passthrough, `/health`, and `/v1/models` are verified on the RTX 3090 before the task is completed.
 
-- [ ] **HSDLC-065 — Benchmark the RTX 3090 candidate profile**  
-  Files: `benchmarks/results/rtx-3090-qwen25-coder-32b.json`, `docs/model-profiles.md`  
+- [ ] **HSDLC-065 — Define the hardware benchmark protocol**  
+  Files: `benchmarks/README.md`, `benchmarks/benchmark_task.json`  
   Depends on: HSDLC-064  
   Acceptance:
-  - Run at least three repetitions at the documented 16K context.
-  - Record weights, KV cache, compute-buffer, and total VRAM separately where tooling permits.
-  - Promote the profile to supported only if it completes without out-of-memory errors and meets documented stability thresholds.
+  - Protocol pins model repository/revision, GGUF file checksum, llama.cpp image/build, launch arguments, context, prompt, repository fixture, and ambient assumptions.
+  - Metrics include startup time, host committed memory, load/peak VRAM, prompt tokens/second, generation tokens/second, time-to-green, patch success rate, and total duration.
 
-- [ ] **HSDLC-066 — Benchmark and document the fallback profile**  
-  Files: `benchmarks/results/`, `docs/model-profiles.md`  
-  Depends on: HSDLC-064  
+- [ ] **HSDLC-066 — Benchmark Qwen 3.6 35B-A3B native versus Docker**  
+  Files: `benchmarks/results/rtx-3090-qwen36-35b-a3b-native.json`, `benchmarks/results/rtx-3090-qwen36-35b-a3b-docker.json`, `docs/model-profiles.md`  
+  Depends on: HSDLC-065  
   Acceptance:
-  - Uses the same protocol as the primary candidate.
-  - Documentation compares quality caveats, latency, memory, and context limits without unsupported generalization.
+  - Run at least three repetitions per runtime at the documented 16K worker context with identical weights and tasks.
+  - Record weights, KV cache, compute buffers, total VRAM, host memory, and startup overhead separately where tooling permits.
+  - Promote Docker to the sole recommended launcher only when its stability and memory results are comparable; otherwise retain both documented paths.
+
+- [ ] **HSDLC-066A — Benchmark the Qwen 3.6 27B quality profile**  
+  Files: `benchmarks/results/rtx-3090-qwen36-27b.json`, `docs/model-profiles.md`  
+  Depends on: HSDLC-065  
+  Acceptance:
+  - Uses the same protocol, task fixtures, quantization class, and context as the 35B-A3B comparison.
+  - Documentation compares time-to-green and patch success rate in addition to token throughput and memory.
+  - The dense 27B profile is not labeled faster or preferred without measured evidence.
 
 - [ ] **HSDLC-067 — Complete security and destructive-operation review**  
   Files: `docs/security.md`, test evidence  

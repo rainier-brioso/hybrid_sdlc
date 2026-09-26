@@ -51,3 +51,4 @@ models/
 .env
 .env.local
 *.local.toml
+*.pid

@@ -200,23 +200,34 @@ flowchart TD
 
 ---
 
-### 1.6 Dynamic Endpoint Probing & Local Inference Configuration ([P2])
+### 1.6 Endpoint-First Local Inference & Reproducible Deployment ([P2])
 
-Static endpoint configuration in `.aider.conf.yml` cannot dynamically fall back between ports. Instead, `server_probe.py` evaluates candidate servers dynamically and injects verified parameters directly into Aider.
+The execution engine depends only on a verified OpenAI-compatible endpoint. Deployment is a separate concern with three supported modes: an externally managed server, the repository's Docker Compose service, or an optional native platform launcher. Docker is the preferred reproducible deployment, but it is not a runtime requirement and does not replace endpoint probing.
 
 #### Probing Workflow
-1. Probe candidate endpoints: `http://127.0.0.1:8090/v1` (primary) and `http://127.0.0.1:8089/v1` (secondary).
+1. Probe configured candidate endpoints; the repository Docker profile defaults to `http://127.0.0.1:8089/v1`.
 2. Fetch `/v1/models` and verify model availability.
 3. Perform a lightweight test inference (`max_tokens=5`) to verify GPU responsiveness.
 4. Return an active `ServerEndpoint` configuration.
 
 #### Target Hardware & Model Profiles
 - **Candidate Primary Configuration (RTX 3090 24GB VRAM; support pending Phase 7 benchmarks)**:
-  - Model: `Qwen/Qwen2.5-Coder-32B-Instruct-GGUF` (Quant: `Q4_K_M`, ~19.8 GB VRAM).
-  - Context Window: 16,384 tokens (`-c 16384`).
-  - Backend: `llama-server` with Flash Attention enabled (`-fa`) and split-mode support.
-- **Fall-back Profile (Low VRAM / Laptop GPU)**:
-  - Model: `Qwen/Qwen2.5-Coder-14B-Instruct-GGUF` (Quant: `Q8_0` or `Q4_K_M`).
+  - Model: `Qwen3.6-35B-A3B` GGUF (`Q4_K_S`).
+  - Worker context: 16,384 tokens, 4,096 output tokens, and a 1,536-token reasoning budget.
+  - Candidate interactive context: 65,536 tokens with client compaction near 40,960 tokens; memory fit on the RTX 3090 remains unverified.
+  - Backend: `llama-server` with CUDA offload, Flash Attention, quantized K/V caches, and one parallel request.
+- **Candidate Quality Profile**:
+  - Model: `Qwen3.6-27B` dense GGUF.
+  - It is not considered an automatic performance downgrade: it has more active parameters per token and must be compared on end-to-end patch quality and time-to-green.
+- Model profiles remain `candidate` until repeatable hardware evidence promotes them to supported status.
+
+#### Docker Deployment Contract
+- `compose.yaml` uses the official CUDA-enabled llama.cpp server image and mounts a user-provided model directory read-only.
+- The container listens on `0.0.0.0` internally while the published host port is restricted to `127.0.0.1`.
+- Executables, GGUF weights, local `.env` files, logs, and PID files are never committed.
+- `LLAMA_CPP_IMAGE` is pinned to a tested build tag or immutable digest before release; floating tags are evaluation-only.
+- One large model and one inference request run at a time on the RTX 3090. An accelerator lease/queue must prevent asynchronous jobs from bypassing this constraint.
+- Native Windows and Docker/WSL2 deployments use the same model profile and benchmark protocol. Docker becomes the sole recommended launcher only if its memory use and stability are comparable.
 
 #### Aider Invocation Parameters
 Parameters are passed explicitly via CLI:
@@ -367,9 +378,12 @@ closure are recorded in `docs/implementation_tasks.md`.
 - Generate configuration manifests for Antigravity, Claude Code, and Codex CLI.
 - Provide step-by-step installation instructions for each host.
 
-### Phase 7: Packaging, Hardware Benchmarks & Release Validation
+### Phase 7: Packaging, Runtime Deployment, Hardware Benchmarks & Release Validation
 - Extend the Phase 2 CI foundation with distribution packaging and clean-install smoke tests.
-- Benchmark Qwen 2.5 Coder 32B (Q4_K_M) on RTX 3090: tokens/second, VRAM footprint under 16k context, and prompt processing times.
+- Validate the Docker Compose deployment and document external/native server fallbacks.
+- Benchmark Qwen 3.6 35B-A3B (`Q4_K_S`) on the RTX 3090 under the 16K worker profile.
+- Compare native Windows and Docker/WSL2 using identical weights, prompts, contexts, and task fixtures.
+- Evaluate Qwen 3.6 27B only as a measured quality profile, not as an assumed speed improvement.
 
 ---
 
@@ -413,5 +427,6 @@ closure are recorded in `docs/implementation_tasks.md`.
 - Path separator assertions: explicit verification that both Windows backslashes and POSIX forward slashes are handled without path syntax errors.
 
 ### 4.3 Manual & Hardware Verification
-- **RTX 3090 Local Run**: Execute a realistic refactoring task against a Python fixture repository using Qwen 2.5 Coder 32B on `llama-server`. Measure weights, KV cache, compute buffers, total VRAM, prompt processing, and generation throughput at 16k context before promoting the candidate profile to supported status.
+- **RTX 3090 Local Run**: Execute a realistic refactoring task against a Python fixture repository using Qwen 3.6 35B-A3B on `llama-server`. Measure weights, KV cache, compute buffers, total VRAM, prompt processing, generation throughput, time-to-green, and patch success rate at 16K context before promoting the candidate profile to supported status.
+- **Runtime Comparison**: Repeat the same benchmark with the native Windows server and Docker/WSL2. Record startup time, peak host committed memory, peak VRAM, and inference performance. Keep both launch paths if Docker imposes a material stability or memory penalty.
 - **Antigravity IDE Integration**: Run `submit_spec_job`, yield turn, observe reactive wakeup when the task completes, and verify diff summary presentation.

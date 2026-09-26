@@ -1,0 +1,48 @@
+name: hybrid-sdlc
+
+services:
+  llama-server:
+    image: ${LLAMA_CPP_IMAGE:-ghcr.io/ggml-org/llama.cpp:server-cuda}
+    gpus: all
+    ports:
+      - "127.0.0.1:${LLAMA_HOST_PORT:-8089}:8080"
+    volumes:
+      - type: bind
+        source: ${MODEL_DIR:?Set MODEL_DIR in .env}
+        target: /models
+        read_only: true
+    command:
+      - --model
+      - /models/${MODEL_FILE:?Set MODEL_FILE in .env}
+      - --alias
+      - ${MODEL_ALIAS:-qwen36-35b-a3b}
+      - --host
+      - 0.0.0.0
+      - --port
+      - "8080"
+      - --n-gpu-layers
+      - ${LLAMA_GPU_LAYERS:-99}
+      - --ctx-size
+      - ${LLAMA_CTX_SIZE:-16384}
+      - --cache-type-k
+      - ${LLAMA_CACHE_TYPE_K:-q4_0}
+      - --cache-type-v
+      - ${LLAMA_CACHE_TYPE_V:-q4_0}
+      - --batch-size
+      - ${LLAMA_BATCH_SIZE:-1024}
+      - --ubatch-size
+      - ${LLAMA_UBATCH_SIZE:-512}
+      - --flash-attn
+      - "on"
+      - --threads
+      - ${LLAMA_THREADS:-12}
+      - --reasoning
+      - "on"
+      - --reasoning-budget
+      - ${LLAMA_REASONING_BUDGET:-1536}
+      - --parallel
+      - "1"
+      - --jinja
+    init: true
+    restart: "no"
+    stop_grace_period: 30s
