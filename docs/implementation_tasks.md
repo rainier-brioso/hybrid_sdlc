@@ -386,7 +386,7 @@ A task is complete when:
   - Terminal failures use `status=failed` plus a documented `failure_reason`.
   - Job IDs are collision-resistant and validated before filesystem access.
 
-- [ ] **HSDLC-039 — Implement the detached worker entry point**  
+- [x] **HSDLC-039 — Implement the detached worker entry point**  
   Files: `src/hybrid_sdlc/worker.py`, `src/hybrid_sdlc/cli.py`, `tests/unit/test_worker.py`  
   Depends on: HSDLC-027, HSDLC-038  
   Acceptance:

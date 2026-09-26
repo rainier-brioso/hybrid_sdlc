@@ -5,9 +5,12 @@ from __future__ import annotations
 import os
 import signal
 import subprocess
+import sys
 import threading
 import time
+from collections.abc import Callable
 from dataclasses import dataclass
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from typing import Any
 
@@ -142,6 +145,91 @@ def process_is_alive(pid: int) -> bool:
             return False
 
 
+def get_process_creation_time(pid: int) -> datetime:
+    """Return the OS-reported UTC creation time for a live process."""
+
+    if pid <= 0:
+        raise ValueError("PID must be positive")
+    if os.name == "nt":
+        import ctypes
+        from ctypes import wintypes
+
+        class FILETIME(ctypes.Structure):
+            _fields_ = [("dwLowDateTime", wintypes.DWORD), ("dwHighDateTime", wintypes.DWORD)]
+
+        kernel32 = ctypes.windll.kernel32  # type: ignore[attr-defined]
+        kernel32.OpenProcess.restype = wintypes.HANDLE
+        kernel32.OpenProcess.argtypes = [wintypes.DWORD, wintypes.BOOL, wintypes.DWORD]
+        kernel32.GetProcessTimes.restype = wintypes.BOOL
+        kernel32.GetProcessTimes.argtypes = [
+            wintypes.HANDLE,
+            ctypes.POINTER(FILETIME),
+            ctypes.POINTER(FILETIME),
+            ctypes.POINTER(FILETIME),
+            ctypes.POINTER(FILETIME),
+        ]
+        kernel32.CloseHandle.restype = wintypes.BOOL
+        kernel32.CloseHandle.argtypes = [wintypes.HANDLE]
+        handle = kernel32.OpenProcess(0x1000, False, pid)
+        if not handle:
+            raise ProcessLookupError(pid)
+        try:
+            creation = FILETIME()
+            exit_time = FILETIME()
+            kernel_time = FILETIME()
+            user_time = FILETIME()
+            if not kernel32.GetProcessTimes(
+                handle,
+                ctypes.byref(creation),
+                ctypes.byref(exit_time),
+                ctypes.byref(kernel_time),
+                ctypes.byref(user_time),
+            ):
+                raise OSError(ctypes.get_last_error(), "GetProcessTimes failed")
+            ticks = (creation.dwHighDateTime << 32) | creation.dwLowDateTime
+            windows_epoch = datetime(1601, 1, 1, tzinfo=UTC)
+            return windows_epoch + timedelta(microseconds=ticks // 10)
+        finally:
+            kernel32.CloseHandle(handle)
+
+    if sys.platform == "linux":
+        try:
+            stat_fields = (
+                Path(f"/proc/{pid}/stat").read_text(encoding="ascii").rsplit(")", 1)[1].split()
+            )
+            start_ticks = int(stat_fields[19])
+            if hasattr(time, "CLOCK_BOOTTIME"):
+                boot_time = time.time() - time.clock_gettime(time.CLOCK_BOOTTIME)
+            else:
+                boot_time = float(
+                    next(
+                        int(line.split()[1])
+                        for line in Path("/proc/stat").read_text(encoding="ascii").splitlines()
+                        if line.startswith("btime ")
+                    )
+                )
+            ticks_per_second = int(os.sysconf("SC_CLK_TCK"))
+        except (FileNotFoundError, StopIteration) as exc:
+            raise ProcessLookupError(pid) from exc
+        return datetime.fromtimestamp(boot_time + start_ticks / ticks_per_second, tz=UTC)
+
+    # macOS and BSD expose process start time through their standard `ps` utility.
+    env = {**os.environ, "LC_ALL": "C", "TZ": "UTC"}
+    try:
+        result = subprocess.run(
+            ["ps", "-p", str(pid), "-o", "lstart="],
+            capture_output=True,
+            text=True,
+            check=True,
+            timeout=2.0,
+            env=env,
+        )
+        created_at = datetime.strptime(result.stdout.strip(), "%a %b %d %H:%M:%S %Y")
+    except (OSError, subprocess.SubprocessError, ValueError) as exc:
+        raise ProcessLookupError(pid) from exc
+    return created_at.replace(tzinfo=UTC)
+
+
 def kill_process_tree(proc: subprocess.Popen[bytes]) -> None:
     """Forcefully terminate a process and all its descendants across OS platforms."""
     pid = proc.pid
@@ -182,6 +270,7 @@ def run_bounded_subprocess(
     timeout_seconds: float,
     buffer_cap_bytes: int = 500 * 1024,
     cancel_event: threading.Event | None = None,
+    process_observer: Callable[[int, datetime | None], None] | None = None,
 ) -> SubprocessResult:
     """Run a subprocess strictly via argv without shell, bounding time and log buffer.
 
@@ -226,6 +315,44 @@ def run_bounded_subprocess(
         if process_handle:
             job_obj.assign_process(process_handle)
             ctypes.windll.kernel32.CloseHandle(process_handle)  # type: ignore[attr-defined]
+
+    try:
+        child_created_at = get_process_creation_time(proc.pid)
+    except ProcessLookupError:
+        # Very short-lived commands can exit before their identity is persisted.
+        child_created_at = None
+    except Exception as e:
+        if job_obj:
+            job_obj.terminate()
+        kill_process_tree(proc)
+        try:
+            proc.wait(timeout=2.0)
+        except subprocess.TimeoutExpired:
+            pass
+        if job_obj:
+            job_obj.close()
+        raise ProcessExecutionError(
+            f"Could not read child process creation time: {e}",
+            details={"pid": proc.pid, "error": str(e)},
+        ) from e
+    if process_observer is not None:
+        if child_created_at is not None:
+            try:
+                process_observer(proc.pid, child_created_at)
+            except Exception as e:
+                if job_obj:
+                    job_obj.terminate()
+                kill_process_tree(proc)
+                try:
+                    proc.wait(timeout=2.0)
+                except subprocess.TimeoutExpired:
+                    pass
+                if job_obj:
+                    job_obj.close()
+                raise ProcessExecutionError(
+                    f"Could not persist child process identity: {e}",
+                    details={"pid": proc.pid, "error": str(e)},
+                ) from e
 
     stdout_chunks: list[bytes] = []
     stderr_chunks: list[bytes] = []
@@ -308,6 +435,9 @@ def run_bounded_subprocess(
     elapsed = time.perf_counter() - start_time
     stdout_text = b"".join(stdout_chunks).decode("utf-8", errors="replace")
     stderr_text = b"".join(stderr_chunks).decode("utf-8", errors="replace")
+
+    if process_observer is not None and child_created_at is not None:
+        process_observer(proc.pid, None)
 
     return SubprocessResult(
         exit_code=proc.returncode if proc.returncode is not None else -1,

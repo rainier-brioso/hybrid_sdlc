@@ -7,6 +7,7 @@ import re
 import threading
 import time
 import uuid
+from collections.abc import Callable
 from datetime import UTC, datetime
 from pathlib import Path
 
@@ -133,6 +134,7 @@ def run_test_profile(
     buffer_cap_bytes: int = 500 * 1024,
     resolved_executable: Path | None = None,
     cancel_event: threading.Event | None = None,
+    process_observer: Callable[[int, datetime | None], None] | None = None,
 ) -> SubprocessResult:
     """Execute a named test profile in a confined, sanitized environment."""
     repo_root = repo_root.resolve()
@@ -155,6 +157,7 @@ def run_test_profile(
         timeout_seconds=float(profile.timeout_seconds),
         buffer_cap_bytes=buffer_cap_bytes,
         cancel_event=cancel_event,
+        process_observer=process_observer,
     )
 
 
@@ -173,6 +176,7 @@ def run_bounded_loop(
     task_instruction: str = "",
     resolved_test_executable: Path | None = None,
     cancel_event: threading.Event | None = None,
+    process_observer: Callable[[int, datetime | None], None] | None = None,
 ) -> RunResult:
     """Execute the bounded editing and testing state machine."""
     repo_root = repo_root.resolve()
@@ -203,6 +207,7 @@ def run_bounded_loop(
             buffer_cap_bytes=buffer_cap_bytes,
             resolved_executable=resolved_test_executable,
             cancel_event=cancel_event,
+            process_observer=process_observer,
         )
         if (
             baseline_sub_res.cancelled
@@ -286,6 +291,7 @@ def run_bounded_loop(
                 timeout_seconds=attempt_timeout_seconds,
                 buffer_cap_bytes=buffer_cap_bytes,
                 cancel_event=cancel_event,
+                process_observer=process_observer,
             )
 
             if aider_result.cancelled:
@@ -337,6 +343,7 @@ def run_bounded_loop(
                 buffer_cap_bytes=buffer_cap_bytes,
                 resolved_executable=resolved_test_executable,
                 cancel_event=cancel_event,
+                process_observer=process_observer,
             )
             att_dur = time.perf_counter() - att_start_perf
             att_end_iso = datetime.now(UTC).isoformat()

@@ -20,7 +20,7 @@ from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 from hybrid_sdlc.artifacts import atomic_save_json
 from hybrid_sdlc.errors import PathTraversalError
-from hybrid_sdlc.models import SCHEMA_VERSION, AttemptRecord
+from hybrid_sdlc.models import SCHEMA_VERSION, AttemptRecord, RunResult
 
 _JOB_ID_PATTERN = re.compile(r"^job_\d{8}T\d{12}Z_[0-9a-f]{8}$")
 _FAILURE_REASON_PATTERN = re.compile(r"^[a-z][a-z0-9_]*$")
@@ -74,6 +74,10 @@ class JobRecord(BaseModel):
     job_id: str
     spec_path: str
     task_id: str
+    test_profile: str | None = None
+    host_url: str | None = None
+    model: str | None = None
+    max_retries: int | None = Field(default=None, ge=1, le=10)
     status: JobStatus = JobStatus.QUEUED
     failure_reason: str | None = None
     worker_pid: int | None = Field(default=None, gt=0)
@@ -87,6 +91,7 @@ class JobRecord(BaseModel):
     finished_at: datetime | None = None
     duration_seconds: float | None = Field(default=None, ge=0)
     attempts: list[AttemptRecord] = Field(default_factory=list)
+    run_result: RunResult | None = None
     final_diff_patch: str | None = None
     log_file: str | None = None
 
@@ -127,7 +132,16 @@ class JobManager:
             raise PathTraversalError("Job path escapes the repository artifacts directory")
         return candidate
 
-    def create(self, spec_path: str, task_id: str) -> JobRecord:
+    def create(
+        self,
+        spec_path: str,
+        task_id: str,
+        *,
+        test_profile: str | None = None,
+        host_url: str | None = None,
+        model: str | None = None,
+        max_retries: int | None = None,
+    ) -> JobRecord:
         """Persist a queued job, retrying if an ID already exists."""
 
         for _ in range(10):
@@ -142,12 +156,93 @@ class JobManager:
                     job_id=job_id,
                     spec_path=spec_path,
                     task_id=task_id,
+                    test_profile=test_profile,
+                    host_url=host_url,
+                    model=model,
+                    max_retries=max_retries,
                     created_at=now,
                     updated_at=now,
                 )
                 atomic_save_json(path, record, self.repo_root)
                 return record
         raise RuntimeError("Could not allocate a unique job ID")
+
+    def claim(self, job_id: str, worker_pid: int, worker_created_at: datetime) -> JobRecord:
+        """Atomically claim a queued job for exactly one worker process."""
+
+        path = self._job_path(job_id)
+        if not path.is_file():
+            raise FileNotFoundError(path)
+        with FileLock(str(path) + ".transition.lock"):
+            current = self.get(job_id)
+            if current.status is not JobStatus.QUEUED:
+                raise InvalidJobTransitionError(f"Cannot claim job in {current.status} state")
+            now = datetime.now(UTC)
+            claimed = JobRecord.model_validate(
+                {
+                    **current.model_dump(),
+                    "status": JobStatus.RUNNING,
+                    "worker_pid": worker_pid,
+                    "worker_created_at": worker_created_at,
+                    "started_at": now,
+                    "heartbeat_at": now,
+                    "updated_at": now,
+                }
+            )
+            atomic_save_json(path, claimed, self.repo_root)
+            return claimed
+
+    def heartbeat(self, job_id: str, worker_pid: int, worker_created_at: datetime) -> JobRecord:
+        """Atomically refresh a running job heartbeat owned by this worker."""
+
+        path = self._job_path(job_id)
+        if not path.is_file():
+            raise FileNotFoundError(path)
+        with FileLock(str(path) + ".transition.lock"):
+            current = self.get(job_id)
+            if (
+                current.status is not JobStatus.RUNNING
+                or current.worker_pid != worker_pid
+                or current.worker_created_at != worker_created_at
+            ):
+                raise InvalidJobTransitionError("Heartbeat is not owned by this worker")
+            now = datetime.now(UTC)
+            refreshed = current.model_copy(update={"heartbeat_at": now, "updated_at": now})
+            atomic_save_json(path, refreshed, self.repo_root)
+            return refreshed
+
+    def set_child_process(
+        self,
+        job_id: str,
+        worker_pid: int,
+        worker_created_at: datetime,
+        child_pid: int,
+        child_created_at: datetime | None,
+    ) -> JobRecord:
+        """Persist or clear the active child identity under the owning worker."""
+
+        path = self._job_path(job_id)
+        if not path.is_file():
+            raise FileNotFoundError(path)
+        with FileLock(str(path) + ".transition.lock"):
+            current = self.get(job_id)
+            if (
+                current.status is not JobStatus.RUNNING
+                or current.worker_pid != worker_pid
+                or current.worker_created_at != worker_created_at
+            ):
+                raise InvalidJobTransitionError("Child process is not owned by this worker")
+            if child_created_at is None and current.child_pid != child_pid:
+                return current
+            updated = current.model_copy(
+                update={
+                    "child_pid": child_pid if child_created_at is not None else None,
+                    "child_created_at": child_created_at,
+                    "updated_at": datetime.now(UTC),
+                }
+            )
+            atomic_save_json(path, updated, self.repo_root)
+            return updated
 
     def get(self, job_id: str) -> JobRecord:
         """Load a complete persisted record or raise FileNotFoundError."""
@@ -159,7 +254,12 @@ class JobManager:
         return record
 
     def transition(
-        self, job_id: str, status: JobStatus, *, failure_reason: str | None = None
+        self,
+        job_id: str,
+        status: JobStatus,
+        *,
+        failure_reason: str | None = None,
+        run_result: RunResult | None = None,
     ) -> JobRecord:
         """Apply one legal transition under a per-job lock and atomic replacement."""
 
@@ -176,6 +276,7 @@ class JobManager:
                 "status": status,
                 "failure_reason": failure_reason,
                 "updated_at": now,
+                "run_result": run_result,
             }
             if status is JobStatus.RUNNING:
                 updates["started_at"] = now

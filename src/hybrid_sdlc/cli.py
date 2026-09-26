@@ -19,9 +19,11 @@ from hybrid_sdlc.errors import (
     HybridSDLCError,
     ServerProbeError,
 )
+from hybrid_sdlc.job_manager import InvalidJobTransitionError, JobStatus
 from hybrid_sdlc.models import ProbeResult, RunStatus
 from hybrid_sdlc.security import verify_repo_root
 from hybrid_sdlc.server_probe import probe_endpoint, select_active_endpoint
+from hybrid_sdlc.worker import run_worker
 
 
 def parse_duration_seconds(val: str) -> float:
@@ -273,6 +275,33 @@ def run_task_cmd(
     if result.status == RunStatus.SUCCESS:
         sys.exit(ExitCode.SUCCESS)
     sys.exit(ExitCode.TASK_FAILED)
+
+
+@cli.command("worker")
+@click.argument("job_id")
+@click.option(
+    "--repo-root", type=click.Path(path_type=Path), default=None, help="Target repository root."
+)
+@click.option("--json", "json_mode", is_flag=True, help="Output the final persisted job record.")
+def worker_cmd(job_id: str, repo_root: Path | None, json_mode: bool) -> None:
+    """Claim and execute one queued asynchronous job."""
+    try:
+        record = run_worker(job_id, repo_root)
+    except InvalidJobTransitionError as exc:
+        click.echo(f"Worker could not claim job: {exc}", err=True)
+        sys.exit(ExitCode.POLICY_ERROR)
+    except (HybridSDLCError, FileNotFoundError, ValueError) as exc:
+        message = exc.message if isinstance(exc, HybridSDLCError) else str(exc)
+        click.echo(f"Worker failed: {message}", err=True)
+        sys.exit(exc.exit_code if isinstance(exc, HybridSDLCError) else ExitCode.POLICY_ERROR)
+
+    if json_mode:
+        click.echo(record.model_dump_json(indent=2))
+    else:
+        click.echo(f"Job {record.job_id}: {record.status.value.upper()}")
+        if record.failure_reason:
+            click.echo(f"  Failure: {record.failure_reason}")
+    sys.exit(ExitCode.SUCCESS if record.status is JobStatus.COMPLETED else ExitCode.TASK_FAILED)
 
 
 @cli.command("clean")
