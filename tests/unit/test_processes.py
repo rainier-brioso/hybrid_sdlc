@@ -12,18 +12,24 @@ from types import SimpleNamespace
 import pytest
 
 import hybrid_sdlc.processes as process_api
-from hybrid_sdlc.processes import get_process_creation_time, run_bounded_subprocess
+from hybrid_sdlc.processes import (
+    get_process_creation_time,
+    get_process_identity,
+    run_bounded_subprocess,
+)
 
 
-def _fake_proc_paths(monkeypatch: pytest.MonkeyPatch) -> None:
+def _fake_proc_paths(monkeypatch: pytest.MonkeyPatch, state: str = "S") -> None:
     class FakePath:
         def __init__(self, value: str) -> None:
             self.value = value
 
         def read_text(self, encoding: str) -> str:
             if self.value == "/proc/77/stat":
-                fields = ["S", *(["0"] * 18), "12345"]
+                fields = [state, *(["0"] * 18), "12345"]
                 return f"77 (fake command with spaces) {' '.join(fields)}"
+            if self.value == "/proc/sys/kernel/random/boot_id":
+                return "test-boot-id\n"
             return "cpu 1 2 3\nbtime 100000\n"
 
     monkeypatch.setattr(process_api, "Path", FakePath)
@@ -51,12 +57,61 @@ def test_linux_creation_time_uses_proc_start_ticks(
     assert created_at == datetime.fromtimestamp(expected, tz=UTC)
 
 
+def test_linux_identity_uses_stable_boot_and_start_tick_token(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    _fake_proc_paths(monkeypatch)
+    fake_time = SimpleNamespace(
+        time=lambda: 100000.0, CLOCK_BOOTTIME=9, clock_gettime=lambda _: 100.0
+    )
+    monkeypatch.setattr(process_api, "time", fake_time)
+
+    identity = get_process_identity(77)
+
+    assert identity.state == "alive"
+    assert identity.start_token == "linux:test-boot-id:12345"
+    assert identity.precision == "100hz"
+
+
+def test_linux_zombie_is_dead_even_while_proc_entry_exists(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    _fake_proc_paths(monkeypatch, state="Z")
+    assert get_process_identity(77).state == "dead"
+
+
+def test_current_process_identity_is_available() -> None:
+    identity = get_process_identity(os.getpid())
+    assert identity.state == "alive"
+    assert identity.created_at is not None
+    assert identity.start_token
+
+
+def test_linux_permission_error_is_unknown_not_dead(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(
+        process_api,
+        "os",
+        SimpleNamespace(name="posix", sysconf=lambda name: 100, environ=os.environ),
+    )
+    monkeypatch.setattr(process_api.sys, "platform", "linux")
+
+    class DeniedPath:
+        def __init__(self, value: str) -> None:
+            self.value = value
+
+        def read_text(self, encoding: str) -> str:
+            raise PermissionError("access denied")
+
+    monkeypatch.setattr(process_api, "Path", DeniedPath)
+    assert get_process_identity(77).state == "unknown"
+
+
 def test_mac_creation_time_uses_locale_independent_ps(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr(process_api.sys, "platform", "darwin")
     monkeypatch.setattr(
         process_api,
         "os",
-        SimpleNamespace(name="posix", environ=os.environ),
+        SimpleNamespace(name="posix", environ=os.environ, kill=lambda pid, signal: None),
     )
     calls: list[dict[str, object]] = []
 

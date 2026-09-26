@@ -34,6 +34,133 @@ class SubprocessResult:
     cancelled: bool = False
 
 
+@dataclass(frozen=True)
+class ProcessIdentity:
+    """Best-effort process state and creation identity from the operating system."""
+
+    state: str
+    created_at: datetime | None = None
+    start_token: str | None = None
+    precision: str | None = None
+
+
+def get_process_identity(pid: int) -> ProcessIdentity:
+    """Probe liveness and creation identity without treating access errors as death."""
+
+    if pid <= 0:
+        raise ValueError("PID must be positive")
+    if os.name == "nt":
+        import ctypes
+        from ctypes import wintypes
+
+        class FILETIME(ctypes.Structure):
+            _fields_ = [("dwLowDateTime", wintypes.DWORD), ("dwHighDateTime", wintypes.DWORD)]
+
+        kernel32 = ctypes.windll.kernel32  # type: ignore[attr-defined]
+        kernel32.OpenProcess.restype = wintypes.HANDLE
+        kernel32.OpenProcess.argtypes = [wintypes.DWORD, wintypes.BOOL, wintypes.DWORD]
+        kernel32.GetLastError.restype = wintypes.DWORD
+        kernel32.GetProcessTimes.restype = wintypes.BOOL
+        kernel32.GetProcessTimes.argtypes = [
+            wintypes.HANDLE,
+            ctypes.POINTER(FILETIME),
+            ctypes.POINTER(FILETIME),
+            ctypes.POINTER(FILETIME),
+            ctypes.POINTER(FILETIME),
+        ]
+        kernel32.CloseHandle.restype = wintypes.BOOL
+        kernel32.CloseHandle.argtypes = [wintypes.HANDLE]
+        handle = kernel32.OpenProcess(0x1000, False, pid)
+        if not handle:
+            error = int(kernel32.GetLastError())
+            if error in {87, 1168}:  # ERROR_INVALID_PARAMETER / ERROR_NOT_FOUND
+                return ProcessIdentity("dead")
+            return ProcessIdentity("unknown")
+        try:
+            creation = FILETIME()
+            exit_time = FILETIME()
+            kernel_time = FILETIME()
+            user_time = FILETIME()
+            if not kernel32.GetProcessTimes(
+                handle,
+                ctypes.byref(creation),
+                ctypes.byref(exit_time),
+                ctypes.byref(kernel_time),
+                ctypes.byref(user_time),
+            ):
+                return ProcessIdentity("unknown")
+            ticks = (creation.dwHighDateTime << 32) | creation.dwLowDateTime
+            created_at = datetime(1601, 1, 1, tzinfo=UTC) + timedelta(microseconds=ticks // 10)
+            return ProcessIdentity("alive", created_at, f"windows:{ticks}", "100ns")
+        finally:
+            kernel32.CloseHandle(handle)
+
+    if sys.platform == "linux":
+        try:
+            stat_fields = (
+                Path(f"/proc/{pid}/stat").read_text(encoding="ascii").rsplit(")", 1)[1].split()
+            )
+            if stat_fields[0] in {"Z", "X"}:
+                return ProcessIdentity("dead")
+            start_ticks = int(stat_fields[19])
+        except FileNotFoundError:
+            # hidepid=2 and similarly restricted procfs mounts can hide an
+            # existing process. Confirm ESRCH independently before calling it dead.
+            try:
+                os.kill(pid, 0)
+            except ProcessLookupError:
+                return ProcessIdentity("dead")
+            except OSError:
+                return ProcessIdentity("unknown")
+            return ProcessIdentity("unknown")
+        except (OSError, ValueError, IndexError):
+            return ProcessIdentity("unknown")
+        try:
+            boot_id = Path("/proc/sys/kernel/random/boot_id").read_text(encoding="ascii").strip()
+            ticks_per_second = int(os.sysconf("SC_CLK_TCK"))
+            try:
+                boot_time = time.time() - time.clock_gettime(time.CLOCK_BOOTTIME)
+            except AttributeError:
+                boot_time = float(
+                    next(
+                        int(line.split()[1])
+                        for line in Path("/proc/stat").read_text(encoding="ascii").splitlines()
+                        if line.startswith("btime ")
+                    )
+                )
+        except (OSError, ValueError, StopIteration):
+            return ProcessIdentity("unknown")
+        created_at = datetime.fromtimestamp(boot_time + start_ticks / ticks_per_second, tz=UTC)
+        return ProcessIdentity(
+            "alive", created_at, f"linux:{boot_id}:{start_ticks}", f"{ticks_per_second}hz"
+        )
+
+    # ps exposes only second-resolution start times on macOS and BSD.
+    try:
+        os.kill(pid, 0)
+    except ProcessLookupError:
+        return ProcessIdentity("dead")
+    except PermissionError:
+        return ProcessIdentity("unknown")
+    except OSError:
+        return ProcessIdentity("unknown")
+    env = {**os.environ, "LC_ALL": "C", "TZ": "UTC"}
+    try:
+        result = subprocess.run(
+            ["ps", "-p", str(pid), "-o", "lstart="],
+            capture_output=True,
+            text=True,
+            check=True,
+            timeout=2.0,
+            env=env,
+        )
+        created_at = datetime.strptime(result.stdout.strip(), "%a %b %d %H:%M:%S %Y")
+    except (OSError, subprocess.SubprocessError, ValueError):
+        return ProcessIdentity("unknown")
+    created_at = created_at.replace(tzinfo=UTC)
+    return ProcessIdentity("alive", created_at, f"ps:{created_at.isoformat()}", "1s")
+
+
 class _WindowsJobObject:
     """Manages a Win32 Job Object to guarantee descendant process termination."""
 
@@ -121,113 +248,18 @@ class _WindowsJobObject:
 
 
 def process_is_alive(pid: int) -> bool:
-    """Check if a process with the given PID is alive (cross-platform)."""
-    if os.name == "nt":
-        try:
-            import ctypes
-
-            kernel32 = ctypes.windll.kernel32  # type: ignore[attr-defined]
-            process_query_limited_information = 0x00001000  # noqa: N806
-            handle = kernel32.OpenProcess(process_query_limited_information, False, pid)
-            if handle:
-                kernel32.CloseHandle(handle)
-                return True
-            return False
-        except Exception:
-            return False
-    else:
-        try:
-            os.kill(pid, 0)
-            return True
-        except ProcessLookupError:
-            return False
-        except OSError:
-            return False
+    """Return false only when the OS positively confirms that the PID is gone."""
+    return get_process_identity(pid).state != "dead"
 
 
 def get_process_creation_time(pid: int) -> datetime:
     """Return the OS-reported UTC creation time for a live process."""
-
-    if pid <= 0:
-        raise ValueError("PID must be positive")
-    if os.name == "nt":
-        import ctypes
-        from ctypes import wintypes
-
-        class FILETIME(ctypes.Structure):
-            _fields_ = [("dwLowDateTime", wintypes.DWORD), ("dwHighDateTime", wintypes.DWORD)]
-
-        kernel32 = ctypes.windll.kernel32  # type: ignore[attr-defined]
-        kernel32.OpenProcess.restype = wintypes.HANDLE
-        kernel32.OpenProcess.argtypes = [wintypes.DWORD, wintypes.BOOL, wintypes.DWORD]
-        kernel32.GetProcessTimes.restype = wintypes.BOOL
-        kernel32.GetProcessTimes.argtypes = [
-            wintypes.HANDLE,
-            ctypes.POINTER(FILETIME),
-            ctypes.POINTER(FILETIME),
-            ctypes.POINTER(FILETIME),
-            ctypes.POINTER(FILETIME),
-        ]
-        kernel32.CloseHandle.restype = wintypes.BOOL
-        kernel32.CloseHandle.argtypes = [wintypes.HANDLE]
-        handle = kernel32.OpenProcess(0x1000, False, pid)
-        if not handle:
-            raise ProcessLookupError(pid)
-        try:
-            creation = FILETIME()
-            exit_time = FILETIME()
-            kernel_time = FILETIME()
-            user_time = FILETIME()
-            if not kernel32.GetProcessTimes(
-                handle,
-                ctypes.byref(creation),
-                ctypes.byref(exit_time),
-                ctypes.byref(kernel_time),
-                ctypes.byref(user_time),
-            ):
-                raise OSError(ctypes.get_last_error(), "GetProcessTimes failed")
-            ticks = (creation.dwHighDateTime << 32) | creation.dwLowDateTime
-            windows_epoch = datetime(1601, 1, 1, tzinfo=UTC)
-            return windows_epoch + timedelta(microseconds=ticks // 10)
-        finally:
-            kernel32.CloseHandle(handle)
-
-    if sys.platform == "linux":
-        try:
-            stat_fields = (
-                Path(f"/proc/{pid}/stat").read_text(encoding="ascii").rsplit(")", 1)[1].split()
-            )
-            start_ticks = int(stat_fields[19])
-            if hasattr(time, "CLOCK_BOOTTIME"):
-                boot_time = time.time() - time.clock_gettime(time.CLOCK_BOOTTIME)
-            else:
-                boot_time = float(
-                    next(
-                        int(line.split()[1])
-                        for line in Path("/proc/stat").read_text(encoding="ascii").splitlines()
-                        if line.startswith("btime ")
-                    )
-                )
-            ticks_per_second = int(os.sysconf("SC_CLK_TCK"))
-        except (FileNotFoundError, StopIteration) as exc:
-            raise ProcessLookupError(pid) from exc
-        return datetime.fromtimestamp(boot_time + start_ticks / ticks_per_second, tz=UTC)
-
-    # macOS and BSD expose process start time through their standard `ps` utility.
-    env = {**os.environ, "LC_ALL": "C", "TZ": "UTC"}
-    try:
-        result = subprocess.run(
-            ["ps", "-p", str(pid), "-o", "lstart="],
-            capture_output=True,
-            text=True,
-            check=True,
-            timeout=2.0,
-            env=env,
-        )
-        created_at = datetime.strptime(result.stdout.strip(), "%a %b %d %H:%M:%S %Y")
-    except (OSError, subprocess.SubprocessError, ValueError) as exc:
-        raise ProcessLookupError(pid) from exc
-    return created_at.replace(tzinfo=UTC)
+    identity = get_process_identity(pid)
+    if identity.state == "dead":
+        raise ProcessLookupError(pid)
+    if identity.state != "alive" or identity.created_at is None:
+        raise OSError(f"Could not determine creation time for process {pid}")
+    return identity.created_at
 
 
 def kill_process_tree(proc: subprocess.Popen[bytes]) -> None:

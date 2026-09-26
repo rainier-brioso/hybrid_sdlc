@@ -402,13 +402,15 @@ A task is complete when:
   - It returns a job ID only after the worker starts or reports a launch failure.
   - The worker continues after the submitting process exits.
 
-- [ ] **HSDLC-041 — Implement status and abandoned-worker recovery**  
+- [x] **HSDLC-041 — Implement status and abandoned-worker recovery**  
   Files: `src/hybrid_sdlc/job_manager.py`, `tests/integration/test_jobs.py`  
   Depends on: HSDLC-040  
   Acceptance:
-  - Status supports immediate lookup and bounded waiting.
-  - PID plus process-creation time distinguishes live workers from PID reuse.
-  - Stale running jobs become `failed/abandoned_process` with diagnostic metadata.
+  - `JobManager.status()` supports immediate lookup and finite waits capped at 60 seconds; polling intervals are validated.
+  - Worker identity is persisted as an OS start token (Linux boot ID plus start ticks, Windows FILETIME); legacy records use a conservative timestamp fallback.
+  - Confirmed dead/reused worker PIDs become `failed/abandoned_process` with typed diagnostic metadata; unknown OS probes preserve running state.
+  - Recovery probes outside the lock and rechecks state and owner under the per-job lock before atomic persistence. `recover_running_jobs()` is available for host startup integration.
+  - macOS/BSD process start times use `ps` at one-second precision, so PID reuse within the same second remains ambiguous.
 
 - [ ] **HSDLC-042 — Implement asynchronous cancellation**  
   Files: `src/hybrid_sdlc/job_manager.py`, `tests/integration/test_jobs.py`  

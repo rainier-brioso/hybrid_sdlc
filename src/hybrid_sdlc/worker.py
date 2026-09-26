@@ -16,7 +16,7 @@ from hybrid_sdlc.errors import HybridSDLCError
 from hybrid_sdlc.git_tools import check_worktree_clean
 from hybrid_sdlc.job_manager import JobManager, JobRecord, JobStatus
 from hybrid_sdlc.models import RunResult, RunStatus
-from hybrid_sdlc.processes import get_process_creation_time
+from hybrid_sdlc.processes import get_process_identity
 from hybrid_sdlc.security import verify_repo_root
 from hybrid_sdlc.server_probe import select_active_endpoint
 
@@ -94,8 +94,17 @@ def run_worker(
         raise ValueError("heartbeat_interval_seconds must be positive")
     verified_root = verify_repo_root(repo_root)
     manager = JobManager(verified_root)
-    worker_created_at = get_process_creation_time(os.getpid())
-    claimed = manager.claim(job_id, os.getpid(), worker_created_at)
+    identity = get_process_identity(os.getpid())
+    if identity.state != "alive" or identity.created_at is None:
+        raise RuntimeError("Could not determine this worker's process identity")
+    worker_created_at = identity.created_at
+    claimed = manager.claim(
+        job_id,
+        os.getpid(),
+        worker_created_at,
+        identity.start_token,
+        identity.precision,
+    )
 
     stop_heartbeat = threading.Event()
     stop_execution = threading.Event()

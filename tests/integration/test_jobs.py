@@ -7,6 +7,7 @@ import os
 import subprocess
 import sys
 import textwrap
+import threading
 import time
 from pathlib import Path
 
@@ -14,6 +15,7 @@ import pytest
 
 from hybrid_sdlc.config import ServerCandidateConfig
 from hybrid_sdlc.job_manager import JobManager, JobStatus
+from hybrid_sdlc.processes import get_process_identity
 from hybrid_sdlc.submission import JobSubmissionError, submit_job
 
 
@@ -65,6 +67,40 @@ def test_invalid_submission_creates_no_job(tmp_path: Path, monkeypatch: pytest.M
         )
 
     assert not (tmp_path / ".hybrid_sdlc" / "jobs").exists()
+
+
+def test_status_reports_queued_job_and_returns_after_bounded_wait(tmp_path: Path) -> None:
+    manager = JobManager(tmp_path)
+    job = manager.create("spec.md", "T001")
+
+    assert manager.status(job.job_id).status is JobStatus.QUEUED
+    waited = manager.status(job.job_id, wait_timeout_seconds=0.03, poll_interval_seconds=0.01)
+    assert waited.status is JobStatus.QUEUED
+
+
+def test_status_wait_observes_worker_terminal_transition(tmp_path: Path) -> None:
+    manager = JobManager(tmp_path)
+    job = manager.create("spec.md", "T001")
+    identity = get_process_identity(os.getpid())
+    assert identity.created_at is not None
+    manager.claim(
+        job.job_id,
+        os.getpid(),
+        identity.created_at,
+        identity.start_token,
+        identity.precision,
+    )
+
+    def complete() -> None:
+        time.sleep(0.03)
+        manager.transition(job.job_id, JobStatus.COMPLETED)
+
+    completion = threading.Thread(target=complete)
+    completion.start()
+    result = manager.status(job.job_id, wait_timeout_seconds=1, poll_interval_seconds=0.01)
+    completion.join(timeout=1)
+
+    assert result.status is JobStatus.COMPLETED
 
 
 def test_unconfigured_host_override_is_rejected_before_probe_or_job(

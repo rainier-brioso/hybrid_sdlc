@@ -8,8 +8,10 @@ use another lowercase snake-case reason without changing the schema.
 
 from __future__ import annotations
 
+import math
 import re
 import secrets
+import time
 from datetime import UTC, datetime
 from enum import StrEnum
 from pathlib import Path
@@ -21,6 +23,7 @@ from pydantic import BaseModel, ConfigDict, Field, model_validator
 from hybrid_sdlc.artifacts import atomic_save_json
 from hybrid_sdlc.errors import PathTraversalError
 from hybrid_sdlc.models import SCHEMA_VERSION, AttemptRecord, RunResult
+from hybrid_sdlc.processes import ProcessIdentity, get_process_identity
 
 _JOB_ID_PATTERN = re.compile(r"^job_\d{8}T\d{12}Z_[0-9a-f]{8}$")
 _FAILURE_REASON_PATTERN = re.compile(r"^[a-z][a-z0-9_]*$")
@@ -80,8 +83,11 @@ class JobRecord(BaseModel):
     max_retries: int | None = Field(default=None, ge=1, le=10)
     status: JobStatus = JobStatus.QUEUED
     failure_reason: str | None = None
+    failure_metadata: dict[str, str | int | float | bool | None] | None = None
     worker_pid: int | None = Field(default=None, gt=0)
     worker_created_at: datetime | None = None
+    worker_process_identity: str | None = None
+    worker_start_precision: str | None = None
     child_pid: int | None = Field(default=None, gt=0)
     child_created_at: datetime | None = None
     heartbeat_at: datetime | None = None
@@ -106,6 +112,8 @@ class JobRecord(BaseModel):
                 raise ValueError("Failed jobs require a lowercase snake-case failure_reason")
         elif self.failure_reason is not None:
             raise ValueError("Only failed jobs may have a failure_reason")
+        if self.status is not JobStatus.FAILED and self.failure_metadata is not None:
+            raise ValueError("Only failed jobs may have failure_metadata")
         if self.status in TERMINAL_STATUSES and self.finished_at is None:
             raise ValueError("Terminal jobs require finished_at")
         if self.status not in TERMINAL_STATUSES and self.finished_at is not None:
@@ -167,7 +175,14 @@ class JobManager:
                 return record
         raise RuntimeError("Could not allocate a unique job ID")
 
-    def claim(self, job_id: str, worker_pid: int, worker_created_at: datetime) -> JobRecord:
+    def claim(
+        self,
+        job_id: str,
+        worker_pid: int,
+        worker_created_at: datetime,
+        worker_start_token: str | None = None,
+        worker_start_precision: str | None = None,
+    ) -> JobRecord:
         """Atomically claim a queued job for exactly one worker process."""
 
         path = self._job_path(job_id)
@@ -184,6 +199,8 @@ class JobManager:
                     "status": JobStatus.RUNNING,
                     "worker_pid": worker_pid,
                     "worker_created_at": worker_created_at,
+                    "worker_process_identity": worker_start_token,
+                    "worker_start_precision": worker_start_precision,
                     "started_at": now,
                     "heartbeat_at": now,
                     "updated_at": now,
@@ -253,12 +270,149 @@ class JobManager:
             raise ValueError("Persisted job ID does not match requested ID")
         return record
 
+    def status(
+        self,
+        job_id: str,
+        *,
+        wait_timeout_seconds: float = 0.0,
+        poll_interval_seconds: float = 0.25,
+    ) -> JobRecord:
+        """Look up a job, optionally waiting a bounded time for a terminal state."""
+
+        if (
+            not math.isfinite(wait_timeout_seconds)
+            or wait_timeout_seconds < 0
+            or wait_timeout_seconds > 60
+        ):
+            raise ValueError("wait_timeout_seconds must be finite and between 0 and 60")
+        if (
+            not math.isfinite(poll_interval_seconds)
+            or poll_interval_seconds < 0.01
+            or poll_interval_seconds > 5
+        ):
+            raise ValueError("poll_interval_seconds must be finite and between 0.01 and 5")
+        deadline = time.monotonic() + wait_timeout_seconds
+        while True:
+            record = self.recover_job(job_id)
+            if record.status in TERMINAL_STATUSES or time.monotonic() >= deadline:
+                return record
+            time.sleep(min(poll_interval_seconds, max(0.0, deadline - time.monotonic())))
+
+    def recover_job(self, job_id: str) -> JobRecord:
+        """Fail a confirmed abandoned worker; unknown OS probes leave state untouched."""
+
+        snapshot = self.get(job_id)
+        if snapshot.status is not JobStatus.RUNNING:
+            return snapshot
+        identity = (
+            get_process_identity(snapshot.worker_pid)
+            if snapshot.worker_pid is not None
+            else ProcessIdentity("dead")
+        )
+        diagnostic = self._abandonment_diagnostic(snapshot, identity)
+        if diagnostic is None:
+            return snapshot
+        path = self._job_path(job_id)
+        with FileLock(str(path) + ".transition.lock"):
+            current = self.get(job_id)
+            if (
+                current.status is not JobStatus.RUNNING
+                or current.worker_pid != snapshot.worker_pid
+                or current.worker_created_at != snapshot.worker_created_at
+                or current.worker_process_identity != snapshot.worker_process_identity
+            ):
+                return current
+            now = datetime.now(UTC)
+            diagnostic["detected_at"] = now.isoformat()
+            failed = JobRecord.model_validate(
+                {
+                    **current.model_dump(),
+                    "status": JobStatus.FAILED,
+                    "failure_reason": "abandoned_process",
+                    "failure_metadata": diagnostic,
+                    "updated_at": now,
+                    "finished_at": now,
+                    "duration_seconds": max(0.0, (now - current.created_at).total_seconds()),
+                }
+            )
+            atomic_save_json(path, failed, self.repo_root)
+            return failed
+
+    def recover_running_jobs(self) -> list[JobRecord]:
+        """Explicit startup recovery over validated direct job records only.
+
+        Hosts should call this when their CLI or MCP process starts. The directory
+        scan is intentionally bounded to direct ``*.json`` files under the
+        repository's validated jobs directory.
+        """
+
+        artifacts_root = self.repo_root / ".hybrid_sdlc"
+        jobs_root = artifacts_root / "jobs"
+        if not jobs_root.exists():
+            return []
+        if artifacts_root.resolve() != artifacts_root or jobs_root.resolve() != jobs_root:
+            raise PathTraversalError("Jobs directory escapes the repository artifacts directory")
+        recovered: list[JobRecord] = []
+        for candidate in jobs_root.iterdir():
+            if candidate.is_symlink() or not candidate.is_file() or candidate.suffix != ".json":
+                continue
+            try:
+                job_id = validate_job_id(candidate.stem)
+                record = self.get(job_id)
+            except (ValueError, OSError):
+                continue
+            if record.status is JobStatus.RUNNING:
+                recovered.append(self.recover_job(job_id))
+        return recovered
+
+    @staticmethod
+    def _abandonment_diagnostic(
+        record: JobRecord, identity: ProcessIdentity
+    ) -> dict[str, str | int | float | bool | None] | None:
+        if record.worker_pid is None or identity.state == "dead":
+            return {
+                "cause": "worker_process_missing",
+                "worker_pid": record.worker_pid,
+                "probe_state": identity.state,
+            }
+        if identity.state != "alive":
+            return None
+        if record.worker_process_identity is not None:
+            if identity.start_token is None:
+                return None
+            if record.worker_process_identity != identity.start_token:
+                return {
+                    "cause": "worker_pid_reused",
+                    "worker_pid": record.worker_pid,
+                    "expected_process_identity": record.worker_process_identity,
+                    "observed_process_identity": identity.start_token,
+                    "identity_precision": identity.precision,
+                }
+            return None
+        # Compatibility for pre-token records. Linux reconstructed creation
+        # times may drift after suspend/clock changes; ps is only second precise.
+        if record.worker_created_at is None or identity.created_at is None:
+            return None
+        tolerance = 1.1 if identity.precision == "1s" else 2.5
+        delta = abs((record.worker_created_at - identity.created_at).total_seconds())
+        if delta > tolerance:
+            return {
+                "cause": "worker_pid_reused_legacy_identity",
+                "worker_pid": record.worker_pid,
+                "expected_created_at": record.worker_created_at.isoformat(),
+                "observed_created_at": identity.created_at.isoformat(),
+                "identity_precision": identity.precision,
+                "comparison_tolerance_seconds": tolerance,
+            }
+        return None
+
     def transition(
         self,
         job_id: str,
         status: JobStatus,
         *,
         failure_reason: str | None = None,
+        failure_metadata: dict[str, str | int | float | bool | None] | None = None,
         run_result: RunResult | None = None,
     ) -> JobRecord:
         """Apply one legal transition under a per-job lock and atomic replacement."""
@@ -275,6 +429,7 @@ class JobManager:
             updates: dict[str, Any] = {
                 "status": status,
                 "failure_reason": failure_reason,
+                "failure_metadata": failure_metadata,
                 "updated_at": now,
                 "run_result": run_result,
             }

@@ -46,7 +46,7 @@ Job states are persisted to `.hybrid_sdlc/jobs/<job_id>.json`:
 - `spec_path` & `task_id`: Spec Kit task references.
 - `status`: `queued` | `running` | `completed` | `failed` | `cancelled`.
 - `failure_reason`: Optional machine-readable reason such as `abandoned_process`, `timeout`, `test_failure`, or `security_policy`.
-- `worker_pid`, `child_pid`, and process creation timestamps for health, PID-reuse detection, and cancellation tracking.
+- `worker_pid`, `child_pid`, process creation timestamps, and an OS start token for PID-reuse detection and cancellation tracking. Linux tokens combine the boot ID with `/proc/<pid>/stat` start ticks; Windows tokens use the exact FILETIME start value. macOS/BSD use `ps` start time at one-second precision, so reuse within the same second cannot always be distinguished.
 - `created_at`, `updated_at`, `duration_seconds`.
 - `attempts`: Array of attempt records (iteration index, test exit code, test stdout/stderr summary, diff stats).
 - `final_diff_patch`: Path to diff file in `.hybrid_sdlc/runs/<job_id>.patch`.
@@ -54,13 +54,14 @@ Job states are persisted to `.hybrid_sdlc/jobs/<job_id>.json`:
 
 #### Cancellation & Recovery
 - **Cancellation**: `cancel_spec_job(job_id)` terminates the full process tree using OS-specific process-group signaling (`os.killpg` on POSIX, Win32 Job Object or `taskkill /T /F` on Windows).
-- **Recovery**: On startup and status queries, the job manager inspects running jobs. If the recorded PID is dead or its creation time does not match, the job transitions to `failed` with `failure_reason: abandoned_process`.
+- **Recovery**: Status queries inspect only the requested running job; hosts may call `recover_running_jobs()` during startup to inspect persisted running jobs. A confirmed dead PID or mismatched start identity transitions atomically to `failed` with `failure_reason: abandoned_process` and typed diagnostic metadata. Permission/query failures are `unknown` and do not fail the job. Older records without a start token use a conservative timestamp comparison; ambiguous identities remain running.
 - **Atomicity**: State updates are written to a temporary file, flushed, and atomically replaced under a per-job lock so readers never observe partial JSON.
 
 #### Asynchronous Process Ownership
 - The stdio MCP process is a client-facing adapter, not the owner of long-running jobs.
 - `submit_spec_job` launches a separate `hybrid-sdlc worker <job_id>` process. The worker owns the Aider/test process group or Windows Job Object and continues if the MCP connection closes.
 - The worker persists heartbeats and terminal state. Status commands never infer success solely from PID existence.
+- Bounded status waits accept at most 60 seconds and poll at a validated interval. Startup recovery is explicit until the CLI/MCP lifecycle adds a startup hook.
 - A future daemon may replace per-job workers, but Phase 3 will implement only one ownership model to avoid split semantics.
 
 ---
