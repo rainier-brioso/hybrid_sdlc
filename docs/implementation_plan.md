@@ -305,8 +305,8 @@ gantt
     axisFormat  Day %d
     section Phase 1: Core Engine
     Single-repo runner, policy guard, bounded loop, JSON results    :active, p1, 0, 4
-    section Phase 2: Fixture E2E
-    End-to-end task against fixture repo, failure/cancel tests      :p2, after p1, 3
+    section Phase 2: CI & Fixture E2E
+    Protected-main CI, fixture E2E, failure/cancel tests            :p2, after p1, 3
     section Phase 3: MCP & Lifecycle
     MCP adapter, sync & async job lifecycle, state persistence       :p3, after p2, 2
     section Phase 4: Spec Kit Integration
@@ -315,8 +315,8 @@ gantt
     Opt-in commits, worktree isolation, locking                      :p5, after p4, 2
     section Phase 6: Host Adapters
     Antigravity & Codex packaging, skills, bootstrap guides         :p6, after p5, 2
-    section Phase 7: Verification & Benchmarks
-    Multi-OS CI matrix, RTX 3090 model benchmarks                   :p7, after p6, 2
+    section Phase 7: Packaging & Benchmarks
+    Packaging validation, RTX 3090 model benchmarks                :p7, after p6, 2
 ```
 
 ### Phase 1: Core Runner & Security Boundary (Foundational)
@@ -332,7 +332,12 @@ closure are recorded in `docs/implementation_tasks.md`.
 - Implement the canonical CLI entry points and stable exit-code/result schemas.
 - No automatic commits, dirty-tree execution, or destructive rollback; verify in-place diffs only.
 
-### Phase 2: Fixture Validation & Error Handling
+### Phase 2: Protected-Main CI, Fixture Validation & Error Handling
+- Establish a compact GitHub Actions matrix covering Windows, Ubuntu, macOS, and Python
+  3.11-3.13 as the first Phase 2 task.
+- Require frozen dependency sync, formatting, lint, strict types, tests, and branch coverage in
+  one Windows/Python 3.12 quality job. Run test-only compatibility jobs for the other supported
+  platforms and Python endpoints before merging into protected `main`.
 - Create test fixture repository with intentional failures.
 - Validate loop exit on: test pass, unchanged diff, repeated error signature, and timeout.
 - Validate process tree termination during simulated task cancellation.
@@ -362,8 +367,8 @@ closure are recorded in `docs/implementation_tasks.md`.
 - Generate configuration manifests for Antigravity, Claude Code, and Codex CLI.
 - Provide step-by-step installation instructions for each host.
 
-### Phase 7: Multi-OS CI & Hardware Benchmarks
-- Set up GitHub Actions matrix covering Windows, Ubuntu, and macOS.
+### Phase 7: Packaging, Hardware Benchmarks & Release Validation
+- Extend the Phase 2 CI foundation with distribution packaging and clean-install smoke tests.
 - Benchmark Qwen 2.5 Coder 32B (Q4_K_M) on RTX 3090: tokens/second, VRAM footprint under 16k context, and prompt processing times.
 
 ---
@@ -403,7 +408,8 @@ closure are recorded in `docs/implementation_tasks.md`.
 
 ### 4.2 Multi-Platform CI Matrix
 - **Operating Systems**: `windows-latest`, `ubuntu-latest`, `macos-latest`.
-- **Python Versions**: `3.10`, `3.11`, `3.12`.
+- **Python Versions**: `3.11`, `3.12`, `3.13` through five targeted jobs rather than a full
+  operating-system-by-version cross product.
 - Path separator assertions: explicit verification that both Windows backslashes and POSIX forward slashes are handled without path syntax errors.
 
 ### 4.3 Manual & Hardware Verification

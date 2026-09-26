@@ -42,7 +42,7 @@ class _WindowsJobObject:
         import ctypes
         from ctypes import wintypes
 
-        kernel32 = ctypes.windll.kernel32
+        kernel32 = ctypes.windll.kernel32  # type: ignore[attr-defined]
 
         self.handle = kernel32.CreateJobObjectW(None, None)
         if not self.handle:
@@ -99,22 +99,47 @@ class _WindowsJobObject:
             return False
         import ctypes
 
-        return bool(ctypes.windll.kernel32.AssignProcessToJobObject(self.handle, process_handle))
+        return bool(ctypes.windll.kernel32.AssignProcessToJobObject(self.handle, process_handle))  # type: ignore[attr-defined]
 
     def terminate(self) -> None:
         if not self.handle or os.name != "nt":
             return
         import ctypes
 
-        ctypes.windll.kernel32.TerminateJobObject(self.handle, 1)
+        ctypes.windll.kernel32.TerminateJobObject(self.handle, 1)  # type: ignore[attr-defined]
 
     def close(self) -> None:
         if not self.handle or os.name != "nt":
             return
         import ctypes
 
-        ctypes.windll.kernel32.CloseHandle(self.handle)
+        ctypes.windll.kernel32.CloseHandle(self.handle)  # type: ignore[attr-defined]
         self.handle = None
+
+
+def process_is_alive(pid: int) -> bool:
+    """Check if a process with the given PID is alive (cross-platform)."""
+    if os.name == "nt":
+        try:
+            import ctypes
+
+            kernel32 = ctypes.windll.kernel32  # type: ignore[attr-defined]
+            process_query_limited_information = 0x00001000  # noqa: N806
+            handle = kernel32.OpenProcess(process_query_limited_information, False, pid)
+            if handle:
+                kernel32.CloseHandle(handle)
+                return True
+            return False
+        except Exception:
+            return False
+    else:
+        try:
+            os.kill(pid, 0)
+            return True
+        except ProcessLookupError:
+            return False
+        except OSError:
+            return False
 
 
 def kill_process_tree(proc: subprocess.Popen[bytes]) -> None:
@@ -179,7 +204,7 @@ def run_bounded_subprocess(
 
     if os.name == "nt":
         # CREATE_SUSPENDED (0x4) or standard creation
-        popen_kwargs["creationflags"] = subprocess.CREATE_NEW_PROCESS_GROUP
+        popen_kwargs["creationflags"] = subprocess.CREATE_NEW_PROCESS_GROUP  # type: ignore[attr-defined]
     else:
         popen_kwargs["start_new_session"] = True
 
@@ -197,10 +222,10 @@ def run_bounded_subprocess(
         # Assign process to job object
         import ctypes
 
-        process_handle = ctypes.windll.kernel32.OpenProcess(0x1F0FFF, False, proc.pid)
+        process_handle = ctypes.windll.kernel32.OpenProcess(0x1F0FFF, False, proc.pid)  # type: ignore[attr-defined]
         if process_handle:
             job_obj.assign_process(process_handle)
-            ctypes.windll.kernel32.CloseHandle(process_handle)
+            ctypes.windll.kernel32.CloseHandle(process_handle)  # type: ignore[attr-defined]
 
     stdout_chunks: list[bytes] = []
     stderr_chunks: list[bytes] = []
@@ -244,18 +269,17 @@ def run_bounded_subprocess(
 
     deadline = time.monotonic() + timeout_seconds
     try:
-        while proc.poll() is None:
+        while True:
             if cancel_event is not None and cancel_event.is_set():
                 cancelled = True
+                break
+            if proc.poll() is not None:
                 break
             remaining = deadline - time.monotonic()
             if remaining <= 0:
                 timed_out = True
                 break
-            try:
-                proc.wait(timeout=min(0.05, remaining))
-            except subprocess.TimeoutExpired:
-                continue
+            time.sleep(0.01)
     except KeyboardInterrupt:
         cancelled = True
     finally:
