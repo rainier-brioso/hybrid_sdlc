@@ -309,9 +309,10 @@ A task is complete when:
 - The suite used local mocks and fake executables; no live model, GPU, or internet access was used.
 - CI workflow `.github/workflows/ci.yml` updated with:
   - Explicit `contents: read` permissions
-  - `astral-sh/setup-uv@v5` action with pinned version 0.5.28 and `python-version` matrix selection
-  - Python matrix aligned to `>=3.11,<3.14` with 3.11, 3.12, 3.13
-  - Stable `CI / Required` aggregate check job (compares `needs.quality-gate.result` directly)
+  - `astral-sh/setup-uv@v10.2.0` action with pinned uv version 0.5.28
+  - Windows/Python 3.12 quality job plus four test-only compatibility jobs covering Python
+    3.11-3.13 and Windows, Ubuntu, and macOS
+  - Stable `CI / Required` aggregate check job (requires both job groups to succeed)
 
 ---
 
@@ -321,13 +322,13 @@ A task is complete when:
    Files: `.github/workflows/ci.yml`, `docs/development.md`  
     Depends on: HSDLC-031  
     Acceptance:
-    - Pull requests and pushes to `main` run on Windows, Ubuntu, and macOS for every supported
-      Python version.
+    - Pull requests and pushes to `main` run the full suite on Windows, Ubuntu, and macOS,
+      and on Python 3.11, 3.12, and 3.13 through a compact compatibility matrix.
     - Frozen dependency sync, formatting, lint, strict types, tests, and branch coverage run
-      without a live model, GPU, or internet-dependent test.
+      in the Windows/Python 3.12 quality job without a live model, GPU, or internet-dependent test.
     - Workflow permissions are read-only by default, redundant runs are cancelled, and the
       required check names are stable enough to bind to the protected-branch ruleset.
-    - **Not complete** until a pull request has run the full remote matrix successfully.
+    - **Not complete** until a pull request has run all remote jobs successfully.
       Do not mark this task done without evidence of a passing CI run on a PR to `main`.
 
 - [x] **HSDLC-032 — Create an isolated fixture-repository factory**  

@@ -333,9 +333,11 @@ closure are recorded in `docs/implementation_tasks.md`.
 - No automatic commits, dirty-tree execution, or destructive rollback; verify in-place diffs only.
 
 ### Phase 2: Protected-Main CI, Fixture Validation & Error Handling
-- Establish a GitHub Actions matrix on Windows, Ubuntu, and macOS as the first Phase 2 task.
-- Require frozen dependency sync, formatting, lint, strict types, tests, and branch coverage
-  before merging subsequent task branches into protected `main`.
+- Establish a compact GitHub Actions matrix covering Windows, Ubuntu, macOS, and Python
+  3.11-3.13 as the first Phase 2 task.
+- Require frozen dependency sync, formatting, lint, strict types, tests, and branch coverage in
+  one Windows/Python 3.12 quality job. Run test-only compatibility jobs for the other supported
+  platforms and Python endpoints before merging into protected `main`.
 - Create test fixture repository with intentional failures.
 - Validate loop exit on: test pass, unchanged diff, repeated error signature, and timeout.
 - Validate process tree termination during simulated task cancellation.

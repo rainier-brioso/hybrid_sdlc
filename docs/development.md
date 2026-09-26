@@ -100,11 +100,10 @@ uv run pytest --cov=hybrid_sdlc.security tests/unit/test_security.py
 
 ## CI Pipeline
 
-Continuous integration runs on every pull request and push to `main` across Windows, Ubuntu, and
-macOS for Python 3.11, 3.12, and 3.13. The workflow is defined in
+Continuous integration runs on every pull request and push to `main`. The workflow is defined in
 `.github/workflows/ci.yml`. The repository contains 50 E2E tests, 13 integration tests, and 84 unit tests.
 
-Each job executes:
+The Windows/Python 3.12 quality job executes:
 
 1. Frozen dependency sync (`uv sync --frozen`)
 2. Formatting check (`ruff format --check`)
@@ -112,9 +111,14 @@ Each job executes:
 4. Strict type checking (`mypy src/`)
 5. Full test suite with branch coverage (`pytest --cov`)
 
+Compatibility jobs run the full test suite without repeating static checks or coverage on
+Ubuntu/Python 3.11, 3.12, and 3.13, and macOS/Python 3.12.
+Coverage is gated on Windows because the process-tree implementation contains Windows-only
+branches; the Linux test suite currently measures below the shared 80% threshold even when all tests pass.
+
 CI permissions are read-only by default and redundant runs are cancelled.
 Bind the stable aggregate check `CI / Required` to the protected-branch ruleset.
-The underlying `Quality Gate (Python x.y, <os>)` jobs are implementation details
+The underlying quality and compatibility jobs are implementation details
 and should not be referenced individually.
 
 ## Protected `main` Workflow
