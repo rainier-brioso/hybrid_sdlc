@@ -394,8 +394,8 @@ A task is complete when:
   - Duplicate workers cannot claim the same job.
   - Heartbeat and terminal state are persisted atomically.
 
-- [ ] **HSDLC-040 — Implement asynchronous submission**  
-  Files: `src/hybrid_sdlc/job_manager.py`, `tests/integration/test_jobs.py`  
+- [x] **HSDLC-040 — Implement asynchronous submission**  
+  Files: `src/hybrid_sdlc/submission.py`, `tests/integration/test_jobs.py`  
   Depends on: HSDLC-039  
   Acceptance:
   - Submission validates all policy inputs before creating the job.
