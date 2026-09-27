@@ -194,9 +194,11 @@ def test_submitted_worker_survives_stdio_adapter_disconnect_and_reconnects(
             assert worker_pid is not None
             worker_details = json.loads(marker.read_text(encoding="utf-8"))
             assert worker_details["pid"] == worker_pid
-            adapter_pid = adapter_processes[-1].pid
+            adapter_process = adapter_processes[-1]
+            adapter_pid = adapter_process.pid
             os.kill(adapter_pid, signal.SIGTERM)
-            assert _wait_for(lambda: get_process_identity(adapter_pid).state == "dead")
+            assert await _wait_for_async(lambda: adapter_process.returncode is not None)
+            assert adapter_process.returncode is not None
             assert get_process_identity(worker_pid).state == "alive"
         finally:
             try:
@@ -389,14 +391,16 @@ def test_sync_call_shutdown_kills_child_and_grandchild(
                 request.result().content[0].text if request.done() else "sync child did not start"
             )
             descendant_pids = json.loads(pid_file.read_text(encoding="utf-8"))
-            adapter_pid = adapter_processes[-1].pid
+            adapter_process = adapter_processes[-1]
+            adapter_pid = adapter_process.pid
             os.kill(adapter_pid, signal.SIGTERM)
-            assert _wait_for(lambda: get_process_identity(adapter_pid).state == "dead")
+            assert await _wait_for_async(lambda: adapter_process.returncode is not None)
+            assert adapter_process.returncode is not None
             try:
                 await asyncio.wait_for(request, timeout=5)
             except Exception:
                 pass  # The adapter was intentionally terminated while the tool was active.
-            assert _wait_for(
+            assert await _wait_for_async(
                 lambda: all(get_process_identity(pid).state == "dead" for pid in descendant_pids)
             ), f"Synchronous process tree survived shutdown: {descendant_pids}"
         finally:
