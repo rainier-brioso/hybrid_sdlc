@@ -478,7 +478,7 @@ A task is complete when:
   - Fix any supported-host failure before claiming Windows async support is
     verified; retain fail-closed behavior on restrictive hosts.
 
-- [ ] **HSDLC-046 — Add canonical Spec Kit templates**  
+- [x] **HSDLC-046 — Add canonical Spec Kit templates**
   Files: `.specify/memory/constitution.md`, `.specify/templates/*.md`  
   Depends on: HSDLC-031  
   Acceptance:
