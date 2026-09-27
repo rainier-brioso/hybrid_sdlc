@@ -485,7 +485,7 @@ A task is complete when:
   - Feature artifacts target top-level `specs/<NNN-feature>/`.
   - Templates require acceptance criteria, interfaces, test commands by profile name, and atomic tasks.
 
-- [ ] **HSDLC-047 — Define initializer ownership metadata**  
+- [x] **HSDLC-047 — Define initializer ownership metadata**
   Files: `src/hybrid_sdlc/spec_initializer.py`, `tests/unit/test_spec_initializer.py`  
   Depends on: HSDLC-046  
   Acceptance:
@@ -496,6 +496,7 @@ A task is complete when:
   Files: `src/hybrid_sdlc/spec_initializer.py`, `tests/integration/test_init.py`  
   Depends on: HSDLC-047  
   Acceptance:
+  - Canonical templates are available from an installed package, not only a source checkout.
   - First run creates missing files; second run is byte-for-byte idempotent.
   - Customized files are preserved unless `--force` is explicitly supplied.
   - `--force` creates a recoverable backup and reports every replacement.
