@@ -78,6 +78,31 @@ def test_create_and_reload_persist_queued_state(tmp_path: Path) -> None:
     assert (tmp_path / ".hybrid_sdlc" / "jobs" / f"{created.job_id}.json").is_file()
 
 
+def test_list_jobs_skips_malformed_records_and_sorts_newest_first(tmp_path: Path) -> None:
+    manager = JobManager(tmp_path)
+    first = manager.create("specs/001/tasks.md", "T001")
+    second = manager.create("specs/001/tasks.md", "T002")
+    jobs_dir = tmp_path / ".hybrid_sdlc" / "jobs"
+    (jobs_dir / "not-a-job.json").write_text("{}", encoding="utf-8")
+    (jobs_dir / "job_20260101T000000000000Z_1234abcd.json").write_text("not json", encoding="utf-8")
+
+    assert manager.list_jobs() == [second, first]
+
+
+def test_list_jobs_rejects_symlinked_jobs_directory(tmp_path: Path) -> None:
+    outside = tmp_path / "elsewhere"
+    outside.mkdir()
+    jobs_dir = tmp_path / ".hybrid_sdlc" / "jobs"
+    jobs_dir.parent.mkdir()
+    try:
+        jobs_dir.symlink_to(outside, target_is_directory=True)
+    except (OSError, NotImplementedError):
+        pytest.skip("Directory symlinks are unavailable")
+
+    with pytest.raises(PathTraversalError):
+        JobManager(tmp_path).list_jobs()
+
+
 def test_create_retries_colliding_id(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     manager = JobManager(tmp_path)
     first = manager.create("specs/001/tasks.md", "T001")

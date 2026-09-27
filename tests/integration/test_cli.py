@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import os
 import subprocess
 import time
 from pathlib import Path
@@ -13,6 +14,9 @@ from click.testing import CliRunner
 
 from hybrid_sdlc.cli import cli
 from hybrid_sdlc.errors import ExitCode
+from hybrid_sdlc.job_manager import JobManager, JobRecord, JobStatus
+from hybrid_sdlc.processes import get_process_identity
+from hybrid_sdlc.submission import JobSubmissionError
 
 _orig_client = httpx.Client
 
@@ -45,6 +49,9 @@ def test_cli_help() -> None:
     assert result.exit_code == 0
     assert "check" in result.output
     assert "run-task" in result.output
+    assert "submit" in result.output
+    assert "status" in result.output
+    assert "cancel" in result.output
     assert "clean" in result.output
 
 
@@ -204,3 +211,152 @@ def test_cli_run_task_json_stdout_only(tmp_path: Path) -> None:
     assert isinstance(parsed, dict)
     # Ensure no decorative lines snuck in before/after the JSON object
     assert stdout.startswith("{") and stdout.endswith("}")
+
+
+def test_cli_submit_human_and_json(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    _init_git_repo(tmp_path)
+    manager = JobManager(tmp_path)
+    queued = manager.create("spec.md", "T-1", test_profile="pytest")
+    identity = get_process_identity(os.getpid())
+    assert identity.created_at is not None
+    record = manager.claim(queued.job_id, os.getpid(), identity.created_at)
+    monkeypatch.setattr("hybrid_sdlc.cli.submit_job", lambda **kwargs: record)
+    runner = CliRunner()
+    args = [
+        "submit",
+        "spec.md",
+        "--repo-root",
+        str(tmp_path),
+        "--task-id",
+        "T-1",
+        "--test-profile",
+        "pytest",
+    ]
+
+    human = runner.invoke(cli, args)
+    assert human.exit_code == 0
+    assert f"Submitted job {record.job_id} (RUNNING)" in human.output
+
+    machine = runner.invoke(cli, [*args, "--json"])
+    assert machine.exit_code == 0
+    assert json.loads(machine.output)["job_id"] == record.job_id
+
+
+def test_cli_submit_error_json_includes_allocated_job_id(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    _init_git_repo(tmp_path)
+    diagnostic_id = "job_20260101T010203000000Z_0123abcd"
+    monkeypatch.setattr(
+        "hybrid_sdlc.cli.submit_job",
+        lambda **kwargs: (_ for _ in ()).throw(JobSubmissionError(diagnostic_id, "startup failed")),
+    )
+    result = CliRunner().invoke(
+        cli,
+        [
+            "submit",
+            "spec.md",
+            "--repo-root",
+            str(tmp_path),
+            "--task-id",
+            "T-1",
+            "--test-profile",
+            "pytest",
+            "--json",
+        ],
+    )
+    assert result.exit_code == ExitCode.POLICY_ERROR
+    data = json.loads(result.output)
+    assert data["code"] == "JOB_SUBMISSION_FAILED"
+    assert data["details"]["job_id"] == diagnostic_id
+
+
+def test_cli_status_lists_jobs_and_emits_json(tmp_path: Path) -> None:
+    _init_git_repo(tmp_path)
+    record = JobManager(tmp_path).create("spec.md", "T-1")
+    runner = CliRunner()
+
+    human = runner.invoke(cli, ["status", "--repo-root", str(tmp_path)])
+    assert human.exit_code == 0
+    assert f"Job {record.job_id}: QUEUED" in human.output
+
+    machine = runner.invoke(cli, ["status", "--repo-root", str(tmp_path), "--json"])
+    assert machine.exit_code == 0
+    assert json.loads(machine.output)["jobs"][0]["job_id"] == record.job_id
+
+
+def test_cli_status_by_id_waits_and_reports_missing_or_invalid_jobs(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    _init_git_repo(tmp_path)
+    manager = JobManager(tmp_path)
+    record = manager.create("spec.md", "T-1")
+    observed: dict[str, float] = {}
+
+    def capture_status(self: JobManager, job_id: str, **kwargs: float) -> JobRecord:
+        observed.update(kwargs)
+        return self.get(job_id)
+
+    monkeypatch.setattr(JobManager, "status", capture_status)
+    runner = CliRunner()
+    result = runner.invoke(
+        cli,
+        ["status", record.job_id, "--repo-root", str(tmp_path), "--wait", "--json"],
+    )
+    assert result.exit_code == 0
+    assert json.loads(result.output)["job_id"] == record.job_id
+    assert observed == {"wait_timeout_seconds": 60.0, "poll_interval_seconds": 0.25}
+
+    missing = runner.invoke(
+        cli,
+        ["status", "job_20260101T010203000000Z_0123abcd", "--repo-root", str(tmp_path), "--json"],
+    )
+    assert missing.exit_code == ExitCode.POLICY_ERROR
+    assert json.loads(missing.output)["code"] == "JOB_NOT_FOUND"
+
+    invalid = runner.invoke(cli, ["status", "../../unsafe", "--repo-root", str(tmp_path), "--json"])
+    assert invalid.exit_code == ExitCode.POLICY_ERROR
+    assert json.loads(invalid.output)["code"] == "INVALID_JOB_ID"
+
+
+def test_cli_status_rejects_wait_without_id_as_json(tmp_path: Path) -> None:
+    _init_git_repo(tmp_path)
+    result = CliRunner().invoke(cli, ["status", "--repo-root", str(tmp_path), "--wait", "--json"])
+    assert result.exit_code == ExitCode.POLICY_ERROR
+    assert json.loads(result.output)["code"] == "INVALID_STATUS_OPTIONS"
+
+
+def test_cli_cancel_running_job_reports_request_without_claiming_termination(
+    tmp_path: Path,
+) -> None:
+    _init_git_repo(tmp_path)
+    manager = JobManager(tmp_path)
+    created = manager.create("spec.md", "T-1")
+    identity = get_process_identity(os.getpid())
+    assert identity.created_at is not None
+    manager.claim(created.job_id, os.getpid(), identity.created_at)
+    runner = CliRunner()
+
+    human = runner.invoke(cli, ["cancel", created.job_id, "--repo-root", str(tmp_path)])
+    assert human.exit_code == 0
+    assert "Cancellation requested" in human.output
+    assert "status remains RUNNING" in human.output
+
+
+def test_cli_cancel_queued_job_json_and_invalid_id(tmp_path: Path) -> None:
+    _init_git_repo(tmp_path)
+    manager = JobManager(tmp_path)
+    record = manager.create("spec.md", "T-1")
+    runner = CliRunner()
+
+    cancelled = runner.invoke(
+        cli, ["cancel", record.job_id, "--repo-root", str(tmp_path), "--json"]
+    )
+    assert cancelled.exit_code == 0
+    data = json.loads(cancelled.output)
+    assert data["job"]["status"] == JobStatus.CANCELLED.value
+    assert data["cancellation"] == "cancelled"
+
+    invalid = runner.invoke(cli, ["cancel", "../../unsafe", "--repo-root", str(tmp_path), "--json"])
+    assert invalid.exit_code == ExitCode.POLICY_ERROR
+    assert json.loads(invalid.output)["code"] == "INVALID_JOB_ID"

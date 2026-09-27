@@ -155,9 +155,9 @@ hybrid-sdlc check [--host-url URL] [--probe-all]
 hybrid-sdlc run-task <spec_file> --repo-root <path> --task-id <id> --test-profile <name> [--commit] [--max-retries 3]
 
 # 3. Asynchronous Job Operations
-hybrid-sdlc submit <spec_file> --repo-root <path> --task-id <id> --test-profile <name>
-hybrid-sdlc status [job_id] [--wait] [--poll-interval 10]
-hybrid-sdlc cancel <job_id>
+hybrid-sdlc submit <spec_file> --repo-root <path> --task-id <id> --test-profile <name> [--host-url URL] [--model NAME] [--max-retries N] [--json]
+hybrid-sdlc status [job_id] [--repo-root <path>] [--wait] [--poll-interval 0.25] [--json]
+hybrid-sdlc cancel <job_id> [--repo-root <path>] [--json]
 hybrid-sdlc clean --older-than <duration>
 
 # 4. Spec Kit Initialization
@@ -166,6 +166,8 @@ hybrid-sdlc init [--target-dir .] [--force]
 # 5. Model Context Protocol Server (Stdio)
 hybrid-sdlc mcp
 ```
+
+`status` without an ID lists validated direct job records newest first. `--wait` requires a job ID and waits up to 60 seconds; the polling interval must be between 0.01 and 5 seconds. Status is informational and exits successfully for any found job state. `cancel` exits successfully when cancellation is accepted; a running job remains `running` until its worker observes the request. JSON errors are one object with stable `code`, `message`, and `details` fields; submission startup errors include the allocated `job_id` in `details`.
 
 ---
 

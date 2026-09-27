@@ -421,12 +421,14 @@ A task is complete when:
   - A race between completion and cancellation resolves to one valid terminal state.
   - Running cancellation is persisted and observed by the worker heartbeat; the bounded subprocess runner terminates its owned process tree.
 
-- [ ] **HSDLC-043 — Implement async CLI commands**  
-  Files: `src/hybrid_sdlc/cli.py`, `tests/integration/test_cli.py`  
+- [x] **HSDLC-043 — Implement async CLI commands**
+  Files: `src/hybrid_sdlc/cli.py`, `src/hybrid_sdlc/job_manager.py`, `tests/integration/test_cli.py`
   Depends on: HSDLC-040, HSDLC-041, HSDLC-042  
   Acceptance:
   - `submit`, `status`, and `cancel` conform to the plan's canonical syntax.
   - Human and JSON output modes are tested.
+  - `status` can safely list validated job records, and bounded waits require a job ID.
+  - Submission diagnostics retain the allocated job ID; cancellation output distinguishes a request from termination.
 
 - [ ] **HSDLC-044 — Implement the stdio MCP server**  
   Files: `src/hybrid_sdlc/mcp_server.py`, `tests/integration/test_mcp_server.py`  

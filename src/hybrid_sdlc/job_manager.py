@@ -304,6 +304,26 @@ class JobManager:
             raise ValueError("Persisted job ID does not match requested ID")
         return record
 
+    def list_jobs(self) -> list[JobRecord]:
+        """List valid direct job records, newest first, without following symlinks."""
+
+        artifacts_root = self.repo_root / ".hybrid_sdlc"
+        jobs_root = artifacts_root / "jobs"
+        if not jobs_root.exists():
+            return []
+        if artifacts_root.resolve() != artifacts_root or jobs_root.resolve() != jobs_root:
+            raise PathTraversalError("Jobs directory escapes the repository artifacts directory")
+        records: list[JobRecord] = []
+        for candidate in jobs_root.iterdir():
+            if candidate.is_symlink() or not candidate.is_file() or candidate.suffix != ".json":
+                continue
+            try:
+                job_id = validate_job_id(candidate.stem)
+                records.append(self.get(job_id))
+            except (ValueError, OSError):
+                continue
+        return sorted(records, key=lambda record: record.created_at, reverse=True)
+
     def status(
         self,
         job_id: str,
