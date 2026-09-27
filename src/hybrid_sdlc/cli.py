@@ -535,6 +535,14 @@ def worker_cmd(job_id: str, repo_root: Path | None, json_mode: bool) -> None:
     sys.exit(ExitCode.SUCCESS if record.status is JobStatus.COMPLETED else ExitCode.TASK_FAILED)
 
 
+@cli.command("mcp")
+def mcp_cmd() -> None:
+    """Run the stdio Model Context Protocol adapter."""
+    from hybrid_sdlc.mcp_server import main
+
+    main()
+
+
 @cli.command("clean")
 @click.option(
     "--repo-root", type=click.Path(path_type=Path), default=None, help="Target repository root."

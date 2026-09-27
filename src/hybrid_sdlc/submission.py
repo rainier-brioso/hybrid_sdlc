@@ -70,7 +70,7 @@ def _detached_options() -> dict[str, Any]:
     return options
 
 
-def _preflight(
+def preflight_task_request(
     *,
     repo_root: Path | str | None,
     spec_path: Path | str,
@@ -200,7 +200,7 @@ def submit_job(
         or not 0 < startup_timeout_seconds <= 60
     ):
         raise ValueError("startup_timeout_seconds must be greater than 0 and at most 60")
-    verified_root, relative_spec, endpoint_url, target_model, retries = _preflight(
+    verified_root, relative_spec, endpoint_url, target_model, retries = preflight_task_request(
         repo_root=repo_root,
         spec_path=spec_path,
         task_id=task_id,

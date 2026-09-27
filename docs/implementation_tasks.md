@@ -430,7 +430,7 @@ A task is complete when:
   - `status` can safely list validated job records, and bounded waits require a job ID.
   - Submission diagnostics retain the allocated job ID; cancellation output distinguishes a request from termination.
 
-- [ ] **HSDLC-044 — Implement the stdio MCP server**  
+- [x] **HSDLC-044 — Implement the stdio MCP server**
   Files: `src/hybrid_sdlc/mcp_server.py`, `tests/integration/test_mcp_server.py`  
   Depends on: HSDLC-029, HSDLC-043  
   Acceptance:
