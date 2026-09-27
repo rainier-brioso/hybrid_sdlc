@@ -197,7 +197,10 @@ def test_submitted_worker_survives_stdio_adapter_disconnect_and_reconnects(
             adapter_process = adapter_processes[-1]
             adapter_pid = adapter_process.pid
             os.kill(adapter_pid, signal.SIGTERM)
-            assert await _wait_for_async(lambda: adapter_process.returncode is not None)
+            assert await _wait_for_async(lambda: adapter_process.returncode is not None), (
+                f"Adapter did not exit after SIGTERM (pid={adapter_pid}, "
+                f"returncode={adapter_process.returncode})"
+            )
             assert adapter_process.returncode is not None
             assert get_process_identity(worker_pid).state == "alive"
         finally:
@@ -330,8 +333,9 @@ def test_default_windows_stdio_job_scope_rejects_async_submission_before_job_cre
                 pass
 
 
+@pytest.mark.parametrize("shutdown", ["signal", "stdin_eof"])
 def test_sync_call_shutdown_kills_child_and_grandchild(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    shutdown: str, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     repo = create_spec_repo(tmp_path)
     pid_file = tmp_path / "descendant-pids.json"
@@ -393,8 +397,15 @@ def test_sync_call_shutdown_kills_child_and_grandchild(
             descendant_pids = json.loads(pid_file.read_text(encoding="utf-8"))
             adapter_process = adapter_processes[-1]
             adapter_pid = adapter_process.pid
-            os.kill(adapter_pid, signal.SIGTERM)
-            assert await _wait_for_async(lambda: adapter_process.returncode is not None)
+            if shutdown == "stdin_eof":
+                assert adapter_process.stdin is not None
+                await adapter_process.stdin.aclose()
+            else:
+                os.kill(adapter_pid, signal.SIGTERM)
+            assert await _wait_for_async(lambda: adapter_process.returncode is not None), (
+                f"Adapter did not exit after {shutdown} (pid={adapter_pid}, "
+                f"returncode={adapter_process.returncode})"
+            )
             assert adapter_process.returncode is not None
             try:
                 await asyncio.wait_for(request, timeout=5)

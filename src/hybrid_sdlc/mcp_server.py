@@ -4,11 +4,13 @@ from __future__ import annotations
 
 import asyncio
 import math
+import os
 import re
 import signal
 from typing import Annotated, Any, NoReturn, cast
 from urllib.parse import urlsplit, urlunsplit
 
+import anyio
 from mcp.server import MCPServer
 from mcp.server.mcpserver import Context
 from mcp.server.mcpserver.exceptions import ToolError
@@ -224,9 +226,23 @@ def main() -> None:
 
     def shutdown_handler(signum: int, frame: Any) -> NoReturn:
         del frame
-        terminate_active_processes()
-        raise SystemExit(128 + signum)
+        try:
+            terminate_active_processes()
+        finally:
+            # The MCP SDK's stdio transport can leave a reader thread blocked
+            # on stdin. Avoid interpreter finalization after cleanup so signals
+            # reliably stop the adapter even while a client keeps stdin open.
+            os._exit(128 + signum)
 
     signal.signal(signal.SIGTERM, shutdown_handler)
     signal.signal(signal.SIGINT, shutdown_handler)
-    mcp.run(transport="stdio")
+
+    async def run_stdio() -> None:
+        try:
+            await mcp.run_stdio_async()
+        finally:
+            # EOF can cancel an active tool while its asyncio.to_thread worker
+            # keeps running. Clean up before anyio.run shuts down that executor.
+            terminate_active_processes()
+
+    anyio.run(run_stdio)
