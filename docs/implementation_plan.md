@@ -368,6 +368,9 @@ closure are recorded in `docs/implementation_tasks.md`.
   - `cancel_spec_job(job_id)`
 
 ### Phase 4: Spec Kit Layout & Idempotent Init
+- Complete HSDLC-045A's deferred supported-host Windows MCP worker-survival E2E
+  before claiming Windows asynchronous jobs are verified. Restrictive hosts
+  continue to reject async submission safely.
 - Implement `spec_initializer.py` applying `.specify/memory/constitution.md` and `.specify/templates/`.
 - Ensure `hybrid-sdlc init` is idempotent and will not overwrite existing customized files without `--force`.
 
