@@ -45,22 +45,24 @@ Job states are persisted to `.hybrid_sdlc/jobs/<job_id>.json`:
 - `job_id`: Format `job_<timestamp>_<uuid8>`.
 - `spec_path` & `task_id`: Spec Kit task references.
 - `status`: `queued` | `running` | `completed` | `failed` | `cancelled`.
+- `cancellation_requested`: Persisted request observed by the owning worker on its next heartbeat.
 - `failure_reason`: Optional machine-readable reason such as `abandoned_process`, `timeout`, `test_failure`, or `security_policy`.
-- `worker_pid`, `child_pid`, and process creation timestamps for health, PID-reuse detection, and cancellation tracking.
+- `worker_pid`, `child_pid`, process creation timestamps, and an OS start token for PID-reuse detection and cancellation tracking. Linux tokens combine the boot ID with `/proc/<pid>/stat` start ticks; Windows tokens use the exact FILETIME start value. macOS/BSD use `ps` start time at one-second precision, so reuse within the same second cannot always be distinguished.
 - `created_at`, `updated_at`, `duration_seconds`.
 - `attempts`: Array of attempt records (iteration index, test exit code, test stdout/stderr summary, diff stats).
 - `final_diff_patch`: Path to diff file in `.hybrid_sdlc/runs/<job_id>.patch`.
 - `log_file`: Path to raw stdout/stderr execution log.
 
 #### Cancellation & Recovery
-- **Cancellation**: `cancel_spec_job(job_id)` terminates the full process tree using OS-specific process-group signaling (`os.killpg` on POSIX, Win32 Job Object or `taskkill /T /F` on Windows).
-- **Recovery**: On startup and status queries, the job manager inspects running jobs. If the recorded PID is dead or its creation time does not match, the job transitions to `failed` with `failure_reason: abandoned_process`.
+- **Cancellation**: `cancel_spec_job(job_id)` persists a cancellation request while a job is running; the owning worker observes it on its next heartbeat and asks the bounded subprocess runner to terminate the process tree it owns. Queued jobs become cancelled immediately. Per-job locking determines whether completion or cancellation wins, and no external process is killed based only on a persisted PID.
+- **Recovery**: Status queries inspect only the requested running job; hosts may call `recover_running_jobs()` during startup to inspect persisted running jobs. A confirmed dead PID or mismatched start identity transitions atomically to `failed` with `failure_reason: abandoned_process` and typed diagnostic metadata. Permission/query failures are `unknown` and do not fail the job. Older records without a start token use a conservative timestamp comparison; ambiguous identities remain running.
 - **Atomicity**: State updates are written to a temporary file, flushed, and atomically replaced under a per-job lock so readers never observe partial JSON.
 
 #### Asynchronous Process Ownership
 - The stdio MCP process is a client-facing adapter, not the owner of long-running jobs.
 - `submit_spec_job` launches a separate `hybrid-sdlc worker <job_id>` process. The worker owns the Aider/test process group or Windows Job Object and continues if the MCP connection closes.
 - The worker persists heartbeats and terminal state. Status commands never infer success solely from PID existence.
+- Bounded status waits accept at most 60 seconds and poll at a validated interval. Startup recovery is explicit until the CLI/MCP lifecycle adds a startup hook.
 - A future daemon may replace per-job workers, but Phase 3 will implement only one ownership model to avoid split semantics.
 
 ---
@@ -153,9 +155,9 @@ hybrid-sdlc check [--host-url URL] [--probe-all]
 hybrid-sdlc run-task <spec_file> --repo-root <path> --task-id <id> --test-profile <name> [--commit] [--max-retries 3]
 
 # 3. Asynchronous Job Operations
-hybrid-sdlc submit <spec_file> --repo-root <path> --task-id <id> --test-profile <name>
-hybrid-sdlc status [job_id] [--wait] [--poll-interval 10]
-hybrid-sdlc cancel <job_id>
+hybrid-sdlc submit <spec_file> --repo-root <path> --task-id <id> --test-profile <name> [--host-url URL] [--model NAME] [--max-retries N] [--json]
+hybrid-sdlc status [job_id] [--repo-root <path>] [--wait] [--poll-interval 0.25] [--json]
+hybrid-sdlc cancel <job_id> [--repo-root <path>] [--json]
 hybrid-sdlc clean --older-than <duration>
 
 # 4. Spec Kit Initialization
@@ -164,6 +166,8 @@ hybrid-sdlc init [--target-dir .] [--force]
 # 5. Model Context Protocol Server (Stdio)
 hybrid-sdlc mcp
 ```
+
+`status` without an ID lists validated direct job records newest first. `--wait` requires a job ID and waits up to 60 seconds; the polling interval must be between 0.01 and 5 seconds. Status is informational and exits successfully for any found job state. `cancel` exits successfully when cancellation is accepted; a running job remains `running` until its worker observes the request. JSON errors are one object with stable `code`, `message`, and `details` fields; submission startup errors include the allocated `job_id` in `details`.
 
 ---
 
@@ -200,23 +204,34 @@ flowchart TD
 
 ---
 
-### 1.6 Dynamic Endpoint Probing & Local Inference Configuration ([P2])
+### 1.6 Endpoint-First Local Inference & Reproducible Deployment ([P2])
 
-Static endpoint configuration in `.aider.conf.yml` cannot dynamically fall back between ports. Instead, `server_probe.py` evaluates candidate servers dynamically and injects verified parameters directly into Aider.
+The execution engine depends only on a verified OpenAI-compatible endpoint. Deployment is a separate concern with three supported modes: an externally managed server, the repository's Docker Compose service, or an optional native platform launcher. Docker is the preferred reproducible deployment, but it is not a runtime requirement and does not replace endpoint probing.
 
 #### Probing Workflow
-1. Probe candidate endpoints: `http://127.0.0.1:8090/v1` (primary) and `http://127.0.0.1:8089/v1` (secondary).
+1. Probe configured candidate endpoints; the repository Docker profile defaults to `http://127.0.0.1:8089/v1`.
 2. Fetch `/v1/models` and verify model availability.
 3. Perform a lightweight test inference (`max_tokens=5`) to verify GPU responsiveness.
 4. Return an active `ServerEndpoint` configuration.
 
 #### Target Hardware & Model Profiles
 - **Candidate Primary Configuration (RTX 3090 24GB VRAM; support pending Phase 7 benchmarks)**:
-  - Model: `Qwen/Qwen2.5-Coder-32B-Instruct-GGUF` (Quant: `Q4_K_M`, ~19.8 GB VRAM).
-  - Context Window: 16,384 tokens (`-c 16384`).
-  - Backend: `llama-server` with Flash Attention enabled (`-fa`) and split-mode support.
-- **Fall-back Profile (Low VRAM / Laptop GPU)**:
-  - Model: `Qwen/Qwen2.5-Coder-14B-Instruct-GGUF` (Quant: `Q8_0` or `Q4_K_M`).
+  - Model: `Qwen3.6-35B-A3B` GGUF (`Q4_K_S`).
+  - Worker context: 16,384 tokens, 4,096 output tokens, and a 1,536-token reasoning budget.
+  - Candidate interactive context: 65,536 tokens with client compaction near 40,960 tokens; memory fit on the RTX 3090 remains unverified.
+  - Backend: `llama-server` with CUDA offload, Flash Attention, quantized K/V caches, and one parallel request.
+- **Candidate Quality Profile**:
+  - Model: `Qwen3.6-27B` dense GGUF.
+  - It is not considered an automatic performance downgrade: it has more active parameters per token and must be compared on end-to-end patch quality and time-to-green.
+- Model profiles remain `candidate` until repeatable hardware evidence promotes them to supported status.
+
+#### Docker Deployment Contract
+- `compose.yaml` uses the official CUDA-enabled llama.cpp server image and mounts a user-provided model directory read-only.
+- The container listens on `0.0.0.0` internally while the published host port is restricted to `127.0.0.1`.
+- Executables, GGUF weights, local `.env` files, logs, and PID files are never committed.
+- `LLAMA_CPP_IMAGE` is pinned to a tested build tag or immutable digest before release; floating tags are evaluation-only.
+- One large model and one inference request run at a time on the RTX 3090. An accelerator lease/queue must prevent asynchronous jobs from bypassing this constraint.
+- Native Windows and Docker/WSL2 deployments use the same model profile and benchmark protocol. Docker becomes the sole recommended launcher only if its memory use and stability are comparable.
 
 #### Aider Invocation Parameters
 Parameters are passed explicitly via CLI:
@@ -353,6 +368,9 @@ closure are recorded in `docs/implementation_tasks.md`.
   - `cancel_spec_job(job_id)`
 
 ### Phase 4: Spec Kit Layout & Idempotent Init
+- Complete HSDLC-045A's deferred supported-host Windows MCP worker-survival E2E
+  before claiming Windows asynchronous jobs are verified. Restrictive hosts
+  continue to reject async submission safely.
 - Implement `spec_initializer.py` applying `.specify/memory/constitution.md` and `.specify/templates/`.
 - Ensure `hybrid-sdlc init` is idempotent and will not overwrite existing customized files without `--force`.
 
@@ -367,9 +385,12 @@ closure are recorded in `docs/implementation_tasks.md`.
 - Generate configuration manifests for Antigravity, Claude Code, and Codex CLI.
 - Provide step-by-step installation instructions for each host.
 
-### Phase 7: Packaging, Hardware Benchmarks & Release Validation
+### Phase 7: Packaging, Runtime Deployment, Hardware Benchmarks & Release Validation
 - Extend the Phase 2 CI foundation with distribution packaging and clean-install smoke tests.
-- Benchmark Qwen 2.5 Coder 32B (Q4_K_M) on RTX 3090: tokens/second, VRAM footprint under 16k context, and prompt processing times.
+- Validate the Docker Compose deployment and document external/native server fallbacks.
+- Benchmark Qwen 3.6 35B-A3B (`Q4_K_S`) on the RTX 3090 under the 16K worker profile.
+- Compare native Windows and Docker/WSL2 using identical weights, prompts, contexts, and task fixtures.
+- Evaluate Qwen 3.6 27B only as a measured quality profile, not as an assumed speed improvement.
 
 ---
 
@@ -413,5 +434,6 @@ closure are recorded in `docs/implementation_tasks.md`.
 - Path separator assertions: explicit verification that both Windows backslashes and POSIX forward slashes are handled without path syntax errors.
 
 ### 4.3 Manual & Hardware Verification
-- **RTX 3090 Local Run**: Execute a realistic refactoring task against a Python fixture repository using Qwen 2.5 Coder 32B on `llama-server`. Measure weights, KV cache, compute buffers, total VRAM, prompt processing, and generation throughput at 16k context before promoting the candidate profile to supported status.
+- **RTX 3090 Local Run**: Execute a realistic refactoring task against a Python fixture repository using Qwen 3.6 35B-A3B on `llama-server`. Measure weights, KV cache, compute buffers, total VRAM, prompt processing, generation throughput, time-to-green, and patch success rate at 16K context before promoting the candidate profile to supported status.
+- **Runtime Comparison**: Repeat the same benchmark with the native Windows server and Docker/WSL2. Record startup time, peak host committed memory, peak VRAM, and inference performance. Keep both launch paths if Docker imposes a material stability or memory penalty.
 - **Antigravity IDE Integration**: Run `submit_spec_job`, yield turn, observe reactive wakeup when the task completes, and verify diff summary presentation.

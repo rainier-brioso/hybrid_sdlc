@@ -1,0 +1,30 @@
+schema_version = 1
+id = "qwen36-35b-a3b-rtx3090-interactive"
+status = "candidate"
+purpose = "Interactive OpenCode sessions with early context compaction"
+
+[model]
+family = "qwen3.6"
+variant = "35b-a3b"
+quantization = "q4_k_s"
+alias = "qwen36-35b-a3b"
+file_environment_variable = "MODEL_FILE"
+
+[endpoint]
+base_url = "http://127.0.0.1:8089/v1"
+max_concurrency = 1
+
+[limits]
+context_tokens = 65536
+compaction_threshold_tokens = 40960
+output_tokens = 8192
+reasoning_tokens = 1536
+
+[llama_cpp]
+gpu_layers = 99
+flash_attention = true
+cache_type_k = "q4_0"
+cache_type_v = "q4_0"
+batch_size = 1024
+ubatch_size = 512
+threads = 12

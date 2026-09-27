@@ -5,6 +5,7 @@ from __future__ import annotations
 import json
 import sys
 from pathlib import Path
+from typing import NoReturn
 
 import click
 
@@ -19,9 +20,12 @@ from hybrid_sdlc.errors import (
     HybridSDLCError,
     ServerProbeError,
 )
+from hybrid_sdlc.job_manager import InvalidJobTransitionError, JobManager, JobRecord, JobStatus
 from hybrid_sdlc.models import ProbeResult, RunStatus
 from hybrid_sdlc.security import verify_repo_root
 from hybrid_sdlc.server_probe import probe_endpoint, select_active_endpoint
+from hybrid_sdlc.submission import JobSubmissionError, submit_job
+from hybrid_sdlc.worker import run_worker
 
 
 def parse_duration_seconds(val: str) -> float:
@@ -273,6 +277,270 @@ def run_task_cmd(
     if result.status == RunStatus.SUCCESS:
         sys.exit(ExitCode.SUCCESS)
     sys.exit(ExitCode.TASK_FAILED)
+
+
+def _async_error(
+    message: str,
+    *,
+    code: str,
+    exit_code: ExitCode,
+    json_mode: bool,
+    details: dict[str, object] | None = None,
+) -> NoReturn:
+    """Emit one stable error shape for asynchronous job commands."""
+
+    if json_mode:
+        click.echo(
+            json.dumps(
+                {
+                    "code": code,
+                    "message": message,
+                    "details": details or {},
+                },
+                indent=2,
+            )
+        )
+    else:
+        click.echo(f"Error [{code}]: {message}", err=True)
+    sys.exit(exit_code)
+
+
+def _emit_job(record: JobRecord, *, json_mode: bool) -> None:
+    if json_mode:
+        click.echo(record.model_dump_json(indent=2))
+    else:
+        click.echo(f"Job {record.job_id}: {record.status.value.upper()}")
+
+
+@cli.command("submit")
+@click.argument("spec_file", type=click.Path(path_type=Path))
+@click.option(
+    "--repo-root", type=click.Path(path_type=Path), required=True, help="Target repository root."
+)
+@click.option("--task-id", required=True, help="Spec task identifier to implement.")
+@click.option("--test-profile", required=True, help="Named test command profile.")
+@click.option("--host-url", help="Override inference host URL.")
+@click.option("--model", help="Override target model name.")
+@click.option("--max-retries", type=int, help="Override maximum edit attempts.")
+@click.option("--json", "json_mode", is_flag=True, help="Output only the persisted job record.")
+def submit_cmd(
+    spec_file: Path,
+    repo_root: Path,
+    task_id: str,
+    test_profile: str,
+    host_url: str | None,
+    model: str | None,
+    max_retries: int | None,
+    json_mode: bool,
+) -> None:
+    """Validate, queue, and start an asynchronous spec task."""
+
+    try:
+        record = submit_job(
+            spec_path=spec_file,
+            repo_root=repo_root,
+            task_id=task_id,
+            test_profile=test_profile,
+            host_url=host_url,
+            model=model,
+            max_retries=max_retries,
+        )
+    except JobSubmissionError as exc:
+        _async_error(
+            str(exc),
+            code="JOB_SUBMISSION_FAILED",
+            exit_code=ExitCode.POLICY_ERROR,
+            json_mode=json_mode,
+            details={"job_id": exc.job_id},
+        )
+    except HybridSDLCError as exc:
+        _async_error(
+            exc.message,
+            code=exc.code,
+            exit_code=exc.exit_code,
+            json_mode=json_mode,
+            details=exc.details,
+        )
+    except (ValueError, OSError) as exc:
+        _async_error(
+            str(exc),
+            code="INVALID_SUBMISSION",
+            exit_code=ExitCode.POLICY_ERROR,
+            json_mode=json_mode,
+        )
+    if json_mode:
+        _emit_job(record, json_mode=True)
+    else:
+        click.echo(f"Submitted job {record.job_id} ({record.status.value.upper()})")
+
+
+@cli.command("status")
+@click.argument("job_id", required=False)
+@click.option(
+    "--repo-root", type=click.Path(path_type=Path), default=None, help="Target repository root."
+)
+@click.option("--wait", "wait_for_completion", is_flag=True, help="Wait up to 60 seconds.")
+@click.option(
+    "--poll-interval",
+    type=float,
+    default=0.25,
+    show_default=True,
+    help="Polling interval in seconds (0.01 to 5).",
+)
+@click.option("--json", "json_mode", is_flag=True, help="Output machine-readable JSON.")
+def status_cmd(
+    job_id: str | None,
+    repo_root: Path | None,
+    wait_for_completion: bool,
+    poll_interval: float,
+    json_mode: bool,
+) -> None:
+    """Show one job's status, or list validated jobs in the repository."""
+
+    if wait_for_completion and job_id is None:
+        _async_error(
+            "--wait requires a job ID",
+            code="INVALID_STATUS_OPTIONS",
+            exit_code=ExitCode.POLICY_ERROR,
+            json_mode=json_mode,
+        )
+    try:
+        verified_root = verify_repo_root(repo_root)
+        manager = JobManager(verified_root)
+        if job_id is None:
+            records = manager.list_jobs()
+            if json_mode:
+                click.echo(
+                    json.dumps(
+                        {"jobs": [item.model_dump(mode="json") for item in records]}, indent=2
+                    )
+                )
+            elif not records:
+                click.echo("No jobs found.")
+            else:
+                for record in records:
+                    click.echo(f"Job {record.job_id}: {record.status.value.upper()}")
+            return
+        record = manager.status(
+            job_id,
+            wait_timeout_seconds=60.0 if wait_for_completion else 0.0,
+            poll_interval_seconds=poll_interval,
+        )
+    except HybridSDLCError as exc:
+        _async_error(
+            exc.message,
+            code=exc.code,
+            exit_code=exc.exit_code,
+            json_mode=json_mode,
+            details=exc.details,
+        )
+    except FileNotFoundError:
+        _async_error(
+            "Job not found",
+            code="JOB_NOT_FOUND",
+            exit_code=ExitCode.POLICY_ERROR,
+            json_mode=json_mode,
+        )
+    except ValueError as exc:
+        code = "INVALID_JOB_ID" if str(exc) == "Invalid job ID" else "INVALID_STATUS_OPTIONS"
+        _async_error(
+            str(exc),
+            code=code,
+            exit_code=ExitCode.POLICY_ERROR,
+            json_mode=json_mode,
+        )
+    _emit_job(record, json_mode=json_mode)
+
+
+@cli.command("cancel")
+@click.argument("job_id")
+@click.option(
+    "--repo-root", type=click.Path(path_type=Path), default=None, help="Target repository root."
+)
+@click.option("--json", "json_mode", is_flag=True, help="Output machine-readable JSON.")
+def cancel_cmd(job_id: str, repo_root: Path | None, json_mode: bool) -> None:
+    """Request cancellation of a queued or running asynchronous job."""
+
+    try:
+        verified_root = verify_repo_root(repo_root)
+        record = JobManager(verified_root).cancel(job_id)
+    except HybridSDLCError as exc:
+        _async_error(
+            exc.message,
+            code=exc.code,
+            exit_code=exc.exit_code,
+            json_mode=json_mode,
+            details=exc.details,
+        )
+    except FileNotFoundError:
+        _async_error(
+            "Job not found",
+            code="JOB_NOT_FOUND",
+            exit_code=ExitCode.POLICY_ERROR,
+            json_mode=json_mode,
+        )
+    except ValueError as exc:
+        _async_error(
+            str(exc),
+            code="INVALID_JOB_ID",
+            exit_code=ExitCode.POLICY_ERROR,
+            json_mode=json_mode,
+        )
+    if record.status is JobStatus.RUNNING:
+        cancellation = "requested"
+    elif record.status is JobStatus.CANCELLED:
+        cancellation = "cancelled"
+    else:
+        cancellation = "already_terminal"
+    if json_mode:
+        click.echo(
+            json.dumps(
+                {"job": record.model_dump(mode="json"), "cancellation": cancellation}, indent=2
+            )
+        )
+    elif cancellation == "requested":
+        click.echo(f"Cancellation requested for job {record.job_id}; status remains RUNNING.")
+    elif cancellation == "already_terminal":
+        click.echo(f"Job {record.job_id} is already {record.status.value.upper()}.")
+    elif cancellation == "cancelled":
+        click.echo(f"Job {record.job_id}: CANCELLED")
+    else:
+        click.echo(f"Job {record.job_id}: CANCELLED")
+
+
+@cli.command("worker")
+@click.argument("job_id")
+@click.option(
+    "--repo-root", type=click.Path(path_type=Path), default=None, help="Target repository root."
+)
+@click.option("--json", "json_mode", is_flag=True, help="Output the final persisted job record.")
+def worker_cmd(job_id: str, repo_root: Path | None, json_mode: bool) -> None:
+    """Claim and execute one queued asynchronous job."""
+    try:
+        record = run_worker(job_id, repo_root)
+    except InvalidJobTransitionError as exc:
+        click.echo(f"Worker could not claim job: {exc}", err=True)
+        sys.exit(ExitCode.POLICY_ERROR)
+    except (HybridSDLCError, FileNotFoundError, ValueError) as exc:
+        message = exc.message if isinstance(exc, HybridSDLCError) else str(exc)
+        click.echo(f"Worker failed: {message}", err=True)
+        sys.exit(exc.exit_code if isinstance(exc, HybridSDLCError) else ExitCode.POLICY_ERROR)
+
+    if json_mode:
+        click.echo(record.model_dump_json(indent=2))
+    else:
+        click.echo(f"Job {record.job_id}: {record.status.value.upper()}")
+        if record.failure_reason:
+            click.echo(f"  Failure: {record.failure_reason}")
+    sys.exit(ExitCode.SUCCESS if record.status is JobStatus.COMPLETED else ExitCode.TASK_FAILED)
+
+
+@cli.command("mcp")
+def mcp_cmd() -> None:
+    """Run the stdio Model Context Protocol adapter."""
+    from hybrid_sdlc.mcp_server import main
+
+    main()
 
 
 @cli.command("clean")

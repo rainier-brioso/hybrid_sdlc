@@ -3,11 +3,320 @@
 from __future__ import annotations
 
 import os
+import subprocess
 import sys
+import threading
 import time
+from datetime import UTC, datetime
 from pathlib import Path
+from types import SimpleNamespace
 
-from hybrid_sdlc.processes import run_bounded_subprocess
+import pytest
+
+import hybrid_sdlc.processes as process_api
+from hybrid_sdlc.processes import (
+    get_process_creation_time,
+    get_process_identity,
+    run_bounded_subprocess,
+)
+
+
+def _fake_proc_paths(monkeypatch: pytest.MonkeyPatch, state: str = "S") -> None:
+    class FakePath:
+        def __init__(self, value: str) -> None:
+            self.value = value
+
+        def read_text(self, encoding: str) -> str:
+            if self.value == "/proc/77/stat":
+                fields = [state, *(["0"] * 18), "12345"]
+                return f"77 (fake command with spaces) {' '.join(fields)}"
+            if self.value == "/proc/sys/kernel/random/boot_id":
+                return "test-boot-id\n"
+            return "cpu 1 2 3\nbtime 100000\n"
+
+    monkeypatch.setattr(process_api, "Path", FakePath)
+    monkeypatch.setattr(
+        process_api,
+        "os",
+        SimpleNamespace(name="posix", sysconf=lambda name: 100, environ=os.environ),
+    )
+    monkeypatch.setattr(process_api.sys, "platform", "linux")
+    monkeypatch.setattr(process_api.os, "sysconf", lambda name: 100)
+
+
+@pytest.mark.parametrize("with_boottime", [False, True])
+def test_linux_creation_time_uses_proc_start_ticks(
+    monkeypatch: pytest.MonkeyPatch, with_boottime: bool
+) -> None:
+    _fake_proc_paths(monkeypatch)
+    fake_time = SimpleNamespace(time=lambda: 100000.0, sysconf=lambda name: 100)
+    if with_boottime:
+        fake_time.CLOCK_BOOTTIME = 9
+        fake_time.clock_gettime = lambda clock_id: 100.0
+    monkeypatch.setattr(process_api, "time", fake_time)
+    created_at = get_process_creation_time(77)
+    expected = 100023.45 if with_boottime else 100123.45
+    assert created_at == datetime.fromtimestamp(expected, tz=UTC)
+
+
+def test_linux_identity_uses_stable_boot_and_start_tick_token(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    _fake_proc_paths(monkeypatch)
+    fake_time = SimpleNamespace(
+        time=lambda: 100000.0, CLOCK_BOOTTIME=9, clock_gettime=lambda _: 100.0
+    )
+    monkeypatch.setattr(process_api, "time", fake_time)
+
+    identity = get_process_identity(77)
+
+    assert identity.state == "alive"
+    assert identity.start_token == "linux:test-boot-id:12345"
+    assert identity.precision == "100hz"
+
+
+def test_linux_zombie_is_dead_even_while_proc_entry_exists(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    _fake_proc_paths(monkeypatch, state="Z")
+    assert get_process_identity(77).state == "dead"
+
+
+def test_current_process_identity_is_available() -> None:
+    identity = get_process_identity(os.getpid())
+    assert identity.state == "alive"
+    assert identity.created_at is not None
+    assert identity.start_token
+
+
+def test_exited_process_identity_is_dead() -> None:
+    process = subprocess.Popen([sys.executable, "-c", "pass"])
+    process.wait(timeout=5)
+
+    assert get_process_identity(process.pid).state == "dead"
+
+
+def test_shutdown_prevents_later_subprocess_spawn(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    marker = tmp_path / "should-not-exist"
+    monkeypatch.setattr(process_api, "_shutdown_requested", True)
+
+    with pytest.raises(process_api.ProcessExecutionError, match="during shutdown"):
+        run_bounded_subprocess(
+            [sys.executable, "-c", f"from pathlib import Path; Path({str(marker)!r}).touch()"],
+            tmp_path,
+            dict(os.environ),
+            1,
+        )
+
+    assert not marker.exists()
+
+
+def test_shutdown_waits_for_inflight_spawn_then_kills_registered_process(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    entered_popen = threading.Event()
+    release_popen = threading.Event()
+    shutdown_started = threading.Event()
+    spawned: list[subprocess.Popen[bytes]] = []
+    results: list[object] = []
+    original_popen = subprocess.Popen
+
+    def gated_popen(*args: object, **kwargs: object) -> subprocess.Popen[bytes]:
+        process = original_popen(*args, **kwargs)  # type: ignore[arg-type]
+        spawned.append(process)
+        entered_popen.set()
+        if not release_popen.wait(timeout=5):
+            raise TimeoutError("test did not release the gated Popen")
+        return process
+
+    monkeypatch.setattr(subprocess, "Popen", gated_popen)
+    monkeypatch.setattr(process_api, "_shutdown_requested", False)
+
+    def run_child() -> None:
+        results.append(
+            run_bounded_subprocess(
+                [sys.executable, "-c", "import time; time.sleep(30)"],
+                tmp_path,
+                dict(os.environ),
+                10,
+            )
+        )
+
+    runner = threading.Thread(target=run_child)
+    runner.start()
+    try:
+        assert entered_popen.wait(timeout=5)
+        shutdown = threading.Thread(
+            target=lambda: (shutdown_started.set(), process_api.terminate_active_processes())
+        )
+        shutdown.start()
+        assert shutdown_started.wait(timeout=5)
+        release_popen.set()
+        runner.join(timeout=5)
+        shutdown.join(timeout=5)
+        assert not runner.is_alive()
+        assert not shutdown.is_alive()
+        assert spawned
+        assert get_process_identity(spawned[0].pid).state == "dead"
+        assert results
+    finally:
+        release_popen.set()
+        runner.join(timeout=5)
+        monkeypatch.setattr(process_api, "_shutdown_requested", False)
+
+
+@pytest.mark.skipif(os.name != "nt", reason="Windows Job Object containment regression")
+def test_windows_child_stays_suspended_until_job_assignment_and_timeout_kills_tree(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    child_pid_file = tmp_path / "child.pid"
+    grandchild_pid_file = tmp_path / "grandchild.pid"
+    child_script = tmp_path / "child.py"
+    grandchild_code = (
+        "import os, pathlib, time; "
+        f"pathlib.Path({str(grandchild_pid_file)!r}).write_text(str(os.getpid())); "
+        "time.sleep(30)"
+    )
+    child_script.write_text(
+        f"import os, pathlib, subprocess, sys, time\n"
+        f"pathlib.Path({str(child_pid_file)!r}).write_text(str(os.getpid()))\n"
+        f"code = {grandchild_code!r}\n"
+        "subprocess.Popen([sys.executable, '-c', code])\n"
+        "time.sleep(30)\n",
+        encoding="utf-8",
+    )
+    assignment_started = threading.Event()
+    allow_assignment = threading.Event()
+    original_assign = process_api._WindowsJobObject.assign_process
+    results: list[object] = []
+
+    def gated_assign(job: process_api._WindowsJobObject, process_handle: object) -> bool:
+        assignment_started.set()
+        if not allow_assignment.wait(timeout=5):
+            raise TimeoutError("test did not release gated Job Object assignment")
+        return original_assign(job, process_handle)
+
+    monkeypatch.setattr(process_api._WindowsJobObject, "assign_process", gated_assign)
+    monkeypatch.setattr(process_api, "_shutdown_requested", False)
+    runner = threading.Thread(
+        target=lambda: results.append(
+            run_bounded_subprocess(
+                [sys.executable, str(child_script)],
+                tmp_path,
+                dict(os.environ),
+                timeout_seconds=0.6,
+            )
+        )
+    )
+    runner.start()
+    try:
+        assert assignment_started.wait(timeout=5)
+        # If CREATE_SUSPENDED is missing, user code creates both files while
+        # the assignment hook is blocked, proving the containment race.
+        time.sleep(0.1)
+        assert not child_pid_file.exists()
+        assert not grandchild_pid_file.exists()
+
+        allow_assignment.set()
+        runner.join(timeout=5)
+        assert not runner.is_alive()
+        assert results
+        result = results[0]
+        assert isinstance(result, process_api.SubprocessResult)
+        assert result.timed_out
+        assert child_pid_file.exists()
+        assert grandchild_pid_file.exists()
+        child_pid = int(child_pid_file.read_text(encoding="utf-8"))
+        grandchild_pid = int(grandchild_pid_file.read_text(encoding="utf-8"))
+        assert get_process_identity(child_pid).state == "dead"
+        assert get_process_identity(grandchild_pid).state == "dead"
+    finally:
+        allow_assignment.set()
+        runner.join(timeout=5)
+        monkeypatch.setattr(process_api, "_shutdown_requested", False)
+
+
+@pytest.mark.skipif(os.name != "nt", reason="Windows Job Object launch failure regression")
+def test_windows_assignment_failure_kills_suspended_child_and_closes_pipes(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    marker = tmp_path / "must-not-run"
+    spawned: list[subprocess.Popen[bytes]] = []
+    original_popen = subprocess.Popen
+
+    def capture_popen(*args: object, **kwargs: object) -> subprocess.Popen[bytes]:
+        process = original_popen(*args, **kwargs)  # type: ignore[arg-type]
+        spawned.append(process)
+        return process
+
+    monkeypatch.setattr(subprocess, "Popen", capture_popen)
+    monkeypatch.setattr(
+        process_api._WindowsJobObject,
+        "assign_process",
+        lambda _job, _handle: False,
+    )
+    monkeypatch.setattr(process_api, "_shutdown_requested", False)
+
+    with pytest.raises(process_api.ProcessExecutionError, match="assign subprocess"):
+        run_bounded_subprocess(
+            [sys.executable, "-c", f"from pathlib import Path; Path({str(marker)!r}).touch()"],
+            tmp_path,
+            dict(os.environ),
+            timeout_seconds=5,
+        )
+
+    assert not marker.exists()
+    assert len(spawned) == 1
+    assert spawned[0].poll() is not None
+    assert spawned[0].stdout is not None and spawned[0].stdout.closed
+    assert spawned[0].stderr is not None and spawned[0].stderr.closed
+
+
+def test_linux_permission_error_is_unknown_not_dead(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(
+        process_api,
+        "os",
+        SimpleNamespace(name="posix", sysconf=lambda name: 100, environ=os.environ),
+    )
+    monkeypatch.setattr(process_api.sys, "platform", "linux")
+
+    class DeniedPath:
+        def __init__(self, value: str) -> None:
+            self.value = value
+
+        def read_text(self, encoding: str) -> str:
+            raise PermissionError("access denied")
+
+    monkeypatch.setattr(process_api, "Path", DeniedPath)
+    assert get_process_identity(77).state == "unknown"
+
+
+def test_mac_creation_time_uses_locale_independent_ps(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(process_api.sys, "platform", "darwin")
+    monkeypatch.setattr(
+        process_api,
+        "os",
+        SimpleNamespace(name="posix", environ=os.environ, kill=lambda pid, signal: None),
+    )
+    calls: list[dict[str, object]] = []
+
+    def fake_run(argv: list[str], **kwargs: object) -> SimpleNamespace:
+        calls.append({"argv": argv, **kwargs})
+        return SimpleNamespace(stdout="Sat Sep 26 17:40:11 2026\n")
+
+    monkeypatch.setattr(process_api.subprocess, "run", fake_run)
+    result = get_process_creation_time(77)
+    assert result == datetime(2026, 9, 26, 17, 40, 11, tzinfo=UTC)
+    assert calls[0]["argv"] == ["ps", "-p", "77", "-o", "lstart="]
+    assert calls[0]["env"]["LC_ALL"] == "C"
+    assert calls[0]["env"]["TZ"] == "UTC"
+
+
+def test_creation_time_rejects_invalid_pid() -> None:
+    with pytest.raises(ValueError, match="positive"):
+        get_process_creation_time(0)
 
 
 def _is_pid_alive(pid: int) -> bool:
@@ -47,6 +356,33 @@ def test_run_bounded_subprocess_success(tmp_path: Path) -> None:
     assert "hello world" in res.stdout
     assert not res.timed_out
     assert not res.is_truncated
+
+
+def test_run_bounded_subprocess_reports_child_identity(tmp_path: Path) -> None:
+    events: list[tuple[int, datetime | None]] = []
+    live_creation_times: list[datetime] = []
+
+    def observe(pid: int, created_at: datetime | None) -> None:
+        events.append((pid, created_at))
+        if created_at is not None:
+            live_creation_times.append(get_process_creation_time(pid))
+
+    res = run_bounded_subprocess(
+        argv=[sys.executable, "-c", "import time; time.sleep(0.2)"],
+        cwd=tmp_path,
+        env=dict(os.environ),
+        timeout_seconds=5.0,
+        process_observer=observe,
+    )
+    assert res.exit_code == 0
+    assert len(events) == 2
+    assert events[0][0] == events[1][0]
+    assert events[0][1] is not None
+    assert events[1][1] is None
+    assert isinstance(events[0][1], datetime)
+    assert abs((events[0][1] - live_creation_times[0]).total_seconds()) <= (
+        1.1 if sys.platform == "darwin" else 0.1
+    )
 
 
 def test_run_bounded_subprocess_timeout_kills_process(tmp_path: Path) -> None:

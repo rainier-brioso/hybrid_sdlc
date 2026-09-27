@@ -378,7 +378,7 @@ A task is complete when:
 
 ## Phase 3 — MCP and Asynchronous Job Lifecycle
 
-- [ ] **HSDLC-038 — Define the persisted job-state machine**  
+- [x] **HSDLC-038 — Define the persisted job-state machine**
   Files: `src/hybrid_sdlc/job_manager.py`, `tests/unit/test_job_manager.py`  
   Depends on: HSDLC-004, HSDLC-015  
   Acceptance:
@@ -386,7 +386,7 @@ A task is complete when:
   - Terminal failures use `status=failed` plus a documented `failure_reason`.
   - Job IDs are collision-resistant and validated before filesystem access.
 
-- [ ] **HSDLC-039 — Implement the detached worker entry point**  
+- [x] **HSDLC-039 — Implement the detached worker entry point**  
   Files: `src/hybrid_sdlc/worker.py`, `src/hybrid_sdlc/cli.py`, `tests/unit/test_worker.py`  
   Depends on: HSDLC-027, HSDLC-038  
   Acceptance:
@@ -394,38 +394,43 @@ A task is complete when:
   - Duplicate workers cannot claim the same job.
   - Heartbeat and terminal state are persisted atomically.
 
-- [ ] **HSDLC-040 — Implement asynchronous submission**  
-  Files: `src/hybrid_sdlc/job_manager.py`, `tests/integration/test_jobs.py`  
+- [x] **HSDLC-040 — Implement asynchronous submission**  
+  Files: `src/hybrid_sdlc/submission.py`, `tests/integration/test_jobs.py`  
   Depends on: HSDLC-039  
   Acceptance:
   - Submission validates all policy inputs before creating the job.
   - It returns a job ID only after the worker starts or reports a launch failure.
   - The worker continues after the submitting process exits.
 
-- [ ] **HSDLC-041 — Implement status and abandoned-worker recovery**  
+- [x] **HSDLC-041 — Implement status and abandoned-worker recovery**  
   Files: `src/hybrid_sdlc/job_manager.py`, `tests/integration/test_jobs.py`  
   Depends on: HSDLC-040  
   Acceptance:
-  - Status supports immediate lookup and bounded waiting.
-  - PID plus process-creation time distinguishes live workers from PID reuse.
-  - Stale running jobs become `failed/abandoned_process` with diagnostic metadata.
+  - `JobManager.status()` supports immediate lookup and finite waits capped at 60 seconds; polling intervals are validated.
+  - Worker identity is persisted as an OS start token (Linux boot ID plus start ticks, Windows FILETIME); legacy records use a conservative timestamp fallback.
+  - Confirmed dead/reused worker PIDs become `failed/abandoned_process` with typed diagnostic metadata; unknown OS probes preserve running state.
+  - Recovery probes outside the lock and rechecks state and owner under the per-job lock before atomic persistence. `recover_running_jobs()` is available for host startup integration.
+  - macOS/BSD process start times use `ps` at one-second precision, so PID reuse within the same second remains ambiguous.
 
-- [ ] **HSDLC-042 — Implement asynchronous cancellation**  
-  Files: `src/hybrid_sdlc/job_manager.py`, `tests/integration/test_jobs.py`  
+- [x] **HSDLC-042 — Implement asynchronous cancellation**
+  Files: `src/hybrid_sdlc/job_manager.py`, `src/hybrid_sdlc/worker.py`, `tests/integration/test_jobs.py`, `tests/unit/test_worker.py`
   Depends on: HSDLC-041  
   Acceptance:
   - Cancellation is idempotent.
   - Live process descendants terminate; terminal jobs remain unchanged.
   - A race between completion and cancellation resolves to one valid terminal state.
+  - Running cancellation is persisted and observed by the worker heartbeat; the bounded subprocess runner terminates its owned process tree.
 
-- [ ] **HSDLC-043 — Implement async CLI commands**  
-  Files: `src/hybrid_sdlc/cli.py`, `tests/integration/test_cli.py`  
+- [x] **HSDLC-043 — Implement async CLI commands**
+  Files: `src/hybrid_sdlc/cli.py`, `src/hybrid_sdlc/job_manager.py`, `tests/integration/test_cli.py`
   Depends on: HSDLC-040, HSDLC-041, HSDLC-042  
   Acceptance:
   - `submit`, `status`, and `cancel` conform to the plan's canonical syntax.
   - Human and JSON output modes are tested.
+  - `status` can safely list validated job records, and bounded waits require a job ID.
+  - Submission diagnostics retain the allocated job ID; cancellation output distinguishes a request from termination.
 
-- [ ] **HSDLC-044 — Implement the stdio MCP server**  
+- [x] **HSDLC-044 — Implement the stdio MCP server**
   Files: `src/hybrid_sdlc/mcp_server.py`, `tests/integration/test_mcp_server.py`  
   Depends on: HSDLC-029, HSDLC-043  
   Acceptance:
@@ -433,17 +438,45 @@ A task is complete when:
   - Tool schemas require `repo_root`, `spec_path`, `task_id`, and `test_profile` where applicable.
   - Untrusted tool arguments are validated through the same policy layer as CLI calls.
 
-- [ ] **HSDLC-045 — Verify MCP disconnect semantics**  
-  Files: `tests/e2e/test_mcp_disconnect.py`  
+- [x] **HSDLC-045 — Verify MCP disconnect semantics**
+  Files: `src/hybrid_sdlc/submission.py`, `tests/unit/test_submission.py`, `tests/e2e/test_mcp_disconnect.py`  
   Depends on: HSDLC-044  
   Acceptance:
-  - Terminating the MCP adapter does not terminate a submitted worker.
-  - Reconnecting and querying returns current or terminal state.
+  - On Linux and macOS, terminating the MCP adapter does not terminate a
+    submitted worker; reconnecting and querying returns current or terminal state.
   - Synchronous calls terminate their owned process tree on adapter shutdown.
+  - Before persisting a Windows async job, launch a short-lived child with the worker's
+    process-creation flags and verify through `IsProcessInJob` that it escaped all
+    enclosing Job Objects. Reject submission with `ASYNC_UNSUPPORTED_BY_HOST` when
+    breakaway fails or cannot be verified; do not create a job record in that case.
+  - The official Python MCP stdio client's default `KILL_ON_JOB_CLOSE` Job Object
+    rejects async submissions because the worker cannot break away. The E2E suite
+    verifies worker survival on POSIX hosts and rejects unsupported Windows hosts.
+  - The Windows bounded-runner spawn-to-assignment race is resolved: children start
+    suspended, enter the cleanup Job Object, and resume only after assignment.
+    Deterministic Windows tests verify no child or grandchild runs before assignment
+    and that shutdown/timeout cleanup terminates the process tree.
+  - PR #2 CI run 36350686949 passed Linux, macOS, and Windows checks. The
+    supported-host Windows survival E2E skipped on both the CI runner and a
+    separate native PowerShell run because their Job Objects deny breakaway.
+    Its successful execution is explicitly deferred to HSDLC-045A; this task
+    does not claim Windows async-worker survival has been verified.
 
 ---
 
 ## Phase 4 — Spec Kit Integration and Idempotent Initialization
+
+- [ ] **HSDLC-045A — Verify MCP worker survival on a supported Windows host**
+  Files: `tests/e2e/test_mcp_disconnect.py`, `docs/implementation_tasks.md`
+  Depends on: HSDLC-045
+  Acceptance:
+  - Run `test_submitted_worker_survives_stdio_adapter_disconnect_and_reconnects`
+    on a Windows host whose breakaway probe succeeds; record an actual pass,
+    not a skip, with the host/runner configuration.
+  - Confirm the worker survives adapter termination, status can be queried
+    through a new MCP connection, and the job reaches a terminal state.
+  - Fix any supported-host failure before claiming Windows async support is
+    verified; retain fail-closed behavior on restrictive hosts.
 
 - [ ] **HSDLC-046 — Add canonical Spec Kit templates**  
   Files: `.specify/memory/constitution.md`, `.specify/templates/*.md`  
@@ -572,7 +605,7 @@ A task is complete when:
 
 ---
 
-## Phase 7 — Packaging, Hardware Validation, and Release
+## Phase 7 — Packaging, Runtime Deployment, Hardware Validation, and Release
 
 - [ ] **HSDLC-063 — Add packaging smoke tests**  
   Files: `.github/workflows/ci.yml`, `tests/packaging/`  
@@ -581,27 +614,36 @@ A task is complete when:
   - Build wheel and source distribution, install each into a clean environment, and run both entry points.
   - Built distributions contain required templates and exclude tests, logs, weights, and local artifacts as intended.
 
-- [ ] **HSDLC-064 — Define the hardware benchmark protocol**  
-  Files: `benchmarks/README.md`, `benchmarks/benchmark_task.json`  
+- [x] **HSDLC-064 — Validate the portable llama.cpp deployment contract**  
+  Files: `compose.yaml`, `.env.example`, `config/model-profiles/`, `docs/llama-server-docker.md`, `tests/unit/test_repository_layout.py`  
   Depends on: HSDLC-034  
   Acceptance:
-  - Protocol pins model repository/revision, GGUF file, llama.cpp version, launch arguments, context, prompt, repository fixture, and ambient assumptions.
-  - Metrics include load VRAM, peak VRAM, prompt tokens/second, generation tokens/second, total duration, and success rate.
+  - Compose mounts model weights read-only, publishes only to host loopback, requests the NVIDIA GPU, and limits llama.cpp to one parallel request.
+  - Worker and interactive profiles are parseable, model paths remain user-owned configuration, and no weights or machine-specific paths are committed.
+  - GPU passthrough, `/health`, and `/v1/models` are verified on the RTX 3090 before the task is completed.
 
-- [ ] **HSDLC-065 — Benchmark the RTX 3090 candidate profile**  
-  Files: `benchmarks/results/rtx-3090-qwen25-coder-32b.json`, `docs/model-profiles.md`  
+- [ ] **HSDLC-065 — Define the hardware benchmark protocol**  
+  Files: `benchmarks/README.md`, `benchmarks/benchmark_task.json`  
   Depends on: HSDLC-064  
   Acceptance:
-  - Run at least three repetitions at the documented 16K context.
-  - Record weights, KV cache, compute-buffer, and total VRAM separately where tooling permits.
-  - Promote the profile to supported only if it completes without out-of-memory errors and meets documented stability thresholds.
+  - Protocol pins model repository/revision, GGUF file checksum, llama.cpp image/build, launch arguments, context, prompt, repository fixture, and ambient assumptions.
+  - Metrics include startup time, host committed memory, load/peak VRAM, prompt tokens/second, generation tokens/second, time-to-green, patch success rate, and total duration.
 
-- [ ] **HSDLC-066 — Benchmark and document the fallback profile**  
-  Files: `benchmarks/results/`, `docs/model-profiles.md`  
-  Depends on: HSDLC-064  
+- [ ] **HSDLC-066 — Benchmark Qwen 3.6 35B-A3B native versus Docker**  
+  Files: `benchmarks/results/rtx-3090-qwen36-35b-a3b-native.json`, `benchmarks/results/rtx-3090-qwen36-35b-a3b-docker.json`, `docs/model-profiles.md`  
+  Depends on: HSDLC-065  
   Acceptance:
-  - Uses the same protocol as the primary candidate.
-  - Documentation compares quality caveats, latency, memory, and context limits without unsupported generalization.
+  - Run at least three repetitions per runtime at the documented 16K worker context with identical weights and tasks.
+  - Record weights, KV cache, compute buffers, total VRAM, host memory, and startup overhead separately where tooling permits.
+  - Promote Docker to the sole recommended launcher only when its stability and memory results are comparable; otherwise retain both documented paths.
+
+- [ ] **HSDLC-066A — Benchmark the Qwen 3.6 27B quality profile**  
+  Files: `benchmarks/results/rtx-3090-qwen36-27b.json`, `docs/model-profiles.md`  
+  Depends on: HSDLC-065  
+  Acceptance:
+  - Uses the same protocol, task fixtures, quantization class, and context as the 35B-A3B comparison.
+  - Documentation compares time-to-green and patch success rate in addition to token throughput and memory.
+  - The dense 27B profile is not labeled faster or preferred without measured evidence.
 
 - [ ] **HSDLC-067 — Complete security and destructive-operation review**  
   Files: `docs/security.md`, test evidence  
