@@ -20,6 +20,31 @@ from hybrid_sdlc.errors import ProcessExecutionError
 JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE = 0x2000
 JobObjectExtendedLimitInformation = 9
 
+_active_process_lock = threading.RLock()
+_active_processes: dict[int, tuple[subprocess.Popen[bytes], _WindowsJobObject | None]] = {}
+_shutdown_requested = False
+
+
+def _unregister_active_process(process: subprocess.Popen[bytes]) -> None:
+    with _active_process_lock:
+        _active_processes.pop(process.pid, None)
+
+
+def terminate_active_processes() -> None:
+    """Terminate every currently owned subprocess tree during adapter shutdown."""
+    global _shutdown_requested
+    with _active_process_lock:
+        _shutdown_requested = True
+        active = list(_active_processes.values())
+    for process, job_object in active:
+        if job_object is not None:
+            job_object.terminate()
+        kill_process_tree(process)
+        try:
+            process.wait(timeout=2.0)
+        except (OSError, subprocess.TimeoutExpired):
+            pass
+
 
 @dataclass
 class SubprocessResult:
@@ -70,13 +95,23 @@ def get_process_identity(pid: int) -> ProcessIdentity:
         ]
         kernel32.CloseHandle.restype = wintypes.BOOL
         kernel32.CloseHandle.argtypes = [wintypes.HANDLE]
-        handle = kernel32.OpenProcess(0x1000, False, pid)
+        handle = kernel32.OpenProcess(0x1000 | 0x00100000, False, pid)
         if not handle:
             error = int(kernel32.GetLastError())
             if error in {87, 1168}:  # ERROR_INVALID_PARAMETER / ERROR_NOT_FOUND
                 return ProcessIdentity("dead")
             return ProcessIdentity("unknown")
         try:
+            # GetProcessTimes remains available on a signaled process handle;
+            # check the handle's exit state first so terminated adapter PIDs do
+            # not appear alive merely because their creation time is readable.
+            kernel32.WaitForSingleObject.restype = wintypes.DWORD
+            kernel32.WaitForSingleObject.argtypes = [wintypes.HANDLE, wintypes.DWORD]
+            wait_result = int(kernel32.WaitForSingleObject(handle, 0))
+            if wait_result == 0:  # WAIT_OBJECT_0
+                return ProcessIdentity("dead")
+            if wait_result != 258:  # WAIT_TIMEOUT means the process is still running.
+                return ProcessIdentity("unknown")
             creation = FILETIME()
             exit_time = FILETIME()
             kernel_time = FILETIME()
@@ -315,6 +350,8 @@ def run_bounded_subprocess(
     start_time = time.perf_counter()
 
     job_obj = _WindowsJobObject() if os.name == "nt" else None
+    if os.name == "nt" and (job_obj is None or not job_obj.handle):
+        raise ProcessExecutionError("Could not create a Windows Job Object for process cleanup")
     popen_kwargs: dict[str, Any] = {
         "cwd": str(cwd),
         "env": env,
@@ -330,7 +367,17 @@ def run_bounded_subprocess(
         popen_kwargs["start_new_session"] = True
 
     try:
-        proc = subprocess.Popen(argv, **popen_kwargs)
+        # Serialize process creation with shutdown. Once shutdown begins, no
+        # later caller may create a child outside the cleanup snapshot.
+        with _active_process_lock:
+            if _shutdown_requested:
+                if job_obj:
+                    job_obj.close()
+                raise ProcessExecutionError("Subprocess execution is unavailable during shutdown")
+            proc = subprocess.Popen(argv, **popen_kwargs)
+            _active_processes[proc.pid] = (proc, job_obj)
+    except ProcessExecutionError:
+        raise
     except Exception as e:
         if job_obj:
             job_obj.close()
@@ -344,9 +391,26 @@ def run_bounded_subprocess(
         import ctypes
 
         process_handle = ctypes.windll.kernel32.OpenProcess(0x1F0FFF, False, proc.pid)  # type: ignore[attr-defined]
+        assigned = False
         if process_handle:
-            job_obj.assign_process(process_handle)
-            ctypes.windll.kernel32.CloseHandle(process_handle)  # type: ignore[attr-defined]
+            try:
+                assigned = job_obj.assign_process(process_handle)
+            finally:
+                ctypes.windll.kernel32.CloseHandle(process_handle)  # type: ignore[attr-defined]
+        if not assigned:
+            # A process that is not in the Job Object would survive abrupt
+            # adapter termination. Fail closed after cleaning up this spawn.
+            job_obj.close()
+            kill_process_tree(proc)
+            try:
+                proc.wait(timeout=2.0)
+            except subprocess.TimeoutExpired:
+                pass
+            _unregister_active_process(proc)
+            raise ProcessExecutionError(
+                "Could not assign subprocess to a Windows Job Object",
+                details={"pid": proc.pid},
+            )
 
     try:
         child_created_at = get_process_creation_time(proc.pid)
@@ -363,6 +427,7 @@ def run_bounded_subprocess(
             pass
         if job_obj:
             job_obj.close()
+        _unregister_active_process(proc)
         raise ProcessExecutionError(
             f"Could not read child process creation time: {e}",
             details={"pid": proc.pid, "error": str(e)},
@@ -381,6 +446,7 @@ def run_bounded_subprocess(
                     pass
                 if job_obj:
                     job_obj.close()
+                _unregister_active_process(proc)
                 raise ProcessExecutionError(
                     f"Could not persist child process identity: {e}",
                     details={"pid": proc.pid, "error": str(e)},
@@ -455,6 +521,7 @@ def run_bounded_subprocess(
         t_err.join(timeout=1.0)
         if job_obj:
             job_obj.close()
+        _unregister_active_process(proc)
 
     if timed_out and proc.poll() is None:
         if job_obj:
@@ -464,6 +531,7 @@ def run_bounded_subprocess(
             proc.wait(timeout=2.0)
         except subprocess.TimeoutExpired:
             pass
+    _unregister_active_process(proc)
     elapsed = time.perf_counter() - start_time
     stdout_text = b"".join(stdout_chunks).decode("utf-8", errors="replace")
     stderr_text = b"".join(stderr_chunks).decode("utf-8", errors="replace")

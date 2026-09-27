@@ -5,6 +5,7 @@ from __future__ import annotations
 import asyncio
 import math
 import re
+import signal
 from typing import Annotated, Any, NoReturn, cast
 from urllib.parse import urlsplit, urlunsplit
 
@@ -20,6 +21,7 @@ from hybrid_sdlc.command_profiles import resolve_profile_executable
 from hybrid_sdlc.config import load_config
 from hybrid_sdlc.errors import HybridSDLCError
 from hybrid_sdlc.job_manager import JobManager
+from hybrid_sdlc.processes import terminate_active_processes
 from hybrid_sdlc.security import verify_repo_root
 from hybrid_sdlc.server_probe import select_active_endpoint
 from hybrid_sdlc.submission import JobSubmissionError, preflight_task_request, submit_job
@@ -220,4 +222,11 @@ def cancel_spec_job(repo_root: str, job_id: str) -> dict[str, Any]:
 def main() -> None:
     """Run this adapter over stdio; protocol output is written only by the SDK."""
 
+    def shutdown_handler(signum: int, frame: Any) -> NoReturn:
+        del frame
+        terminate_active_processes()
+        raise SystemExit(128 + signum)
+
+    signal.signal(signal.SIGTERM, shutdown_handler)
+    signal.signal(signal.SIGINT, shutdown_handler)
     mcp.run(transport="stdio")

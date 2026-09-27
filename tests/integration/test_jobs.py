@@ -36,6 +36,7 @@ def _patch_endpoint(monkeypatch: pytest.MonkeyPatch) -> None:
         "hybrid_sdlc.submission.select_active_endpoint",
         lambda **kwargs: (ServerCandidateConfig(url="http://127.0.0.1:8090/v1"), None),
     )
+    monkeypatch.setattr("hybrid_sdlc.submission._verify_windows_worker_breakaway", lambda: None)
 
 
 def _claiming_worker_command(job_id: str, root: Path) -> list[str]:
@@ -244,6 +245,7 @@ def test_detached_worker_continues_after_submitter_exits(
         from hybrid_sdlc.config import ServerCandidateConfig
         from hybrid_sdlc.submission import submit_job
         import hybrid_sdlc.submission as submission
+        submission._verify_windows_worker_breakaway = lambda: None
         submission.select_active_endpoint = lambda **kwargs: (ServerCandidateConfig(url="http://127.0.0.1:8090/v1"), None)
         script = '''
         import os, sys, time
@@ -293,6 +295,7 @@ def test_packaged_worker_command_claims_without_available_model_server(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     _init_repo(tmp_path)
+    monkeypatch.setattr("hybrid_sdlc.submission._verify_windows_worker_breakaway", lambda: None)
     # Submission preflight is faked so the packaged worker can independently
     # exercise its endpoint-failure path without a live model server.
     monkeypatch.setattr(

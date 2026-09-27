@@ -439,12 +439,23 @@ A task is complete when:
   - Untrusted tool arguments are validated through the same policy layer as CLI calls.
 
 - [ ] **HSDLC-045 — Verify MCP disconnect semantics**  
-  Files: `tests/e2e/test_mcp_disconnect.py`  
+  Files: `src/hybrid_sdlc/submission.py`, `tests/unit/test_submission.py`, `tests/e2e/test_mcp_disconnect.py`  
   Depends on: HSDLC-044  
   Acceptance:
-  - Terminating the MCP adapter does not terminate a submitted worker.
+  - On hosts that allow a detached worker to leave the host's process group/job,
+    terminating the MCP adapter does not terminate a submitted worker.
   - Reconnecting and querying returns current or terminal state.
   - Synchronous calls terminate their owned process tree on adapter shutdown.
+  - Before persisting a Windows async job, launch a short-lived child with the worker's
+    process-creation flags and verify through `IsProcessInJob` that it escaped all
+    enclosing Job Objects. Reject submission with `ASYNC_UNSUPPORTED_BY_HOST` when
+    breakaway fails or cannot be verified; do not create a job record in that case.
+  - The official Python MCP stdio client's default `KILL_ON_JOB_CLOSE` Job Object
+    currently rejects async submissions because the worker cannot break away. The E2E
+    suite also verifies worker survival when the client does not impose that restriction.
+  - HSDLC-045 remains incomplete pending cross-platform lifecycle verification and
+    resolution of the Windows bounded-runner interval between child creation and Job
+    Object assignment, during which a fast-spawning descendant may escape cleanup.
 
 ---
 

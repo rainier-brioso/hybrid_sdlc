@@ -3,7 +3,9 @@
 from __future__ import annotations
 
 import os
+import subprocess
 import sys
+import threading
 import time
 from datetime import UTC, datetime
 from pathlib import Path
@@ -85,6 +87,87 @@ def test_current_process_identity_is_available() -> None:
     assert identity.state == "alive"
     assert identity.created_at is not None
     assert identity.start_token
+
+
+def test_exited_process_identity_is_dead() -> None:
+    process = subprocess.Popen([sys.executable, "-c", "pass"])
+    process.wait(timeout=5)
+
+    assert get_process_identity(process.pid).state == "dead"
+
+
+def test_shutdown_prevents_later_subprocess_spawn(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    marker = tmp_path / "should-not-exist"
+    monkeypatch.setattr(process_api, "_shutdown_requested", True)
+
+    with pytest.raises(process_api.ProcessExecutionError, match="during shutdown"):
+        run_bounded_subprocess(
+            [sys.executable, "-c", f"from pathlib import Path; Path({str(marker)!r}).touch()"],
+            tmp_path,
+            dict(os.environ),
+            1,
+        )
+
+    assert not marker.exists()
+
+
+@pytest.mark.skipif(
+    os.name == "nt", reason="the Windows spawn-to-Job-Object assignment race is separate"
+)
+def test_shutdown_waits_for_inflight_spawn_then_kills_registered_process(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    entered_popen = threading.Event()
+    release_popen = threading.Event()
+    shutdown_started = threading.Event()
+    spawned: list[subprocess.Popen[bytes]] = []
+    results: list[object] = []
+    original_popen = subprocess.Popen
+
+    def gated_popen(*args: object, **kwargs: object) -> subprocess.Popen[bytes]:
+        process = original_popen(*args, **kwargs)  # type: ignore[arg-type]
+        spawned.append(process)
+        entered_popen.set()
+        if not release_popen.wait(timeout=5):
+            raise TimeoutError("test did not release the gated Popen")
+        return process
+
+    monkeypatch.setattr(subprocess, "Popen", gated_popen)
+    monkeypatch.setattr(process_api, "_shutdown_requested", False)
+
+    def run_child() -> None:
+        results.append(
+            run_bounded_subprocess(
+                [sys.executable, "-c", "import time; time.sleep(30)"],
+                tmp_path,
+                dict(os.environ),
+                10,
+            )
+        )
+
+    runner = threading.Thread(target=run_child)
+    runner.start()
+    try:
+        assert entered_popen.wait(timeout=5)
+        shutdown = threading.Thread(
+            target=lambda: (shutdown_started.set(), process_api.terminate_active_processes())
+        )
+        shutdown.start()
+        assert shutdown_started.wait(timeout=5)
+        release_popen.set()
+        runner.join(timeout=5)
+        shutdown.join(timeout=5)
+        assert not runner.is_alive()
+        assert not shutdown.is_alive()
+        assert spawned
+        assert get_process_identity(spawned[0].pid).state == "dead"
+        assert results
+    finally:
+        release_popen.set()
+        runner.join(timeout=5)
+        monkeypatch.setattr(process_api, "_shutdown_requested", False)
 
 
 def test_linux_permission_error_is_unknown_not_dead(monkeypatch: pytest.MonkeyPatch) -> None:

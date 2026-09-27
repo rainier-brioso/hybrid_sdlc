@@ -161,6 +161,13 @@ class CancellationError(HybridSDLCError):
     default_exit_code = ExitCode.CANCELLED
 
 
+class AsyncJobHostUnsupportedError(HybridSDLCError):
+    """The current host cannot keep asynchronous workers alive independently."""
+
+    default_code = "ASYNC_UNSUPPORTED_BY_HOST"
+    default_exit_code = ExitCode.POLICY_ERROR
+
+
 class ProcessExecutionError(HybridSDLCError):
     """Subprocess terminated abnormally or timed out."""
 

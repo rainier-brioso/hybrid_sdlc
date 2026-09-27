@@ -15,6 +15,7 @@ from typing import Any
 
 from hybrid_sdlc.command_profiles import resolve_profile_executable
 from hybrid_sdlc.config import ServerCandidateConfig, load_config
+from hybrid_sdlc.errors import AsyncJobHostUnsupportedError
 from hybrid_sdlc.git_tools import check_worktree_clean
 from hybrid_sdlc.job_manager import (
     InvalidJobTransitionError,
@@ -64,10 +65,65 @@ def _detached_options() -> dict[str, Any]:
         "close_fds": True,
     }
     if os.name == "nt":
-        options["creationflags"] = subprocess.DETACHED_PROCESS | subprocess.CREATE_NEW_PROCESS_GROUP
+        options["creationflags"] = (
+            subprocess.DETACHED_PROCESS
+            | subprocess.CREATE_NEW_PROCESS_GROUP
+            | subprocess.CREATE_BREAKAWAY_FROM_JOB
+        )
     else:
         options["start_new_session"] = True
     return options
+
+
+def _verify_windows_worker_breakaway() -> None:
+    """Verify a detached child can leave every Windows job containing this host.
+
+    Job limits may be nested and a query of the current job alone does not
+    establish the effective breakaway policy. Launch a tiny child with the same
+    creation flags as the worker and ask it whether it belongs to any job.
+    """
+
+    if os.name != "nt":
+        return
+
+    probe = (
+        "import ctypes, sys\n"
+        "kernel32 = ctypes.WinDLL('kernel32', use_last_error=True)\n"
+        "kernel32.GetCurrentProcess.restype = ctypes.c_void_p\n"
+        "member = ctypes.c_int()\n"
+        "kernel32.IsProcessInJob.argtypes = [ctypes.c_void_p, ctypes.c_void_p, "
+        "ctypes.POINTER(ctypes.c_int)]\n"
+        "kernel32.IsProcessInJob.restype = ctypes.c_int\n"
+        "ok = kernel32.IsProcessInJob(kernel32.GetCurrentProcess(), None, "
+        "ctypes.byref(member))\n"
+        "sys.exit(43 if not ok else (42 if member.value else 0))\n"
+    )
+    options = _detached_options()
+    try:
+        result = subprocess.run(
+            [sys.executable, "-I", "-c", probe],
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
+            timeout=5,
+            check=False,
+            **{key: value for key, value in options.items() if key != "stdout" and key != "stderr"},
+        )
+    except (OSError, subprocess.SubprocessError) as exc:
+        raise AsyncJobHostUnsupportedError(
+            "Cannot verify that a Windows background worker can survive MCP shutdown. "
+            "This host does not permit a detached worker; use synchronous execution or "
+            "a host that allows Windows Job Object breakaway."
+        ) from exc
+
+    if result.returncode != 0:
+        detail = "the detached process remains inside a Windows Job Object"
+        if result.returncode != 42:
+            detail = "the Windows process-membership check failed"
+        raise AsyncJobHostUnsupportedError(
+            "Cannot safely submit a Windows background job because "
+            f"{detail}. Use synchronous execution or a host that allows "
+            "Windows Job Object breakaway."
+        )
 
 
 def preflight_task_request(
@@ -209,6 +265,7 @@ def submit_job(
         model=model,
         max_retries=max_retries,
     )
+    _verify_windows_worker_breakaway()
     manager = JobManager(verified_root)
     job = manager.create(
         relative_spec,
