@@ -453,9 +453,12 @@ A task is complete when:
   - The official Python MCP stdio client's default `KILL_ON_JOB_CLOSE` Job Object
     currently rejects async submissions because the worker cannot break away. The E2E
     suite also verifies worker survival when the client does not impose that restriction.
-  - HSDLC-045 remains incomplete pending cross-platform lifecycle verification and
-    resolution of the Windows bounded-runner interval between child creation and Job
-    Object assignment, during which a fast-spawning descendant may escape cleanup.
+  - The Windows bounded-runner spawn-to-assignment race is resolved: children start
+    suspended, enter the cleanup Job Object, and resume only after assignment.
+    Deterministic Windows tests verify no child or grandchild runs before assignment
+    and that shutdown/timeout cleanup terminates the process tree.
+  - HSDLC-045 remains incomplete pending a Windows survival E2E on a supported host
+    that permits worker breakaway, plus macOS cross-platform lifecycle verification.
 
 ---
 

@@ -113,9 +113,6 @@ def test_shutdown_prevents_later_subprocess_spawn(
     assert not marker.exists()
 
 
-@pytest.mark.skipif(
-    os.name == "nt", reason="the Windows spawn-to-Job-Object assignment race is separate"
-)
 def test_shutdown_waits_for_inflight_spawn_then_kills_registered_process(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
@@ -168,6 +165,113 @@ def test_shutdown_waits_for_inflight_spawn_then_kills_registered_process(
         release_popen.set()
         runner.join(timeout=5)
         monkeypatch.setattr(process_api, "_shutdown_requested", False)
+
+
+@pytest.mark.skipif(os.name != "nt", reason="Windows Job Object containment regression")
+def test_windows_child_stays_suspended_until_job_assignment_and_timeout_kills_tree(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    child_pid_file = tmp_path / "child.pid"
+    grandchild_pid_file = tmp_path / "grandchild.pid"
+    child_script = tmp_path / "child.py"
+    grandchild_code = (
+        "import os, pathlib, time; "
+        f"pathlib.Path({str(grandchild_pid_file)!r}).write_text(str(os.getpid())); "
+        "time.sleep(30)"
+    )
+    child_script.write_text(
+        f"import os, pathlib, subprocess, sys, time\n"
+        f"pathlib.Path({str(child_pid_file)!r}).write_text(str(os.getpid()))\n"
+        f"code = {grandchild_code!r}\n"
+        "subprocess.Popen([sys.executable, '-c', code])\n"
+        "time.sleep(30)\n",
+        encoding="utf-8",
+    )
+    assignment_started = threading.Event()
+    allow_assignment = threading.Event()
+    original_assign = process_api._WindowsJobObject.assign_process
+    results: list[object] = []
+
+    def gated_assign(job: process_api._WindowsJobObject, process_handle: object) -> bool:
+        assignment_started.set()
+        if not allow_assignment.wait(timeout=5):
+            raise TimeoutError("test did not release gated Job Object assignment")
+        return original_assign(job, process_handle)
+
+    monkeypatch.setattr(process_api._WindowsJobObject, "assign_process", gated_assign)
+    monkeypatch.setattr(process_api, "_shutdown_requested", False)
+    runner = threading.Thread(
+        target=lambda: results.append(
+            run_bounded_subprocess(
+                [sys.executable, str(child_script)],
+                tmp_path,
+                dict(os.environ),
+                timeout_seconds=0.6,
+            )
+        )
+    )
+    runner.start()
+    try:
+        assert assignment_started.wait(timeout=5)
+        # If CREATE_SUSPENDED is missing, user code creates both files while
+        # the assignment hook is blocked, proving the containment race.
+        time.sleep(0.1)
+        assert not child_pid_file.exists()
+        assert not grandchild_pid_file.exists()
+
+        allow_assignment.set()
+        runner.join(timeout=5)
+        assert not runner.is_alive()
+        assert results
+        result = results[0]
+        assert isinstance(result, process_api.SubprocessResult)
+        assert result.timed_out
+        assert child_pid_file.exists()
+        assert grandchild_pid_file.exists()
+        child_pid = int(child_pid_file.read_text(encoding="utf-8"))
+        grandchild_pid = int(grandchild_pid_file.read_text(encoding="utf-8"))
+        assert get_process_identity(child_pid).state == "dead"
+        assert get_process_identity(grandchild_pid).state == "dead"
+    finally:
+        allow_assignment.set()
+        runner.join(timeout=5)
+        monkeypatch.setattr(process_api, "_shutdown_requested", False)
+
+
+@pytest.mark.skipif(os.name != "nt", reason="Windows Job Object launch failure regression")
+def test_windows_assignment_failure_kills_suspended_child_and_closes_pipes(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    marker = tmp_path / "must-not-run"
+    spawned: list[subprocess.Popen[bytes]] = []
+    original_popen = subprocess.Popen
+
+    def capture_popen(*args: object, **kwargs: object) -> subprocess.Popen[bytes]:
+        process = original_popen(*args, **kwargs)  # type: ignore[arg-type]
+        spawned.append(process)
+        return process
+
+    monkeypatch.setattr(subprocess, "Popen", capture_popen)
+    monkeypatch.setattr(
+        process_api._WindowsJobObject,
+        "assign_process",
+        lambda _job, _handle: False,
+    )
+    monkeypatch.setattr(process_api, "_shutdown_requested", False)
+
+    with pytest.raises(process_api.ProcessExecutionError, match="assign subprocess"):
+        run_bounded_subprocess(
+            [sys.executable, "-c", f"from pathlib import Path; Path({str(marker)!r}).touch()"],
+            tmp_path,
+            dict(os.environ),
+            timeout_seconds=5,
+        )
+
+    assert not marker.exists()
+    assert len(spawned) == 1
+    assert spawned[0].poll() is not None
+    assert spawned[0].stdout is not None and spawned[0].stdout.closed
+    assert spawned[0].stderr is not None and spawned[0].stderr.closed
 
 
 def test_linux_permission_error_is_unknown_not_dead(monkeypatch: pytest.MonkeyPatch) -> None:

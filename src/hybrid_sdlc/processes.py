@@ -208,6 +208,17 @@ class _WindowsJobObject:
         from ctypes import wintypes
 
         kernel32 = ctypes.windll.kernel32  # type: ignore[attr-defined]
+        kernel32.CreateJobObjectW.restype = wintypes.HANDLE
+        kernel32.CreateJobObjectW.argtypes = [wintypes.LPVOID, wintypes.LPCWSTR]
+        kernel32.SetInformationJobObject.restype = wintypes.BOOL
+        kernel32.SetInformationJobObject.argtypes = [
+            wintypes.HANDLE,
+            wintypes.INT,
+            wintypes.LPVOID,
+            wintypes.DWORD,
+        ]
+        kernel32.CloseHandle.restype = wintypes.BOOL
+        kernel32.CloseHandle.argtypes = [wintypes.HANDLE]
 
         self.handle = kernel32.CreateJobObjectW(None, None)
         if not self.handle:
@@ -259,27 +270,103 @@ class _WindowsJobObject:
             kernel32.CloseHandle(self.handle)
             self.handle = None
 
-    def assign_process(self, process_handle: int) -> bool:
+    def assign_process(self, process_handle: Any) -> bool:
         if not self.handle or os.name != "nt":
             return False
         import ctypes
+        from ctypes import wintypes
 
-        return bool(ctypes.windll.kernel32.AssignProcessToJobObject(self.handle, process_handle))  # type: ignore[attr-defined]
+        kernel32 = ctypes.windll.kernel32  # type: ignore[attr-defined]
+        kernel32.AssignProcessToJobObject.restype = wintypes.BOOL
+        kernel32.AssignProcessToJobObject.argtypes = [wintypes.HANDLE, wintypes.HANDLE]
+        return bool(kernel32.AssignProcessToJobObject(self.handle, process_handle))
 
     def terminate(self) -> None:
         if not self.handle or os.name != "nt":
             return
         import ctypes
+        from ctypes import wintypes
 
-        ctypes.windll.kernel32.TerminateJobObject(self.handle, 1)  # type: ignore[attr-defined]
+        kernel32 = ctypes.windll.kernel32  # type: ignore[attr-defined]
+        kernel32.TerminateJobObject.restype = wintypes.BOOL
+        kernel32.TerminateJobObject.argtypes = [wintypes.HANDLE, wintypes.UINT]
+        kernel32.TerminateJobObject(self.handle, 1)
 
     def close(self) -> None:
         if not self.handle or os.name != "nt":
             return
         import ctypes
+        from ctypes import wintypes
 
-        ctypes.windll.kernel32.CloseHandle(self.handle)  # type: ignore[attr-defined]
+        kernel32 = ctypes.windll.kernel32  # type: ignore[attr-defined]
+        kernel32.CloseHandle.restype = wintypes.BOOL
+        kernel32.CloseHandle.argtypes = [wintypes.HANDLE]
+        kernel32.CloseHandle(self.handle)
         self.handle = None
+
+
+def _resume_windows_process(proc: subprocess.Popen[bytes]) -> None:
+    """Resume the sole primary thread of a process created suspended.
+
+    Popen intentionally does not expose the primary thread handle. Since the
+    suspended main thread has not run user code, it cannot have created other
+    threads. Enumerating this PID's thread is deterministic; resume it through
+    the documented Tool Help and thread APIs.
+    """
+    import ctypes
+    from ctypes import wintypes
+
+    class THREADENTRY32(ctypes.Structure):
+        _fields_ = [
+            ("dwSize", wintypes.DWORD),
+            ("cntUsage", wintypes.DWORD),
+            ("th32ThreadID", wintypes.DWORD),
+            ("th32OwnerProcessID", wintypes.DWORD),
+            ("tpBasePri", wintypes.LONG),
+            ("tpDeltaPri", wintypes.LONG),
+            ("dwFlags", wintypes.DWORD),
+        ]
+
+    kernel32 = ctypes.windll.kernel32  # type: ignore[attr-defined]
+    kernel32.CreateToolhelp32Snapshot.restype = wintypes.HANDLE
+    kernel32.CreateToolhelp32Snapshot.argtypes = [wintypes.DWORD, wintypes.DWORD]
+    kernel32.Thread32First.restype = wintypes.BOOL
+    kernel32.Thread32First.argtypes = [wintypes.HANDLE, ctypes.POINTER(THREADENTRY32)]
+    kernel32.Thread32Next.restype = wintypes.BOOL
+    kernel32.Thread32Next.argtypes = [wintypes.HANDLE, ctypes.POINTER(THREADENTRY32)]
+    kernel32.OpenThread.restype = wintypes.HANDLE
+    kernel32.OpenThread.argtypes = [wintypes.DWORD, wintypes.BOOL, wintypes.DWORD]
+    kernel32.ResumeThread.restype = wintypes.DWORD
+    kernel32.ResumeThread.argtypes = [wintypes.HANDLE]
+    kernel32.CloseHandle.restype = wintypes.BOOL
+    kernel32.CloseHandle.argtypes = [wintypes.HANDLE]
+
+    snapshot = kernel32.CreateToolhelp32Snapshot(0x00000004, 0)  # TH32CS_SNAPTHREAD
+    invalid_handle = ctypes.c_void_p(-1).value
+    if not snapshot or snapshot == invalid_handle:
+        raise OSError("Could not enumerate the suspended subprocess thread")
+    thread_handle = None
+    try:
+        entry = THREADENTRY32()
+        entry.dwSize = ctypes.sizeof(entry)
+        found = kernel32.Thread32First(snapshot, ctypes.byref(entry))
+        while found:
+            if entry.th32OwnerProcessID == proc.pid:
+                thread_handle = kernel32.OpenThread(0x0002, False, entry.th32ThreadID)
+                if thread_handle:
+                    break
+            found = kernel32.Thread32Next(snapshot, ctypes.byref(entry))
+    finally:
+        kernel32.CloseHandle(snapshot)
+
+    if not thread_handle:
+        raise OSError(f"Could not open the primary thread for process {proc.pid}")
+    try:
+        previous_suspend_count = int(kernel32.ResumeThread(thread_handle))
+        if previous_suspend_count != 1:
+            raise OSError(f"Could not resume the primary thread for process {proc.pid}")
+    finally:
+        kernel32.CloseHandle(thread_handle)
 
 
 def process_is_alive(pid: int) -> bool:
@@ -361,11 +448,14 @@ def run_bounded_subprocess(
     }
 
     if os.name == "nt":
-        # CREATE_SUSPENDED (0x4) or standard creation
-        popen_kwargs["creationflags"] = subprocess.CREATE_NEW_PROCESS_GROUP  # type: ignore[attr-defined]
+        # Keep user code suspended until assignment to the cleanup Job Object.
+        popen_kwargs["creationflags"] = (
+            subprocess.CREATE_NEW_PROCESS_GROUP | 0x00000004
+        )  # CREATE_SUSPENDED
     else:
         popen_kwargs["start_new_session"] = True
 
+    proc: subprocess.Popen[bytes] | None = None
     try:
         # Serialize process creation with shutdown. Once shutdown begins, no
         # later caller may create a child outside the cleanup snapshot.
@@ -375,42 +465,61 @@ def run_bounded_subprocess(
                     job_obj.close()
                 raise ProcessExecutionError("Subprocess execution is unavailable during shutdown")
             proc = subprocess.Popen(argv, **popen_kwargs)
+            if job_obj is not None:
+                import ctypes
+                from ctypes import wintypes
+
+                kernel32 = ctypes.windll.kernel32  # type: ignore[attr-defined]
+                kernel32.OpenProcess.restype = wintypes.HANDLE
+                kernel32.OpenProcess.argtypes = [
+                    wintypes.DWORD,
+                    wintypes.BOOL,
+                    wintypes.DWORD,
+                ]
+                kernel32.CloseHandle.restype = wintypes.BOOL
+                kernel32.CloseHandle.argtypes = [wintypes.HANDLE]
+                process_handle = kernel32.OpenProcess(0x0101, False, proc.pid)
+                assigned = False
+                if process_handle:
+                    try:
+                        assigned = job_obj.assign_process(process_handle)
+                    finally:
+                        kernel32.CloseHandle(process_handle)
+                if not assigned:
+                    raise ProcessExecutionError(
+                        "Could not assign subprocess to a Windows Job Object",
+                        details={"pid": proc.pid},
+                    )
+                try:
+                    _resume_windows_process(proc)
+                except Exception:
+                    job_obj.terminate()
+                    raise
             _active_processes[proc.pid] = (proc, job_obj)
-    except ProcessExecutionError:
-        raise
     except Exception as e:
+        if proc is not None:
+            if job_obj:
+                job_obj.terminate()
+            try:
+                proc.kill()
+            except OSError:
+                pass
+            try:
+                proc.wait(timeout=2.0)
+            except (OSError, subprocess.TimeoutExpired):
+                pass
+            for stream in (proc.stdout, proc.stderr):
+                if stream is not None:
+                    stream.close()
         if job_obj:
             job_obj.close()
+        if isinstance(e, ProcessExecutionError):
+            raise
         raise ProcessExecutionError(
             f"Failed to spawn process '{argv[0]}': {e}",
             details={"argv": argv, "cwd": str(cwd), "error": str(e)},
         ) from e
-
-    if job_obj and job_obj.handle:
-        # Assign process to job object
-        import ctypes
-
-        process_handle = ctypes.windll.kernel32.OpenProcess(0x1F0FFF, False, proc.pid)  # type: ignore[attr-defined]
-        assigned = False
-        if process_handle:
-            try:
-                assigned = job_obj.assign_process(process_handle)
-            finally:
-                ctypes.windll.kernel32.CloseHandle(process_handle)  # type: ignore[attr-defined]
-        if not assigned:
-            # A process that is not in the Job Object would survive abrupt
-            # adapter termination. Fail closed after cleaning up this spawn.
-            job_obj.close()
-            kill_process_tree(proc)
-            try:
-                proc.wait(timeout=2.0)
-            except subprocess.TimeoutExpired:
-                pass
-            _unregister_active_process(proc)
-            raise ProcessExecutionError(
-                "Could not assign subprocess to a Windows Job Object",
-                details={"pid": proc.pid},
-            )
+    assert proc is not None
 
     try:
         child_created_at = get_process_creation_time(proc.pid)
