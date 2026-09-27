@@ -457,8 +457,9 @@ A task is complete when:
     suspended, enter the cleanup Job Object, and resume only after assignment.
     Deterministic Windows tests verify no child or grandchild runs before assignment
     and that shutdown/timeout cleanup terminates the process tree.
-  - HSDLC-045 remains incomplete pending a Windows survival E2E on a supported host
-    that permits worker breakaway, plus macOS cross-platform lifecycle verification.
+  - macOS cross-platform lifecycle verification passed in PR #2's Python 3.12
+    compatibility job (CI run 36349965619). HSDLC-045 remains incomplete pending
+    a Windows survival E2E on a supported host that permits worker breakaway.
 
 ---
 
