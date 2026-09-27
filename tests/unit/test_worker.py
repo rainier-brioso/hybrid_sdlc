@@ -7,6 +7,7 @@ import os
 import subprocess
 import sys
 import threading
+import time
 from datetime import UTC, datetime
 from pathlib import Path
 
@@ -15,9 +16,13 @@ from click.testing import CliRunner
 
 from hybrid_sdlc.cli import cli
 from hybrid_sdlc.config import ServerCandidateConfig
-from hybrid_sdlc.job_manager import InvalidJobTransitionError, JobManager, JobStatus
+from hybrid_sdlc.job_manager import InvalidJobTransitionError, JobManager, JobRecord, JobStatus
 from hybrid_sdlc.models import RunResult, RunStatus
-from hybrid_sdlc.processes import get_process_creation_time, run_bounded_subprocess
+from hybrid_sdlc.processes import (
+    get_process_creation_time,
+    process_is_alive,
+    run_bounded_subprocess,
+)
 from hybrid_sdlc.worker import run_worker
 
 
@@ -236,6 +241,77 @@ def test_heartbeat_failure_interrupts_worker_and_is_persisted(
     failed = run_worker(job.job_id, tmp_path, heartbeat_interval_seconds=0.01)
     assert failed.status is JobStatus.FAILED
     assert failed.failure_reason == "internal_error"
+
+
+def test_async_cancellation_stops_worker_child_and_grandchild(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    _init_repo(tmp_path)
+    manager = JobManager(tmp_path)
+    job = manager.create("spec.md", "T001", test_profile="pytest")
+    grandchild_file = tmp_path / "grandchild.pid"
+    observed_child: list[int] = []
+    result_record: list[JobRecord] = []
+    script = (
+        "import subprocess, sys, time; "
+        "child = subprocess.Popen([sys.executable, '-c', 'import time; time.sleep(30)']); "
+        "open(sys.argv[1], 'w').write(str(child.pid)); time.sleep(30)"
+    )
+
+    def execute(
+        current_manager: JobManager,
+        claimed: object,
+        cancel_event: threading.Event,
+        process_observer: object,
+    ) -> RunResult:
+        def observe(pid: int, created_at: datetime | None) -> None:
+            assert callable(process_observer)
+            process_observer(pid, created_at)
+            observed_child.append(pid)
+
+        completed = run_bounded_subprocess(
+            [sys.executable, "-c", script, str(grandchild_file)],
+            cwd=tmp_path,
+            env=dict(os.environ),
+            timeout_seconds=20,
+            cancel_event=cancel_event,
+            process_observer=observe,
+        )
+        assert completed.cancelled
+        return RunResult(
+            run_id="cancelled_worker_test",
+            task_id="T001",
+            spec_path="spec.md",
+            repo_root=str(tmp_path),
+            status=RunStatus.CANCELLED,
+            started_at=datetime.now(UTC).isoformat(),
+            finished_at=datetime.now(UTC).isoformat(),
+            total_duration_seconds=0.1,
+        )
+
+    monkeypatch.setattr("hybrid_sdlc.worker._execute", execute)
+    worker = threading.Thread(
+        target=lambda: result_record.append(
+            run_worker(job.job_id, tmp_path, heartbeat_interval_seconds=0.01)
+        )
+    )
+    worker.start()
+    deadline = time.monotonic() + 5
+    while time.monotonic() < deadline:
+        if grandchild_file.exists() and manager.get(job.job_id).child_pid is not None:
+            break
+        time.sleep(0.01)
+    assert grandchild_file.exists()
+    grandchild_pid = int(grandchild_file.read_text(encoding="utf-8"))
+    assert manager.cancel(job.job_id).status is JobStatus.RUNNING
+    assert manager.cancel(job.job_id).cancellation_requested is True
+    worker.join(timeout=5)
+
+    assert not worker.is_alive()
+    assert result_record[0].status is JobStatus.CANCELLED
+    assert observed_child
+    assert not process_is_alive(observed_child[0])
+    assert not process_is_alive(grandchild_pid)
 
 
 def test_worker_rejects_nonpositive_heartbeat_interval(tmp_path: Path) -> None:

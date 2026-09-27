@@ -122,7 +122,10 @@ def run_worker(
     def refresh_heartbeat() -> None:
         while not stop_heartbeat.wait(heartbeat_interval_seconds):
             try:
-                manager.heartbeat(job_id, os.getpid(), worker_created_at)
+                record = manager.heartbeat(job_id, os.getpid(), worker_created_at)
+                if record.cancellation_requested:
+                    stop_execution.set()
+                    return
             except Exception as exc:  # persisted worker state must remain observable
                 heartbeat_errors.append(exc)
                 stop_execution.set()

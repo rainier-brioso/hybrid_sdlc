@@ -78,6 +78,43 @@ def test_status_reports_queued_job_and_returns_after_bounded_wait(tmp_path: Path
     assert waited.status is JobStatus.QUEUED
 
 
+def test_cancel_queued_job_is_immediate_and_idempotent(tmp_path: Path) -> None:
+    manager = JobManager(tmp_path)
+    job = manager.create("spec.md", "T001")
+
+    cancelled = manager.cancel(job.job_id)
+
+    assert cancelled.status is JobStatus.CANCELLED
+    assert cancelled.cancellation_requested is True
+    assert cancelled.finished_at is not None
+    assert manager.cancel(job.job_id) == cancelled
+
+
+def test_cancel_request_wins_or_loses_terminal_transition_by_lock_order(tmp_path: Path) -> None:
+    manager = JobManager(tmp_path)
+    job = manager.create("spec.md", "T001")
+    identity = get_process_identity(os.getpid())
+    assert identity.created_at is not None
+    manager.claim(job.job_id, os.getpid(), identity.created_at, identity.start_token)
+
+    requested = manager.cancel(job.job_id)
+    assert requested.status is JobStatus.RUNNING
+    assert requested.cancellation_requested is True
+    failed_completion = manager.transition(
+        job.job_id, JobStatus.FAILED, failure_reason="internal_error"
+    )
+    assert failed_completion.status is JobStatus.CANCELLED
+    assert failed_completion.failure_reason is None
+    assert failed_completion.failure_metadata is None
+    assert failed_completion.run_result is None
+    assert manager.cancel(job.job_id) == failed_completion
+
+    already_completed = manager.create("spec.md", "T002")
+    manager.transition(already_completed.job_id, JobStatus.RUNNING)
+    completed = manager.transition(already_completed.job_id, JobStatus.COMPLETED)
+    assert manager.cancel(already_completed.job_id) == completed
+
+
 def test_status_wait_observes_worker_terminal_transition(tmp_path: Path) -> None:
     manager = JobManager(tmp_path)
     job = manager.create("spec.md", "T001")

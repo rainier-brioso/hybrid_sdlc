@@ -45,6 +45,7 @@ Job states are persisted to `.hybrid_sdlc/jobs/<job_id>.json`:
 - `job_id`: Format `job_<timestamp>_<uuid8>`.
 - `spec_path` & `task_id`: Spec Kit task references.
 - `status`: `queued` | `running` | `completed` | `failed` | `cancelled`.
+- `cancellation_requested`: Persisted request observed by the owning worker on its next heartbeat.
 - `failure_reason`: Optional machine-readable reason such as `abandoned_process`, `timeout`, `test_failure`, or `security_policy`.
 - `worker_pid`, `child_pid`, process creation timestamps, and an OS start token for PID-reuse detection and cancellation tracking. Linux tokens combine the boot ID with `/proc/<pid>/stat` start ticks; Windows tokens use the exact FILETIME start value. macOS/BSD use `ps` start time at one-second precision, so reuse within the same second cannot always be distinguished.
 - `created_at`, `updated_at`, `duration_seconds`.
@@ -53,7 +54,7 @@ Job states are persisted to `.hybrid_sdlc/jobs/<job_id>.json`:
 - `log_file`: Path to raw stdout/stderr execution log.
 
 #### Cancellation & Recovery
-- **Cancellation**: `cancel_spec_job(job_id)` terminates the full process tree using OS-specific process-group signaling (`os.killpg` on POSIX, Win32 Job Object or `taskkill /T /F` on Windows).
+- **Cancellation**: `cancel_spec_job(job_id)` persists a cancellation request while a job is running; the owning worker observes it on its next heartbeat and asks the bounded subprocess runner to terminate the process tree it owns. Queued jobs become cancelled immediately. Per-job locking determines whether completion or cancellation wins, and no external process is killed based only on a persisted PID.
 - **Recovery**: Status queries inspect only the requested running job; hosts may call `recover_running_jobs()` during startup to inspect persisted running jobs. A confirmed dead PID or mismatched start identity transitions atomically to `failed` with `failure_reason: abandoned_process` and typed diagnostic metadata. Permission/query failures are `unknown` and do not fail the job. Older records without a start token use a conservative timestamp comparison; ambiguous identities remain running.
 - **Atomicity**: State updates are written to a temporary file, flushed, and atomically replaced under a per-job lock so readers never observe partial JSON.
 

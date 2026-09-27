@@ -82,6 +82,7 @@ class JobRecord(BaseModel):
     model: str | None = None
     max_retries: int | None = Field(default=None, ge=1, le=10)
     status: JobStatus = JobStatus.QUEUED
+    cancellation_requested: bool = False
     failure_reason: str | None = None
     failure_metadata: dict[str, str | int | float | bool | None] | None = None
     worker_pid: int | None = Field(default=None, gt=0)
@@ -227,6 +228,39 @@ class JobManager:
             refreshed = current.model_copy(update={"heartbeat_at": now, "updated_at": now})
             atomic_save_json(path, refreshed, self.repo_root)
             return refreshed
+
+    def cancel(self, job_id: str) -> JobRecord:
+        """Request cancellation, or cancel a queued job immediately.
+
+        Running workers observe the persisted request on their next heartbeat.
+        Terminal jobs are immutable, making repeated cancellation safe.
+        """
+
+        path = self._job_path(job_id)
+        if not path.is_file():
+            raise FileNotFoundError(path)
+        with FileLock(str(path) + ".transition.lock"):
+            current = self.get(job_id)
+            if current.status in TERMINAL_STATUSES or current.cancellation_requested:
+                return current
+            now = datetime.now(UTC)
+            if current.status is JobStatus.QUEUED:
+                cancelled = JobRecord.model_validate(
+                    {
+                        **current.model_dump(),
+                        "status": JobStatus.CANCELLED,
+                        "cancellation_requested": True,
+                        "updated_at": now,
+                        "finished_at": now,
+                        "duration_seconds": max(0.0, (now - current.created_at).total_seconds()),
+                    }
+                )
+            else:
+                cancelled = current.model_copy(
+                    update={"cancellation_requested": True, "updated_at": now}
+                )
+            atomic_save_json(path, cancelled, self.repo_root)
+            return cancelled
 
     def set_child_process(
         self,
@@ -425,6 +459,13 @@ class JobManager:
             status = JobStatus(status)
             if status not in LEGAL_TRANSITIONS[current.status]:
                 raise InvalidJobTransitionError(f"Cannot transition {current.status} to {status}")
+            if current.cancellation_requested and status is not JobStatus.CANCELLED:
+                # The cancellation request acquired the lock first. Completion and
+                # failure results describe work that cancellation did not complete.
+                status = JobStatus.CANCELLED
+                failure_reason = None
+                failure_metadata = None
+                run_result = None
             now = datetime.now(UTC)
             updates: dict[str, Any] = {
                 "status": status,

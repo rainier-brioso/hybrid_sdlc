@@ -412,13 +412,14 @@ A task is complete when:
   - Recovery probes outside the lock and rechecks state and owner under the per-job lock before atomic persistence. `recover_running_jobs()` is available for host startup integration.
   - macOS/BSD process start times use `ps` at one-second precision, so PID reuse within the same second remains ambiguous.
 
-- [ ] **HSDLC-042 — Implement asynchronous cancellation**  
-  Files: `src/hybrid_sdlc/job_manager.py`, `tests/integration/test_jobs.py`  
+- [x] **HSDLC-042 — Implement asynchronous cancellation**
+  Files: `src/hybrid_sdlc/job_manager.py`, `src/hybrid_sdlc/worker.py`, `tests/integration/test_jobs.py`, `tests/unit/test_worker.py`
   Depends on: HSDLC-041  
   Acceptance:
   - Cancellation is idempotent.
   - Live process descendants terminate; terminal jobs remain unchanged.
   - A race between completion and cancellation resolves to one valid terminal state.
+  - Running cancellation is persisted and observed by the worker heartbeat; the bounded subprocess runner terminates its owned process tree.
 
 - [ ] **HSDLC-043 — Implement async CLI commands**  
   Files: `src/hybrid_sdlc/cli.py`, `tests/integration/test_cli.py`  
