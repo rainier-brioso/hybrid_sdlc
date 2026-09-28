@@ -16,11 +16,121 @@ from hybrid_sdlc.spec_initializer import (
     ManifestError,
     OwnershipManifest,
     classify_files,
+    detect_spec_kit,
     load_manifest,
     save_manifest,
     sha256_bytes,
     validate_managed_path,
 )
+
+
+def test_spec_kit_probe_reports_missing_cli_with_setup_guidance(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr("hybrid_sdlc.spec_initializer.shutil.which", lambda _: None)
+
+    result = detect_spec_kit()
+
+    assert not result.compatible
+    assert result.executable is None
+    assert "Install GitHub Spec Kit" in result.guidance
+
+
+def test_spec_kit_probe_parses_version_and_boolean_features(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    calls: list[tuple[object, dict[str, object]]] = []
+    monkeypatch.setattr(
+        "hybrid_sdlc.spec_initializer.shutil.which", lambda _: "C:/tools/specify.exe"
+    )
+
+    def run(args: object, **kwargs: object) -> subprocess.CompletedProcess[str]:
+        calls.append((args, kwargs))
+        return subprocess.CompletedProcess(
+            args, 0, '{"version":"v1.2.3","features":{"plan":true,"spec":false}}', ""
+        )
+
+    monkeypatch.setattr("hybrid_sdlc.spec_initializer.subprocess.run", run)
+
+    result = detect_spec_kit()
+
+    assert result.compatible
+    assert result.executable == "C:/tools/specify.exe"
+    assert result.version == "v1.2.3"
+    assert [(item.name, item.enabled) for item in result.features] == [
+        ("plan", True),
+        ("spec", False),
+    ]
+    assert calls == [
+        (
+            ["C:/tools/specify.exe", "version", "--features", "--json"],
+            {
+                "shell": False,
+                "capture_output": True,
+                "text": True,
+                "timeout": 5,
+                "check": False,
+            },
+        )
+    ]
+
+
+@pytest.mark.parametrize(
+    "stdout",
+    [
+        "not json",
+        "[]",
+        '{"version":"","features":{}}',
+        '{"version":"v1","features":[]}',
+        '{"version":"v1","features":{"plan":"true"}}',
+        "[" * 1100 + "]" * 1100,
+    ],
+)
+def test_spec_kit_probe_rejects_invalid_json_output(
+    monkeypatch: pytest.MonkeyPatch, stdout: str
+) -> None:
+    monkeypatch.setattr("hybrid_sdlc.spec_initializer.shutil.which", lambda _: "specify")
+    monkeypatch.setattr(
+        "hybrid_sdlc.spec_initializer.subprocess.run",
+        lambda *args, **kwargs: subprocess.CompletedProcess(args, 0, stdout, ""),
+    )
+
+    result = detect_spec_kit()
+
+    assert not result.compatible
+    assert result.version is None
+    assert "invalid capability response" in result.guidance
+
+
+def test_spec_kit_probe_rejects_nonzero_exit(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr("hybrid_sdlc.spec_initializer.shutil.which", lambda _: "specify")
+    monkeypatch.setattr(
+        "hybrid_sdlc.spec_initializer.subprocess.run",
+        lambda *args, **kwargs: subprocess.CompletedProcess(args, 2, "", "unsupported flag"),
+    )
+
+    result = detect_spec_kit()
+
+    assert not result.compatible
+    assert "unsupported flag" in result.guidance
+
+
+def test_spec_kit_probe_rejects_timeout(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr("hybrid_sdlc.spec_initializer.shutil.which", lambda _: "specify")
+
+    def timeout(*args: object, **kwargs: object) -> None:
+        raise subprocess.TimeoutExpired("specify", timeout=5)
+
+    monkeypatch.setattr("hybrid_sdlc.spec_initializer.subprocess.run", timeout)
+
+    result = detect_spec_kit()
+
+    assert not result.compatible
+    assert "timed out" in result.guidance
 
 
 def _record(path: str, content: bytes, source: bytes | None = None) -> ManagedFile:

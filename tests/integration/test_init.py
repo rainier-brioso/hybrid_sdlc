@@ -15,16 +15,39 @@ from hybrid_sdlc.spec_initializer import (
     FileAction,
     InitializationError,
     ManifestError,
+    SpecKitCapability,
+    SpecKitFeature,
     initialize_spec_kit,
     load_manifest,
     sha256_bytes,
 )
 
 
+@pytest.fixture(autouse=True)
+def fake_spec_kit_probe(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Give integration tests a deterministic local Spec Kit executable response."""
+    executable = "fake-specify"
+    original_run = subprocess.run
+    monkeypatch.setattr(spec_initializer.shutil, "which", lambda name: executable)
+
+    def run(args: object, **kwargs: object) -> subprocess.CompletedProcess[str]:
+        if isinstance(args, (list, tuple)) and args and args[0] == executable:
+            assert args == [executable, "version", "--features", "--json"]
+            return subprocess.CompletedProcess(
+                args, 0, '{"version":"test-version","features":{"spec":true}}', ""
+            )
+        return original_run(args, **kwargs)  # type: ignore[arg-type]
+
+    monkeypatch.setattr(spec_initializer.subprocess, "run", run)
+
+
 def test_initialization_creates_templates_and_second_run_is_idempotent(tmp_path: Path) -> None:
     first = initialize_spec_kit(tmp_path)
     first_bytes = {path: (tmp_path / path).read_bytes() for path in _template_paths()}
 
+    assert first.spec_kit.compatible
+    assert first.spec_kit.version == "test-version"
+    assert first.spec_kit.features == (SpecKitFeature("spec", True),)
     assert all(file.action is FileAction.CREATED for file in first.files)
     assert (tmp_path / first.manifest_path).is_file()
     manifest = load_manifest(tmp_path)
@@ -126,6 +149,26 @@ def test_corrupt_manifest_fails_before_creating_templates(tmp_path: Path) -> Non
         initialize_spec_kit(tmp_path)
 
     assert not (tmp_path / _template_paths()[0]).exists()
+
+
+@pytest.mark.parametrize("missing", [True, False])
+def test_missing_or_incompatible_spec_kit_fails_before_any_write(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, missing: bool
+) -> None:
+    capability = SpecKitCapability(
+        None if missing else "specify",
+        None,
+        (),
+        False,
+        "Install or update Spec Kit before initializing.",
+    )
+    monkeypatch.setattr(spec_initializer, "detect_spec_kit", lambda: capability)
+
+    with pytest.raises(InitializationError, match="Install or update Spec Kit"):
+        initialize_spec_kit(tmp_path)
+
+    assert not (tmp_path / ".specify").exists()
+    assert not (tmp_path / ".specify" / ".hybrid-sdlc-manifest.json").exists()
 
 
 def test_unsafe_directory_at_template_path_fails_before_any_write(tmp_path: Path) -> None:

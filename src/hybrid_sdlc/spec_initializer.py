@@ -7,7 +7,9 @@ import importlib.resources
 import json
 import os
 import re
+import shutil
 import stat
+import subprocess
 import tempfile
 import uuid
 from dataclasses import dataclass
@@ -26,6 +28,26 @@ _TEMPLATE_FILES = (
     ".specify/templates/plan-template.md",
     ".specify/templates/tasks-template.md",
 )
+_SPEC_KIT_PROBE_TIMEOUT_SECONDS = 5
+
+
+@dataclass(frozen=True, slots=True)
+class SpecKitFeature:
+    """One feature reported by the installed Spec Kit CLI."""
+
+    name: str
+    enabled: bool
+
+
+@dataclass(frozen=True, slots=True)
+class SpecKitCapability:
+    """Result of probing the locally installed Spec Kit executable."""
+
+    executable: str | None
+    version: str | None
+    features: tuple[SpecKitFeature, ...]
+    compatible: bool
+    guidance: str
 
 
 class ManifestError(ValueError):
@@ -69,6 +91,7 @@ class InitializationResult:
 
     files: tuple[InitializedFile, ...]
     manifest_path: str
+    spec_kit: SpecKitCapability
 
 
 def _canonical_templates() -> dict[str, bytes]:
@@ -98,6 +121,101 @@ def _canonical_templates() -> dict[str, bytes]:
             raise InitializationError("source checkout Spec Kit templates are incomplete") from exc
 
 
+def detect_spec_kit() -> SpecKitCapability:
+    """Read the local Spec Kit CLI's machine-readable capabilities without network access."""
+    executable = shutil.which("specify")
+    if executable is None:
+        return SpecKitCapability(
+            None,
+            None,
+            (),
+            False,
+            "Install GitHub Spec Kit and ensure its `specify` executable is on PATH, "
+            "then rerun `hybrid-sdlc init`.",
+        )
+
+    try:
+        completed = subprocess.run(
+            [executable, "version", "--features", "--json"],
+            shell=False,
+            capture_output=True,
+            text=True,
+            timeout=_SPEC_KIT_PROBE_TIMEOUT_SECONDS,
+            check=False,
+        )
+    except subprocess.TimeoutExpired:
+        return SpecKitCapability(
+            executable,
+            None,
+            (),
+            False,
+            "The local `specify version --features --json` probe timed out. Check the "
+            "Spec Kit installation and rerun `hybrid-sdlc init`.",
+        )
+    except UnicodeError as exc:
+        return SpecKitCapability(
+            executable,
+            None,
+            (),
+            False,
+            f"The Spec Kit capability response could not be decoded ({exc}). Repair or "
+            "update Spec Kit, then rerun `hybrid-sdlc init`.",
+        )
+    except OSError as exc:
+        return SpecKitCapability(
+            executable,
+            None,
+            (),
+            False,
+            f"Could not run the local Spec Kit executable ({exc}). Repair or reinstall "
+            "Spec Kit, then rerun `hybrid-sdlc init`.",
+        )
+
+    if completed.returncode != 0:
+        detail = completed.stderr.strip() or f"exit status {completed.returncode}"
+        return SpecKitCapability(
+            executable,
+            None,
+            (),
+            False,
+            f"The installed Spec Kit CLI does not support the capability probe ({detail}). "
+            "Update Spec Kit to a release that supports `specify version --features --json`, "
+            "then rerun `hybrid-sdlc init`.",
+        )
+
+    try:
+        payload = json.loads(completed.stdout)
+        if not isinstance(payload, dict):
+            raise ValueError("response must be a JSON object")
+        version = payload.get("version")
+        features = payload.get("features")
+        if not isinstance(version, str) or not version.strip():
+            raise ValueError("version must be a non-empty string")
+        if not isinstance(features, dict) or any(
+            not isinstance(name, str) or not isinstance(enabled, bool)
+            for name, enabled in features.items()
+        ):
+            raise ValueError("features must map names to boolean values")
+    except (json.JSONDecodeError, RecursionError, TypeError, ValueError) as exc:
+        return SpecKitCapability(
+            executable,
+            None,
+            (),
+            False,
+            f"The installed Spec Kit CLI returned an invalid capability response ({exc}). "
+            "Update or repair Spec Kit so `specify version --features --json` returns a "
+            "version and boolean feature map, then rerun `hybrid-sdlc init`.",
+        )
+
+    return SpecKitCapability(
+        executable,
+        version,
+        tuple(SpecKitFeature(name, enabled) for name, enabled in sorted(features.items())),
+        True,
+        "Spec Kit capability detection succeeded.",
+    )
+
+
 def initialize_spec_kit(repo_root: Path, *, force: bool = False) -> InitializationResult:
     """Install canonical Spec Kit files, preserving user-owned content by default.
 
@@ -113,6 +231,10 @@ def initialize_spec_kit(repo_root: Path, *, force: bool = False) -> Initializati
         raise InitializationError(f"repository root is unavailable: {repo_root}") from exc
     if not root.is_dir():
         raise InitializationError("repository root must be a directory")
+
+    capability = detect_spec_kit()
+    if not capability.compatible:
+        raise InitializationError(capability.guidance)
 
     sources = _canonical_templates()
     manifest = load_manifest(root)
@@ -174,7 +296,9 @@ def initialize_spec_kit(repo_root: Path, *, force: bool = False) -> Initializati
         saved_manifest = save_manifest(root, updated_manifest)
     except (OSError, ManifestError) as exc:
         raise InitializationError(f"Spec Kit initialization was incomplete: {exc}") from exc
-    return InitializationResult(tuple(results), saved_manifest.relative_to(root).as_posix())
+    return InitializationResult(
+        tuple(results), saved_manifest.relative_to(root).as_posix(), capability
+    )
 
 
 def _save_backup(root: Path, relative_path: str, content: bytes) -> str:

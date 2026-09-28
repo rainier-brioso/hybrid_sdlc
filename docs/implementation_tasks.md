@@ -502,12 +502,13 @@ A task is complete when:
   - `--force` creates a recoverable backup and reports every replacement.
   - The built wheel includes all four canonical files; source-checkout and wheel resource loading are covered.
 
-- [ ] **HSDLC-049 — Integrate installed Spec Kit capability detection**  
-  Files: `src/hybrid_sdlc/spec_initializer.py`, `tests/unit/test_spec_initializer.py`  
+- [x] **HSDLC-049 — Integrate installed Spec Kit capability detection**
+  Files: `src/hybrid_sdlc/spec_initializer.py`, `tests/unit/test_spec_initializer.py`, `tests/integration/test_init.py`
   Depends on: HSDLC-048  
   Acceptance:
-  - Detection records the installed CLI version/features without downloading software.
-  - Missing or incompatible Spec Kit produces setup guidance rather than a partial initialization.
+  - Detection runs the local `specify version --features --json` capability probe with captured output and a timeout; it records the executable, version, and boolean feature statuses without network access.
+  - A valid machine-readable response is the compatibility floor; no unsupported minimum version or unrelated feature is assumed.
+  - Missing, timed out, non-zero, or malformed probes produce actionable setup guidance before any destination, backup, or manifest write.
 
 - [ ] **HSDLC-050 — Implement and test `hybrid-sdlc init`**  
   Files: `src/hybrid_sdlc/cli.py`, `tests/integration/test_cli.py`, `docs/spec-kit.md`  
