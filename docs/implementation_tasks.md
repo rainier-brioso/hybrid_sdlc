@@ -510,13 +510,15 @@ A task is complete when:
   - A valid machine-readable response is the compatibility floor; no unsupported minimum version or unrelated feature is assumed.
   - Missing, timed out, non-zero, or malformed probes produce actionable setup guidance before any destination, backup, or manifest write.
 
-- [ ] **HSDLC-050 — Implement and test `hybrid-sdlc init`**  
+- [x] **HSDLC-050 — Implement and test `hybrid-sdlc init`**
   Files: `src/hybrid_sdlc/cli.py`, `tests/integration/test_cli.py`, `docs/spec-kit.md`  
   Depends on: HSDLC-048, HSDLC-049  
   Acceptance:
   - Supports target directory, dry-run, and explicit force behavior.
-  - Tests cover empty repositories, existing Spec Kit projects, customized templates, and interrupted initialization.
-  - A rerun after interruption during template or manifest writes safely reconciles partial state without overwriting user edits or leaving initializer-written files untracked.
+  - Tests cover empty repositories, existing Spec Kit projects, customized templates, target errors, JSON output, and interrupted initialization.
+  - A durable journal precedes template, backup, and manifest writes; reruns reconcile exact initializer bytes, preserve intervening user edits, and retain force backups.
+  - Dry-run performs the same capability, path, and ownership preflight without writing destinations, journal, manifest, or backups.
+  - [Initialization instructions and recovery behavior](spec-kit.md) are documented.
 
 ---
 

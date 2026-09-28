@@ -24,6 +24,10 @@ from hybrid_sdlc.job_manager import InvalidJobTransitionError, JobManager, JobRe
 from hybrid_sdlc.models import ProbeResult, RunStatus
 from hybrid_sdlc.security import verify_repo_root
 from hybrid_sdlc.server_probe import probe_endpoint, select_active_endpoint
+from hybrid_sdlc.spec_initializer import (
+    InitializationError,
+    initialize_spec_kit,
+)
 from hybrid_sdlc.submission import JobSubmissionError, submit_job
 from hybrid_sdlc.worker import run_worker
 
@@ -64,6 +68,81 @@ def parse_duration_seconds(val: str) -> float:
 def cli() -> None:
     """Hybrid Spec-Driven SDLC Toolkit."""
     pass
+
+
+@cli.command("init")
+@click.option(
+    "--target-dir",
+    type=click.Path(path_type=Path, file_okay=False, dir_okay=True),
+    default=None,
+    help="Existing Git repository to initialize (defaults to the current directory).",
+)
+@click.option("--dry-run", is_flag=True, help="Show the initialization plan without writing files.")
+@click.option("--force", is_flag=True, help="Back up and replace customized managed templates.")
+@click.option("--json", "json_mode", is_flag=True, help="Output machine-readable JSON.")
+def init_cmd(target_dir: Path | None, dry_run: bool, force: bool, json_mode: bool) -> None:
+    """Install Hybrid SDLC's canonical Spec Kit templates in a Git repository."""
+    try:
+        verified_root = verify_repo_root(target_dir or Path.cwd())
+        result = initialize_spec_kit(verified_root, force=force, dry_run=dry_run)
+    except HybridSDLCError as exc:
+        if json_mode:
+            click.echo(json.dumps(exc.to_failure_record().model_dump(mode="json"), indent=2))
+        else:
+            click.echo(f"Error [{exc.code}]: {exc.message}", err=True)
+        sys.exit(exc.exit_code)
+    except (InitializationError, ValueError, OSError) as exc:
+        if json_mode:
+            click.echo(
+                json.dumps(
+                    {"code": "SPEC_INITIALIZATION_FAILED", "message": str(exc), "details": {}},
+                    indent=2,
+                )
+            )
+        else:
+            click.echo(f"Initialization failed: {exc}", err=True)
+        sys.exit(ExitCode.POLICY_ERROR)
+
+    files = [
+        {
+            "path": item.path,
+            "action": ("would_" + item.action.value) if dry_run else item.action.value,
+            "backup_path": item.backup_path,
+        }
+        for item in result.files
+    ]
+    if json_mode:
+        click.echo(
+            json.dumps(
+                {
+                    "repository": str(verified_root),
+                    "dry_run": dry_run,
+                    "files": files,
+                    "manifest_path": result.manifest_path,
+                    "spec_kit": {
+                        "executable": result.spec_kit.executable,
+                        "version": result.spec_kit.version,
+                        "compatible": result.spec_kit.compatible,
+                        "features": {
+                            feature.name: feature.enabled for feature in result.spec_kit.features
+                        },
+                    },
+                },
+                indent=2,
+            )
+        )
+        return
+    verb = "Would initialize" if dry_run else "Initialized"
+    click.echo(f"{verb} Spec Kit files in {verified_root}:")
+    for item in result.files:
+        action = item.action.value
+        if dry_run:
+            action = "would " + action
+        click.echo(f"  {item.path}: {action}")
+        if item.backup_path:
+            click.echo(f"    backup: {item.backup_path}")
+    if not result.spec_kit.compatible:
+        click.echo(result.spec_kit.guidance, err=True)
 
 
 @cli.command("check")

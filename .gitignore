@@ -39,6 +39,7 @@ htmlcov/
 
 # Hybrid SDLC artifacts and local runtime
 .hybrid_sdlc/
+.hybrid-sdlc-init-journal.json
 *.lock
 !uv.lock
 

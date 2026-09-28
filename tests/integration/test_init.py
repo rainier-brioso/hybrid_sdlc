@@ -192,14 +192,373 @@ def test_backup_failure_preserves_every_original_file(
         (tmp_path / relative_path).write_bytes(content)
         originals[relative_path] = content
 
-    def fail_backup(root: Path, relative_path: str, content: bytes) -> str:
-        raise OSError("simulated backup disk failure")
+    atomic_write = spec_initializer._atomic_write
 
-    monkeypatch.setattr(spec_initializer, "_save_backup", fail_backup)
-    with pytest.raises(InitializationError, match="recoverable backup"):
+    def fail_backup(target: Path, content: bytes) -> None:
+        if "backups" in target.parts:
+            raise OSError("simulated backup disk failure")
+        atomic_write(target, content)
+
+    monkeypatch.setattr(spec_initializer, "_atomic_write", fail_backup)
+    with pytest.raises(InitializationError, match="initialization was incomplete"):
         initialize_spec_kit(tmp_path, force=True)
 
     assert all((tmp_path / path).read_bytes() == content for path, content in originals.items())
+
+
+def test_interrupted_template_write_recovers_and_tracks_initializer_files(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    original_write = spec_initializer._atomic_write
+    failed_target = tmp_path / _template_paths()[1]
+
+    def fail_second_template(target: Path, content: bytes) -> None:
+        if target == failed_target:
+            raise OSError("simulated interruption")
+        original_write(target, content)
+
+    monkeypatch.setattr(spec_initializer, "_atomic_write", fail_second_template)
+    with pytest.raises(InitializationError, match="incomplete"):
+        initialize_spec_kit(tmp_path)
+    assert (tmp_path / JOURNAL).is_file()
+
+    monkeypatch.setattr(spec_initializer, "_atomic_write", original_write)
+    initialize_spec_kit(tmp_path)
+    manifest = load_manifest(tmp_path)
+    assert manifest is not None
+    assert {entry.path for entry in manifest.files} == set(_template_paths())
+    assert not (tmp_path / JOURNAL).exists()
+
+
+def test_recovery_preserves_user_edit_made_after_interruption(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    original_write = spec_initializer._atomic_write
+    failed_target = tmp_path / _template_paths()[1]
+
+    def interrupt(target: Path, content: bytes) -> None:
+        if target == failed_target:
+            raise OSError("simulated interruption")
+        original_write(target, content)
+
+    monkeypatch.setattr(spec_initializer, "_atomic_write", interrupt)
+    with pytest.raises(InitializationError):
+        initialize_spec_kit(tmp_path)
+    edited = tmp_path / _template_paths()[0]
+    user_bytes = b"edited after interruption\n"
+    edited.write_bytes(user_bytes)
+
+    monkeypatch.setattr(spec_initializer, "_atomic_write", original_write)
+    result = initialize_spec_kit(tmp_path)
+    assert edited.read_bytes() == user_bytes
+    assert result.files[0].action is FileAction.PRESERVED
+    manifest = load_manifest(tmp_path)
+    assert manifest is not None
+    assert _template_paths()[0] not in {entry.path for entry in manifest.files}
+
+
+def test_interrupted_manifest_write_recovers_on_rerun(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    original_save = spec_initializer.save_manifest
+
+    def fail_manifest(root: Path, manifest: object) -> Path:
+        raise OSError("simulated manifest interruption")
+
+    monkeypatch.setattr(spec_initializer, "save_manifest", fail_manifest)
+    with pytest.raises(InitializationError, match="incomplete"):
+        initialize_spec_kit(tmp_path)
+    assert all((tmp_path / path).is_file() for path in _template_paths())
+    assert (tmp_path / JOURNAL).is_file()
+
+    monkeypatch.setattr(spec_initializer, "save_manifest", original_save)
+    initialize_spec_kit(tmp_path)
+    manifest = load_manifest(tmp_path)
+    assert manifest is not None
+    assert {entry.path for entry in manifest.files} == set(_template_paths())
+
+
+def test_interrupted_force_reuses_recoverable_original_backup(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    initialize_spec_kit(tmp_path)
+    target = tmp_path / _template_paths()[0]
+    original = b"the only copy of user content\n"
+    target.write_bytes(original)
+    atomic_write = spec_initializer._atomic_write
+
+    def interrupt_replacement(path: Path, content: bytes) -> None:
+        if (
+            path == target
+            and content == spec_initializer._canonical_templates()[_template_paths()[0]]
+        ):
+            raise OSError("simulated interruption")
+        atomic_write(path, content)
+
+    monkeypatch.setattr(spec_initializer, "_atomic_write", interrupt_replacement)
+    with pytest.raises(InitializationError):
+        initialize_spec_kit(tmp_path, force=True)
+    backup_paths = list((tmp_path / ".specify" / "backups").rglob(target.name))
+    assert len(backup_paths) == 1
+    assert backup_paths[0].read_bytes() == original
+
+    monkeypatch.setattr(spec_initializer, "_atomic_write", atomic_write)
+    result = initialize_spec_kit(tmp_path)
+    backup_paths = list((tmp_path / ".specify" / "backups").rglob(target.name))
+    assert len(backup_paths) == 1
+    assert backup_paths[0].read_bytes() == original
+    assert target.read_bytes() == spec_initializer._canonical_templates()[_template_paths()[0]]
+    recovered = next(item for item in result.files if item.path == _template_paths()[0])
+    assert recovered.action is FileAction.UPDATED
+    assert recovered.backup_path is not None
+    assert (tmp_path / recovered.backup_path).read_bytes() == original
+
+
+def test_interrupted_force_preserves_later_user_edit_and_keeps_original_backup(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    initialize_spec_kit(tmp_path)
+    target = tmp_path / _template_paths()[0]
+    original = b"pre-force user customization\n"
+    target.write_bytes(original)
+    atomic_write = spec_initializer._atomic_write
+
+    def interrupt(path: Path, content: bytes) -> None:
+        if (
+            path == target
+            and content == spec_initializer._canonical_templates()[_template_paths()[0]]
+        ):
+            raise OSError("simulated interruption")
+        atomic_write(path, content)
+
+    monkeypatch.setattr(spec_initializer, "_atomic_write", interrupt)
+    with pytest.raises(InitializationError):
+        initialize_spec_kit(tmp_path, force=True)
+    later_edit = b"changed after the interrupted force\n"
+    target.write_bytes(later_edit)
+    monkeypatch.setattr(spec_initializer, "_atomic_write", atomic_write)
+
+    result = initialize_spec_kit(tmp_path)
+
+    assert target.read_bytes() == later_edit
+    backup_path = next(
+        item.backup_path for item in result.files if item.path == _template_paths()[0]
+    )
+    assert backup_path is not None
+    assert (tmp_path / backup_path).read_bytes() == original
+
+
+def test_recovery_does_not_recreate_file_deleted_after_interrupted_force(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    initialize_spec_kit(tmp_path)
+    target = tmp_path / _template_paths()[0]
+    target.write_bytes(b"customized before force\n")
+    atomic_write = spec_initializer._atomic_write
+
+    def interrupt(path: Path, content: bytes) -> None:
+        if (
+            path == target
+            and content == spec_initializer._canonical_templates()[_template_paths()[0]]
+        ):
+            raise OSError("simulated interruption")
+        atomic_write(path, content)
+
+    monkeypatch.setattr(spec_initializer, "_atomic_write", interrupt)
+    with pytest.raises(InitializationError):
+        initialize_spec_kit(tmp_path, force=True)
+    target.unlink()
+    monkeypatch.setattr(spec_initializer, "_atomic_write", atomic_write)
+
+    result = initialize_spec_kit(tmp_path)
+
+    assert not target.exists()
+    assert (
+        next(item for item in result.files if item.path == _template_paths()[0]).action
+        is FileAction.PRESERVED
+    )
+
+
+def test_dry_run_force_rejects_non_directory_backup_root(tmp_path: Path) -> None:
+    backup_root = tmp_path / ".specify" / "backups"
+    backup_root.parent.mkdir()
+    backup_root.write_text("not a directory", encoding="utf-8")
+
+    with pytest.raises(ManifestError, match="backup path is not a directory"):
+        initialize_spec_kit(tmp_path, force=True, dry_run=True)
+
+    assert backup_root.is_file()
+    assert not (tmp_path / JOURNAL).exists()
+
+
+def test_dry_run_force_rejects_unsafe_planned_backup_target(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    initialize_spec_kit(tmp_path)
+    template = tmp_path / _template_paths()[0]
+    template.write_bytes(b"customized template")
+    invalid_destination = ".specify/backups/fixed/.specify/memory/constitution.md"
+    destination = tmp_path.joinpath(*invalid_destination.split("/"))
+    destination.mkdir(parents=True)
+    monkeypatch.setattr(spec_initializer, "_backup_relative_path", lambda path: invalid_destination)
+
+    with pytest.raises(ManifestError, match="backup destination is not a regular file"):
+        initialize_spec_kit(tmp_path, force=True, dry_run=True)
+
+    assert template.read_bytes() == b"customized template"
+    assert not (tmp_path / JOURNAL).exists()
+
+
+def test_dry_run_pending_journal_rejects_symlinked_backup_root(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    initialize_spec_kit(tmp_path)
+    target = tmp_path / _template_paths()[0]
+    target.write_bytes(b"customized before interrupted force")
+    atomic_write = spec_initializer._atomic_write
+    journal_path = tmp_path / JOURNAL
+
+    def create_unsafe_backup_root(path: Path, content: bytes) -> None:
+        atomic_write(path, content)
+        if path == journal_path:
+            outside = tmp_path / "outside"
+            outside.mkdir()
+            backup_root = tmp_path / ".specify" / "backups"
+            try:
+                backup_root.symlink_to(outside, target_is_directory=True)
+            except OSError as exc:
+                pytest.skip(f"directory symlinks unavailable: {exc}")
+
+    monkeypatch.setattr(spec_initializer, "_atomic_write", create_unsafe_backup_root)
+    with pytest.raises(InitializationError):
+        initialize_spec_kit(tmp_path, force=True)
+    monkeypatch.setattr(spec_initializer, "_atomic_write", atomic_write)
+
+    with pytest.raises(ManifestError, match="symlink or reparse point"):
+        initialize_spec_kit(tmp_path, dry_run=True)
+
+    assert journal_path.is_file()
+    assert target.read_bytes() == b"customized before interrupted force"
+
+
+def test_dry_run_pending_journal_rejects_mismatched_existing_backup(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    initialize_spec_kit(tmp_path)
+    target = tmp_path / _template_paths()[0]
+    target.write_bytes(b"customized before interrupted force")
+    atomic_write = spec_initializer._atomic_write
+    journal_path = tmp_path / JOURNAL
+    backup_file: Path | None = None
+
+    def occupy_backup_after_journal(path: Path, content: bytes) -> None:
+        nonlocal backup_file
+        atomic_write(path, content)
+        if path == journal_path:
+            journal = spec_initializer._load_journal(journal_path)
+            backup_relative_path = str(journal["entries"][0]["backup_path"])
+            backup_file = tmp_path.joinpath(*backup_relative_path.split("/"))
+            backup_file.parent.mkdir(parents=True, exist_ok=True)
+            backup_file.write_bytes(b"different file already at backup destination")
+
+    monkeypatch.setattr(spec_initializer, "_atomic_write", occupy_backup_after_journal)
+    with pytest.raises(InitializationError):
+        initialize_spec_kit(tmp_path, force=True)
+    monkeypatch.setattr(spec_initializer, "_atomic_write", atomic_write)
+
+    with pytest.raises(ManifestError, match="recoverable backup is occupied or changed"):
+        initialize_spec_kit(tmp_path, dry_run=True)
+
+    assert backup_file is not None and backup_file.is_file()
+    assert backup_file.read_bytes() == b"different file already at backup destination"
+    assert target.read_bytes() == b"customized before interrupted force"
+
+
+def test_fresh_dry_run_rejects_mismatched_backup_destination_collision(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    initialize_spec_kit(tmp_path)
+    target = tmp_path / _template_paths()[0]
+    target.write_bytes(b"customized template")
+    backup_relative = (
+        ".specify/backups/20260928T000000.000000Z-"
+        "0123456789abcdef0123456789abcdef/.specify/memory/constitution.md"
+    )
+    backup = tmp_path.joinpath(*backup_relative.split("/"))
+    backup.parent.mkdir(parents=True)
+    backup.write_bytes(b"different file already at backup destination")
+    monkeypatch.setattr(spec_initializer, "_backup_relative_path", lambda path: backup_relative)
+
+    with pytest.raises(ManifestError, match="recoverable backup is occupied or changed"):
+        initialize_spec_kit(tmp_path, force=True, dry_run=True)
+
+    assert target.read_bytes() == b"customized template"
+    assert backup.read_bytes() == b"different file already at backup destination"
+
+
+def test_stale_journal_after_manifest_save_is_idempotently_reconciled(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    original_unlink = Path.unlink
+    journal_path = tmp_path / JOURNAL
+
+    def leave_journal(path: Path, *args: object, **kwargs: object) -> None:
+        if path == journal_path:
+            return
+        original_unlink(path, *args, **kwargs)  # type: ignore[arg-type]
+
+    monkeypatch.setattr(Path, "unlink", leave_journal)
+    initialize_spec_kit(tmp_path)
+    assert journal_path.is_file()
+    monkeypatch.setattr(Path, "unlink", original_unlink)
+    initialize_spec_kit(tmp_path)
+    assert not journal_path.exists()
+    assert len(load_manifest(tmp_path).files) == 4  # type: ignore[union-attr]
+
+
+def test_corrupt_journal_fails_closed(tmp_path: Path) -> None:
+    journal = tmp_path / JOURNAL
+    journal.write_text("{broken", encoding="utf-8")
+    with pytest.raises(ManifestError, match="invalid initialization journal"):
+        initialize_spec_kit(tmp_path)
+    assert not (tmp_path / _template_paths()[0]).exists()
+
+
+def test_dry_run_creates_no_files_or_directories(tmp_path: Path) -> None:
+    result = initialize_spec_kit(tmp_path, dry_run=True)
+    assert all(item.action is FileAction.CREATED for item in result.files)
+    assert not (tmp_path / ".specify").exists()
+    assert not (tmp_path / JOURNAL).exists()
+
+
+def test_dry_run_previews_interrupted_journal_without_recovery_writes(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    atomic_write = spec_initializer._atomic_write
+    failed_target = tmp_path / _template_paths()[1]
+
+    def interrupt(target: Path, content: bytes) -> None:
+        if target == failed_target:
+            raise OSError("simulated interruption")
+        atomic_write(target, content)
+
+    monkeypatch.setattr(spec_initializer, "_atomic_write", interrupt)
+    with pytest.raises(InitializationError):
+        initialize_spec_kit(tmp_path)
+    journal = tmp_path / JOURNAL
+    journal_bytes = journal.read_bytes()
+    template_bytes = (tmp_path / _template_paths()[0]).read_bytes()
+
+    monkeypatch.setattr(spec_initializer, "_atomic_write", atomic_write)
+    result = initialize_spec_kit(tmp_path, dry_run=True)
+
+    assert result.dry_run
+    assert len(result.files) == len(_template_paths())
+    assert result.files[0].action is FileAction.UNCHANGED
+    assert result.files[1].action is FileAction.CREATED
+    assert journal.read_bytes() == journal_bytes
+    assert (tmp_path / _template_paths()[0]).read_bytes() == template_bytes
+    assert not (tmp_path / MANIFEST_RELATIVE_PATH).exists()
 
 
 def test_canonical_assets_are_in_wheel(tmp_path: Path) -> None:
@@ -255,3 +614,7 @@ def _template_paths() -> tuple[str, ...]:
         ".specify/templates/plan-template.md",
         ".specify/templates/tasks-template.md",
     )
+
+
+JOURNAL = ".hybrid-sdlc-init-journal.json"
+MANIFEST_RELATIVE_PATH = ".specify/.hybrid-sdlc-manifest.json"

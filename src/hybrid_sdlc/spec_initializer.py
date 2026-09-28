@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import base64
+import binascii
 import hashlib
 import importlib.resources
 import json
@@ -12,11 +14,12 @@ import stat
 import subprocess
 import tempfile
 import uuid
+from collections.abc import Iterable
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from enum import StrEnum
 from pathlib import Path, PurePosixPath
-from typing import Any
+from typing import Any, cast
 
 MANIFEST_RELATIVE_PATH = ".specify/.hybrid-sdlc-manifest.json"
 MANIFEST_SCHEMA_VERSION = 1
@@ -29,6 +32,7 @@ _TEMPLATE_FILES = (
     ".specify/templates/tasks-template.md",
 )
 _SPEC_KIT_PROBE_TIMEOUT_SECONDS = 5
+JOURNAL_RELATIVE_PATH = ".hybrid-sdlc-init-journal.json"
 
 
 @dataclass(frozen=True, slots=True)
@@ -92,6 +96,7 @@ class InitializationResult:
     files: tuple[InitializedFile, ...]
     manifest_path: str
     spec_kit: SpecKitCapability
+    dry_run: bool = False
 
 
 def _canonical_templates() -> dict[str, bytes]:
@@ -216,7 +221,9 @@ def detect_spec_kit() -> SpecKitCapability:
     )
 
 
-def initialize_spec_kit(repo_root: Path, *, force: bool = False) -> InitializationResult:
+def initialize_spec_kit(
+    repo_root: Path, *, force: bool = False, dry_run: bool = False
+) -> InitializationResult:
     """Install canonical Spec Kit files, preserving user-owned content by default.
 
     All target paths and the existing manifest are validated before any writes.
@@ -225,6 +232,8 @@ def initialize_spec_kit(repo_root: Path, *, force: bool = False) -> Initializati
     """
     if type(force) is not bool:
         raise TypeError("force must be a bool")
+    if type(dry_run) is not bool:
+        raise TypeError("dry_run must be a bool")
     try:
         root = repo_root.resolve(strict=True)
     except OSError as exc:
@@ -235,6 +244,19 @@ def initialize_spec_kit(repo_root: Path, *, force: bool = False) -> Initializati
     capability = detect_spec_kit()
     if not capability.compatible:
         raise InitializationError(capability.guidance)
+
+    journal_path = _safe_path(root, JOURNAL_RELATIVE_PATH, allow_missing_leaf=True)
+    if journal_path.exists() and not journal_path.is_file():
+        raise ManifestError("initialization journal is not a regular file")
+    recovered_files: tuple[InitializedFile, ...] = ()
+    if journal_path.exists():
+        journal = _load_journal(journal_path)
+        if dry_run:
+            return _preview_recovery(root, journal, capability, force=force)
+        recovered_files = _recover_journal(root, journal, journal_path)
+    recovery_conflicts = {
+        item.path for item in recovered_files if item.action is FileAction.PRESERVED
+    }
 
     sources = _canonical_templates()
     manifest = load_manifest(root)
@@ -251,7 +273,11 @@ def initialize_spec_kit(repo_root: Path, *, force: bool = False) -> Initializati
     for relative_path, desired in sources.items():
         state = ownership[relative_path]
         old_entry = previous_records.get(relative_path)
-        if state is FileOwnership.MISSING:
+        if relative_path in recovery_conflicts:
+            planned[relative_path] = (FileAction.PRESERVED, None, None)
+            if old_entry is None:
+                new_records.pop(relative_path, None)
+        elif state is FileOwnership.MISSING:
             planned[relative_path] = (FileAction.CREATED, None, desired)
             new_records[relative_path] = ManagedFile(
                 relative_path, sha256_bytes(desired), sha256_bytes(desired)
@@ -279,49 +305,301 @@ def initialize_spec_kit(repo_root: Path, *, force: bool = False) -> Initializati
                 new_records.pop(relative_path, None)
 
     backup_paths: dict[str, str] = {}
+    entries: list[dict[str, object]] = []
+    for relative_path, (action, backup_content, write_content) in planned.items():
+        target = targets[relative_path]
+        observed_bytes = target.read_bytes() if target.is_file() else None
+        if write_content is None:
+            continue
+        backup_path = None
+        if backup_content is not None:
+            backup_path = _backup_relative_path(relative_path)
+            backup_paths[relative_path] = backup_path
+        entries.append(
+            {
+                "path": relative_path,
+                "before_sha256": (
+                    sha256_bytes(observed_bytes) if observed_bytes is not None else None
+                ),
+                "desired": base64.b64encode(write_content).decode("ascii"),
+                "desired_sha256": sha256_bytes(write_content),
+                "backup_path": backup_path,
+                "backup": (
+                    base64.b64encode(backup_content).decode("ascii")
+                    if backup_content is not None
+                    else None
+                ),
+                "backup_sha256": (
+                    sha256_bytes(backup_content) if backup_content is not None else None
+                ),
+                "action": action.value,
+            }
+        )
+    updated_manifest = OwnershipManifest(TEMPLATE_VERSION, tuple(new_records.values()))
+    journal = {
+        "schema_version": 1,
+        "entries": entries,
+        "manifest": base64.b64encode(updated_manifest.to_bytes()).decode("ascii"),
+    }
+    if entries:
+        _validate_recorded_backups(root, entries)
+    if dry_run:
+        if force:
+            _validate_backup_destinations(root, backup_paths.values())
+        results = tuple(
+            InitializedFile(path, action, backup_paths.get(path))
+            for path, (action, _, content) in planned.items()
+        )
+        return InitializationResult(results, MANIFEST_RELATIVE_PATH, capability, True)
     try:
-        for relative_path, (_, backup_content, _) in planned.items():
-            if backup_content is not None:
-                backup_paths[relative_path] = _save_backup(root, relative_path, backup_content)
-    except OSError as exc:
-        raise InitializationError(f"could not create recoverable backup: {exc}") from exc
-
-    results: list[InitializedFile] = []
-    try:
-        for relative_path, (action, _, write_content) in planned.items():
-            if write_content is not None:
-                _atomic_write(targets[relative_path], write_content)
-            results.append(InitializedFile(relative_path, action, backup_paths.get(relative_path)))
-        updated_manifest = OwnershipManifest(TEMPLATE_VERSION, tuple(new_records.values()))
-        saved_manifest = save_manifest(root, updated_manifest)
-    except (OSError, ManifestError) as exc:
+        if backup_paths:
+            _validate_backup_destinations(root, backup_paths.values())
+        _atomic_write(journal_path, _journal_bytes(journal))
+        _recover_journal(root, journal, journal_path)
+    except (OSError, ManifestError, InitializationError) as exc:
         raise InitializationError(f"Spec Kit initialization was incomplete: {exc}") from exc
+    saved_manifest = root / MANIFEST_RELATIVE_PATH
+    recovered_by_path = {item.path: item for item in recovered_files}
+    result_files_list: list[InitializedFile] = []
+    for path, (planned_action, _, _) in planned.items():
+        recovered = recovered_by_path.get(path)
+        if recovered is not None and planned_action in {
+            FileAction.UNCHANGED,
+            FileAction.PRESERVED,
+        }:
+            result_files_list.append(recovered)
+        else:
+            result_files_list.append(InitializedFile(path, planned_action, backup_paths.get(path)))
+    result_files = tuple(result_files_list)
     return InitializationResult(
-        tuple(results), saved_manifest.relative_to(root).as_posix(), capability
+        result_files, saved_manifest.relative_to(root).as_posix(), capability
     )
 
 
-def _save_backup(root: Path, relative_path: str, content: bytes) -> str:
-    """Save exact bytes under a newly-created unique backup directory."""
-    backups_root = _safe_path(root, ".specify/backups", allow_missing_leaf=True)
-    backups_root.mkdir(parents=True, exist_ok=True)
+def _backup_relative_path(relative_path: str) -> str:
     stamp = datetime.now(UTC).strftime("%Y%m%dT%H%M%S.%fZ")
-    for _ in range(10):
-        backup_dir = backups_root / f"{stamp}-{uuid.uuid4().hex}"
-        try:
-            backup_dir.mkdir()
-            break
-        except FileExistsError:
+    return f".specify/backups/{stamp}-{uuid.uuid4().hex}/{relative_path}"
+
+
+def _validate_backup_destinations(root: Path, relative_paths: Iterable[str]) -> None:
+    """Validate backup directory and destinations without creating them."""
+    backup_root = _safe_path(root, ".specify/backups", allow_missing_leaf=True)
+    if backup_root.exists() and not backup_root.is_dir():
+        raise ManifestError("Spec Kit backup path is not a directory")
+    for relative_path in relative_paths:
+        target = _safe_path(root, relative_path, allow_missing_leaf=True)
+        if target.exists() and not target.is_file():
+            raise ManifestError(f"backup destination is not a regular file: {relative_path!r}")
+
+
+def _validate_recorded_backups(root: Path, entries: Iterable[dict[str, object]]) -> None:
+    """Check existing backup bytes against the journal before preview or recovery."""
+    backup_paths = [
+        str(entry["backup_path"]) for entry in entries if entry["backup_path"] is not None
+    ]
+    _validate_backup_destinations(root, backup_paths)
+    for entry in entries:
+        if entry["backup_path"] is None:
             continue
-    else:
-        raise FileExistsError("could not allocate a unique backup directory")
-    backup_file = backup_dir.joinpath(*PurePosixPath(relative_path).parts)
-    backup_file.parent.mkdir(parents=True, exist_ok=True)
-    with backup_file.open("xb") as stream:
-        stream.write(content)
-        stream.flush()
-        os.fsync(stream.fileno())
-    return backup_file.relative_to(root).as_posix()
+        backup_path = str(entry["backup_path"])
+        target = _safe_path(root, backup_path, allow_missing_leaf=True)
+        if target.exists() and sha256_bytes(target.read_bytes()) != entry["backup_sha256"]:
+            raise ManifestError(f"recoverable backup is occupied or changed: {backup_path}")
+
+
+def _journal_bytes(journal: dict[str, object]) -> bytes:
+    return (json.dumps(journal, sort_keys=True, indent=2) + "\n").encode("utf-8")
+
+
+def _load_journal(path: Path) -> dict[str, object]:
+    try:
+        value = json.loads(
+            path.read_text(encoding="utf-8"), object_pairs_hook=_reject_duplicate_keys
+        )
+        if not isinstance(value, dict) or set(value) != {"schema_version", "entries", "manifest"}:
+            raise ValueError("invalid journal shape")
+        if value["schema_version"] != 1 or type(value["schema_version"]) is not int:
+            raise ValueError("unsupported journal schema")
+        if not isinstance(value["entries"], list) or not isinstance(value["manifest"], str):
+            raise ValueError("invalid journal fields")
+        seen_paths: set[str] = set()
+        for entry in value["entries"]:
+            if not isinstance(entry, dict) or set(entry) != {
+                "path",
+                "before_sha256",
+                "desired",
+                "desired_sha256",
+                "backup_path",
+                "backup",
+                "backup_sha256",
+                "action",
+            }:
+                raise ValueError("invalid journal entry")
+            validate_managed_path(entry["path"])
+            if entry["path"] not in _TEMPLATE_FILES or entry["path"] in seen_paths:
+                raise ValueError("journal contains an unsupported or duplicate template path")
+            seen_paths.add(entry["path"])
+            if not isinstance(entry["desired"], str) or not isinstance(
+                entry["desired_sha256"], str
+            ):
+                raise ValueError("invalid desired content")
+            desired = base64.b64decode(entry["desired"], validate=True)
+            if sha256_bytes(desired) != entry["desired_sha256"]:
+                raise ValueError("desired content digest mismatch")
+            if entry["before_sha256"] is not None:
+                _validate_digest(entry["before_sha256"], "before_sha256")
+            if entry["backup"] is not None:
+                backup = base64.b64decode(entry["backup"], validate=True)
+                if sha256_bytes(backup) != entry["backup_sha256"]:
+                    raise ValueError("backup content digest mismatch")
+                if not isinstance(entry["backup_path"], str) or not entry["backup_path"].startswith(
+                    ".specify/backups/"
+                ):
+                    raise ValueError("invalid backup path")
+                backup_parts = PurePosixPath(entry["backup_path"]).parts
+                target_parts = PurePosixPath(entry["path"]).parts
+                if (
+                    len(backup_parts) != len(target_parts) + 3
+                    or backup_parts[:2] != (".specify", "backups")
+                    or backup_parts[3:] != target_parts
+                    or not re.fullmatch(r"\d{8}T\d{6}\.\d{6}Z-[0-9a-f]{32}", backup_parts[2])
+                ):
+                    raise ValueError("backup path does not match the managed file")
+                _validate_digest(entry["backup_sha256"], "backup_sha256")
+            elif any(entry[field] is not None for field in ("backup_path", "backup_sha256")):
+                raise ValueError("incomplete backup metadata")
+            if entry["action"] not in {item.value for item in FileAction}:
+                raise ValueError("invalid file action")
+        manifest = base64.b64decode(value["manifest"], validate=True)
+        desired_manifest = OwnershipManifest.from_bytes(manifest)
+        desired_records = {record.path: record.sha256 for record in desired_manifest.files}
+        for entry in value["entries"]:
+            assert isinstance(entry, dict)
+            if desired_records.get(str(entry["path"])) != entry["desired_sha256"]:
+                raise ValueError("journal manifest does not claim each intended template digest")
+        return value
+    except (
+        OSError,
+        UnicodeDecodeError,
+        json.JSONDecodeError,
+        binascii.Error,
+        ValueError,
+        TypeError,
+        KeyError,
+    ) as exc:
+        raise ManifestError(f"invalid initialization journal: {exc}") from exc
+
+
+def _recover_journal(
+    root: Path, journal: dict[str, object], journal_path: Path
+) -> tuple[InitializedFile, ...]:
+    manifest = load_manifest(root)
+    records = {record.path: record for record in manifest.files} if manifest else {}
+    entries = cast(list[dict[str, object]], journal["entries"])
+    # Complete and verify every force backup before replacing any managed file.
+    _validate_recorded_backups(root, entries)
+    for raw_entry in entries:
+        if raw_entry["backup"] is None:
+            continue
+        backup_path = str(raw_entry["backup_path"])
+        backup_target = _safe_path(root, backup_path, allow_missing_leaf=True)
+        backup_content = base64.b64decode(str(raw_entry["backup"]), validate=True)
+        if backup_target.exists():
+            if (
+                not backup_target.is_file()
+                or sha256_bytes(backup_target.read_bytes()) != raw_entry["backup_sha256"]
+            ):
+                raise ManifestError(f"recoverable backup is occupied or changed: {backup_path}")
+        else:
+            _atomic_write(backup_target, backup_content)
+
+    outcomes: list[InitializedFile] = []
+    for raw_entry in entries:
+        relative_path = str(raw_entry["path"])
+        target = _safe_path(root, relative_path, allow_missing_leaf=True)
+        desired = base64.b64decode(str(raw_entry["desired"]), validate=True)
+        desired_hash = str(raw_entry["desired_sha256"])
+        before_hash = raw_entry["before_sha256"]
+        current = target.read_bytes() if target.is_file() else None
+        current_hash = sha256_bytes(current) if current is not None else None
+        if current_hash == before_hash:
+            _atomic_write(target, desired)
+            current_hash = desired_hash
+        if current_hash == desired_hash:
+            records[relative_path] = ManagedFile(relative_path, desired_hash, desired_hash)
+        elif before_hash is None and relative_path in records:
+            records.pop(relative_path, None)
+        outcomes.append(
+            InitializedFile(
+                relative_path,
+                FileAction(str(raw_entry["action"]))
+                if current_hash == desired_hash
+                else FileAction.PRESERVED,
+                str(raw_entry["backup_path"]) if raw_entry["backup_path"] else None,
+            )
+        )
+    desired_manifest = OwnershipManifest(TEMPLATE_VERSION, tuple(records.values()))
+    save_manifest(root, desired_manifest)
+    journal_path.unlink(missing_ok=True)
+    return tuple(outcomes)
+
+
+def _preview_recovery(
+    root: Path, journal: dict[str, object], capability: SpecKitCapability, *, force: bool
+) -> InitializationResult:
+    entries = cast(list[dict[str, object]], journal["entries"])
+    _validate_recorded_backups(root, entries)
+    by_path: dict[str, InitializedFile] = {}
+    for raw_entry in entries:
+        path = str(raw_entry["path"])
+        target = _safe_path(root, path, allow_missing_leaf=True)
+        current = target.read_bytes() if target.is_file() else None
+        digest = sha256_bytes(current) if current is not None else None
+        before_hash = raw_entry["before_sha256"]
+        desired_hash = raw_entry["desired_sha256"]
+        action = (
+            FileAction.UNCHANGED
+            if digest == desired_hash
+            else (FileAction.CREATED if before_hash is None else FileAction.UPDATED)
+            if digest == before_hash
+            else FileAction.PRESERVED
+        )
+        backup_path = (
+            str(raw_entry["backup_path"])
+            if action is not FileAction.PRESERVED and raw_entry["backup_path"]
+            else None
+        )
+        by_path[path] = InitializedFile(path, action, backup_path)
+    manifest = load_manifest(root)
+    ownership = classify_files(root, manifest, _TEMPLATE_FILES)
+    sources = _canonical_templates()
+    for path in _TEMPLATE_FILES:
+        if path in by_path:
+            continue
+        state = ownership[path]
+        if state is FileOwnership.MISSING:
+            action = FileAction.CREATED
+        elif state is FileOwnership.UNCHANGED_GENERATED:
+            action = (
+                FileAction.UNCHANGED
+                if (root / path).read_bytes() == sources[path]
+                else FileAction.UPDATED
+            )
+        elif force:
+            action = FileAction.UPDATED
+        else:
+            action = FileAction.PRESERVED
+        backup_path = (
+            _backup_relative_path(path) if force and action is FileAction.UPDATED else None
+        )
+        by_path[path] = InitializedFile(path, action, backup_path)
+    _validate_backup_destinations(
+        root,
+        [item.backup_path for item in by_path.values() if item.backup_path is not None],
+    )
+    return InitializationResult(
+        tuple(by_path[path] for path in _TEMPLATE_FILES), MANIFEST_RELATIVE_PATH, capability, True
+    )
 
 
 def _atomic_write(target: Path, content: bytes) -> None:
@@ -335,6 +613,12 @@ def _atomic_write(target: Path, content: bytes) -> None:
             stream.flush()
             os.fsync(stream.fileno())
         os.replace(temporary_path, target)
+        if os.name != "nt":
+            directory_fd = os.open(target.parent, os.O_RDONLY)
+            try:
+                os.fsync(directory_fd)
+            finally:
+                os.close(directory_fd)
     finally:
         temporary_path.unlink(missing_ok=True)
 
