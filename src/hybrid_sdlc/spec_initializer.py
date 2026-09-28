@@ -1,19 +1,17 @@
-"""Ownership metadata for files installed by the Spec Kit initializer.
-
-This module deliberately contains no template loading or installation logic.  It
-defines the on-disk contract that an initializer can use to tell its own
-unchanged files from user edits and files that were never managed by it.
-"""
+"""Safe, idempotent installation of the toolkit's canonical Spec Kit files."""
 
 from __future__ import annotations
 
 import hashlib
+import importlib.resources
 import json
 import os
 import re
 import stat
 import tempfile
+import uuid
 from dataclasses import dataclass
+from datetime import UTC, datetime
 from enum import StrEnum
 from pathlib import Path, PurePosixPath
 from typing import Any
@@ -21,10 +19,21 @@ from typing import Any
 MANIFEST_RELATIVE_PATH = ".specify/.hybrid-sdlc-manifest.json"
 MANIFEST_SCHEMA_VERSION = 1
 _SHA256_RE = re.compile(r"^[0-9a-f]{64}$")
+TEMPLATE_VERSION = "0.1.0"
+_TEMPLATE_FILES = (
+    ".specify/memory/constitution.md",
+    ".specify/templates/spec-template.md",
+    ".specify/templates/plan-template.md",
+    ".specify/templates/tasks-template.md",
+)
 
 
 class ManifestError(ValueError):
     """Raised when initializer ownership metadata is invalid or unsafe."""
+
+
+class InitializationError(RuntimeError):
+    """Raised when a safe, complete initialization cannot be performed."""
 
 
 class FileOwnership(StrEnum):
@@ -34,6 +43,176 @@ class FileOwnership(StrEnum):
     MODIFIED_USER_OWNED = "modified_user_owned"
     UNTRACKED_USER_OWNED = "untracked_user_owned"
     MISSING = "missing"
+
+
+class FileAction(StrEnum):
+    """Action taken for one canonical template path."""
+
+    CREATED = "created"
+    UPDATED = "updated"
+    PRESERVED = "preserved"
+    UNCHANGED = "unchanged"
+
+
+@dataclass(frozen=True, slots=True)
+class InitializedFile:
+    """Per-path initialization result, including any recoverable backup."""
+
+    path: str
+    action: FileAction
+    backup_path: str | None = None
+
+
+@dataclass(frozen=True, slots=True)
+class InitializationResult:
+    """Summary of one initialization run."""
+
+    files: tuple[InitializedFile, ...]
+    manifest_path: str
+
+
+def _canonical_templates() -> dict[str, bytes]:
+    """Load canonical assets from package resources (also works from a wheel)."""
+    package = importlib.resources.files("hybrid_sdlc").joinpath("_specify")
+    result: dict[str, bytes] = {}
+    try:
+        for relative_path in _TEMPLATE_FILES:
+            resource_path = relative_path.removeprefix(".specify/")
+            result[relative_path] = package.joinpath(*resource_path.split("/")).read_bytes()
+        return result
+    except (FileNotFoundError, OSError) as resource_error:
+        # Hatch maps Python sources for editable installs, while force-include
+        # assets are guaranteed in built wheels. Read the canonical files from
+        # the repository when running directly from a source checkout.
+        checkout_root = Path(__file__).resolve().parents[2]
+        if not (checkout_root / "pyproject.toml").is_file():
+            raise InitializationError(
+                "packaged Spec Kit templates are incomplete"
+            ) from resource_error
+        try:
+            return {
+                relative_path: (checkout_root / relative_path).read_bytes()
+                for relative_path in _TEMPLATE_FILES
+            }
+        except OSError as exc:
+            raise InitializationError("source checkout Spec Kit templates are incomplete") from exc
+
+
+def initialize_spec_kit(repo_root: Path, *, force: bool = False) -> InitializationResult:
+    """Install canonical Spec Kit files, preserving user-owned content by default.
+
+    All target paths and the existing manifest are validated before any writes.
+    Existing customized and untracked files are preserved unless ``force`` is
+    true; force first saves their exact bytes in a collision-safe backup tree.
+    """
+    if type(force) is not bool:
+        raise TypeError("force must be a bool")
+    try:
+        root = repo_root.resolve(strict=True)
+    except OSError as exc:
+        raise InitializationError(f"repository root is unavailable: {repo_root}") from exc
+    if not root.is_dir():
+        raise InitializationError("repository root must be a directory")
+
+    sources = _canonical_templates()
+    manifest = load_manifest(root)
+    ownership = classify_files(root, manifest, _TEMPLATE_FILES)
+    targets = {
+        relative_path: _safe_path(root, relative_path, allow_missing_leaf=True)
+        for relative_path in _TEMPLATE_FILES
+    }
+
+    previous_records = {entry.path: entry for entry in manifest.files} if manifest else {}
+    new_records = dict(previous_records)
+    planned: dict[str, tuple[FileAction, bytes | None, bytes | None]] = {}
+    # tuple fields are action, original bytes to back up, and desired bytes to write.
+    for relative_path, desired in sources.items():
+        state = ownership[relative_path]
+        old_entry = previous_records.get(relative_path)
+        if state is FileOwnership.MISSING:
+            planned[relative_path] = (FileAction.CREATED, None, desired)
+            new_records[relative_path] = ManagedFile(
+                relative_path, sha256_bytes(desired), sha256_bytes(desired)
+            )
+        elif state is FileOwnership.UNCHANGED_GENERATED:
+            current = targets[relative_path].read_bytes()
+            if current == desired:
+                planned[relative_path] = (FileAction.UNCHANGED, None, None)
+            else:
+                planned[relative_path] = (FileAction.UPDATED, None, desired)
+                new_records[relative_path] = ManagedFile(
+                    relative_path, sha256_bytes(desired), sha256_bytes(desired)
+                )
+        elif force:
+            original = targets[relative_path].read_bytes()
+            action = FileAction.UPDATED
+            planned[relative_path] = (action, original, desired)
+            new_records[relative_path] = ManagedFile(
+                relative_path, sha256_bytes(desired), sha256_bytes(desired)
+            )
+        else:
+            planned[relative_path] = (FileAction.PRESERVED, None, None)
+            if old_entry is None:
+                # Untracked files stay untracked; do not claim them as generated.
+                new_records.pop(relative_path, None)
+
+    backup_paths: dict[str, str] = {}
+    try:
+        for relative_path, (_, backup_content, _) in planned.items():
+            if backup_content is not None:
+                backup_paths[relative_path] = _save_backup(root, relative_path, backup_content)
+    except OSError as exc:
+        raise InitializationError(f"could not create recoverable backup: {exc}") from exc
+
+    results: list[InitializedFile] = []
+    try:
+        for relative_path, (action, _, write_content) in planned.items():
+            if write_content is not None:
+                _atomic_write(targets[relative_path], write_content)
+            results.append(InitializedFile(relative_path, action, backup_paths.get(relative_path)))
+        updated_manifest = OwnershipManifest(TEMPLATE_VERSION, tuple(new_records.values()))
+        saved_manifest = save_manifest(root, updated_manifest)
+    except (OSError, ManifestError) as exc:
+        raise InitializationError(f"Spec Kit initialization was incomplete: {exc}") from exc
+    return InitializationResult(tuple(results), saved_manifest.relative_to(root).as_posix())
+
+
+def _save_backup(root: Path, relative_path: str, content: bytes) -> str:
+    """Save exact bytes under a newly-created unique backup directory."""
+    backups_root = _safe_path(root, ".specify/backups", allow_missing_leaf=True)
+    backups_root.mkdir(parents=True, exist_ok=True)
+    stamp = datetime.now(UTC).strftime("%Y%m%dT%H%M%S.%fZ")
+    for _ in range(10):
+        backup_dir = backups_root / f"{stamp}-{uuid.uuid4().hex}"
+        try:
+            backup_dir.mkdir()
+            break
+        except FileExistsError:
+            continue
+    else:
+        raise FileExistsError("could not allocate a unique backup directory")
+    backup_file = backup_dir.joinpath(*PurePosixPath(relative_path).parts)
+    backup_file.parent.mkdir(parents=True, exist_ok=True)
+    with backup_file.open("xb") as stream:
+        stream.write(content)
+        stream.flush()
+        os.fsync(stream.fileno())
+    return backup_file.relative_to(root).as_posix()
+
+
+def _atomic_write(target: Path, content: bytes) -> None:
+    """Atomically replace one file with exact bytes."""
+    target.parent.mkdir(parents=True, exist_ok=True)
+    fd, temporary_name = tempfile.mkstemp(prefix=f".{target.name}-", dir=target.parent)
+    temporary_path = Path(temporary_name)
+    try:
+        with os.fdopen(fd, "wb") as stream:
+            stream.write(content)
+            stream.flush()
+            os.fsync(stream.fileno())
+        os.replace(temporary_path, target)
+    finally:
+        temporary_path.unlink(missing_ok=True)
 
 
 @dataclass(frozen=True, slots=True)
@@ -196,6 +375,8 @@ def classify_files(
         target = _safe_path(root, path, allow_missing_leaf=True)
         if not target.exists():
             result[path] = FileOwnership.MISSING
+        elif not target.is_file():
+            raise ManifestError(f"managed path is not a regular file: {path!r}")
         elif path not in recorded:
             result[path] = FileOwnership.UNTRACKED_USER_OWNED
         else:

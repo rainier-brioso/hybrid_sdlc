@@ -492,7 +492,7 @@ A task is complete when:
   - Generated files carry a toolkit version/checksum in a dedicated manifest.
   - User-owned files are distinguishable from unchanged generated files.
 
-- [ ] **HSDLC-048 — Implement safe idempotent initialization**  
+- [x] **HSDLC-048 — Implement safe idempotent initialization**
   Files: `src/hybrid_sdlc/spec_initializer.py`, `tests/integration/test_init.py`  
   Depends on: HSDLC-047  
   Acceptance:
@@ -500,6 +500,7 @@ A task is complete when:
   - First run creates missing files; second run is byte-for-byte idempotent.
   - Customized files are preserved unless `--force` is explicitly supplied.
   - `--force` creates a recoverable backup and reports every replacement.
+  - The built wheel includes all four canonical files; source-checkout and wheel resource loading are covered.
 
 - [ ] **HSDLC-049 — Integrate installed Spec Kit capability detection**  
   Files: `src/hybrid_sdlc/spec_initializer.py`, `tests/unit/test_spec_initializer.py`  
@@ -514,6 +515,7 @@ A task is complete when:
   Acceptance:
   - Supports target directory, dry-run, and explicit force behavior.
   - Tests cover empty repositories, existing Spec Kit projects, customized templates, and interrupted initialization.
+  - A rerun after interruption during template or manifest writes safely reconciles partial state without overwriting user edits or leaving initializer-written files untracked.
 
 ---
 

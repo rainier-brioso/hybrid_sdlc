@@ -72,3 +72,14 @@ def test_spec_kit_templates_use_canonical_layout_and_require_contracts() -> None
     assert "[command_profiles.<id>]" in contents[tasks]
     assert "<profile-id>" in contents[tasks]
     assert "atomic, reviewable" in contents[tasks]
+
+    with (root / "pyproject.toml").open("rb") as stream:
+        build_config = tomllib.load(stream)
+    force_include = build_config["tool"]["hatch"]["build"]["targets"]["wheel"]["force-include"]
+    assert set(force_include) == {
+        ".specify/memory/constitution.md",
+        ".specify/templates/spec-template.md",
+        ".specify/templates/plan-template.md",
+        ".specify/templates/tasks-template.md",
+    }
+    assert all(path.startswith("hybrid_sdlc/_specify/") for path in force_include.values())

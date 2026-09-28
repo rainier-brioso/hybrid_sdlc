@@ -35,6 +35,12 @@ dev = [
 [tool.hatch.build.targets.wheel]
 packages = ["src/hybrid_sdlc"]
 
+[tool.hatch.build.targets.wheel.force-include]
+".specify/memory/constitution.md" = "hybrid_sdlc/_specify/memory/constitution.md"
+".specify/templates/spec-template.md" = "hybrid_sdlc/_specify/templates/spec-template.md"
+".specify/templates/plan-template.md" = "hybrid_sdlc/_specify/templates/plan-template.md"
+".specify/templates/tasks-template.md" = "hybrid_sdlc/_specify/templates/tasks-template.md"
+
 [tool.pytest.ini_options]
 testpaths = ["tests"]
 pythonpath = ["src"]
