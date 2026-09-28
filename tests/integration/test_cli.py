@@ -12,16 +12,19 @@ import httpx
 import pytest
 from click.testing import CliRunner
 
+from hybrid_sdlc import spec_initializer
 from hybrid_sdlc.cli import cli
 from hybrid_sdlc.errors import ExitCode
 from hybrid_sdlc.job_manager import JobManager, JobRecord, JobStatus
 from hybrid_sdlc.processes import get_process_identity
+from hybrid_sdlc.spec_initializer import SpecKitCapability, SpecKitFeature
 from hybrid_sdlc.submission import JobSubmissionError
 
 _orig_client = httpx.Client
 
 
 def _init_git_repo(path: Path) -> None:
+    path.mkdir(parents=True, exist_ok=True)
     subprocess.run(["git", "init"], cwd=str(path), check=True, capture_output=True)
     subprocess.run(
         ["git", "config", "user.name", "Tester"],
@@ -53,6 +56,97 @@ def test_cli_help() -> None:
     assert "status" in result.output
     assert "cancel" in result.output
     assert "clean" in result.output
+    assert "init" in result.output
+
+
+def _mock_spec_kit(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(
+        spec_initializer,
+        "detect_spec_kit",
+        lambda: SpecKitCapability("specify", "test", (SpecKitFeature("spec", True),), True, "ok"),
+    )
+
+
+def test_cli_init_empty_git_repository(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    subprocess.run(["git", "init"], cwd=tmp_path, check=True, capture_output=True)
+    _mock_spec_kit(monkeypatch)
+    result = CliRunner().invoke(cli, ["init", "--target-dir", str(tmp_path), "--json"])
+    assert result.exit_code == 0, result.output
+    data = json.loads(result.output)
+    assert data["repository"] == str(tmp_path.resolve())
+    assert all(item["action"] == "created" for item in data["files"])
+    assert (tmp_path / data["manifest_path"]).is_file()
+
+
+def test_cli_init_existing_spec_kit_project_preserves_custom_template(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    _init_git_repo(tmp_path)
+    _mock_spec_kit(monkeypatch)
+    template = tmp_path / ".specify" / "templates" / "spec-template.md"
+    template.parent.mkdir(parents=True)
+    template.write_bytes(b"existing Spec Kit customization")
+    result = CliRunner().invoke(cli, ["init", "--target-dir", str(tmp_path), "--json"])
+    assert result.exit_code == 0, result.output
+    actions = {item["path"]: item["action"] for item in json.loads(result.output)["files"]}
+    assert actions[".specify/templates/spec-template.md"] == "preserved"
+    assert template.read_bytes() == b"existing Spec Kit customization"
+
+
+def test_cli_init_dry_run_has_no_side_effects(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    _init_git_repo(tmp_path)
+    _mock_spec_kit(monkeypatch)
+    result = CliRunner().invoke(cli, ["init", "--target-dir", str(tmp_path), "--dry-run", "--json"])
+    assert result.exit_code == 0, result.output
+    data = json.loads(result.output)
+    assert data["dry_run"] is True
+    assert all(item["action"].startswith("would_") for item in data["files"])
+    assert not (tmp_path / ".specify").exists()
+    assert not (tmp_path / ".hybrid-sdlc-init-journal.json").exists()
+
+
+def test_cli_init_force_reports_backup_path(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    _init_git_repo(tmp_path)
+    _mock_spec_kit(monkeypatch)
+    template = tmp_path / ".specify" / "memory" / "constitution.md"
+    template.parent.mkdir(parents=True)
+    template.write_bytes(b"custom constitution")
+    result = CliRunner().invoke(cli, ["init", "--target-dir", str(tmp_path), "--force", "--json"])
+    assert result.exit_code == 0, result.output
+    item = next(
+        item
+        for item in json.loads(result.output)["files"]
+        if item["path"].endswith("constitution.md")
+    )
+    assert item["action"] == "updated"
+    assert item["backup_path"]
+    assert (tmp_path / item["backup_path"]).read_bytes() == b"custom constitution"
+
+
+@pytest.mark.parametrize("target", ["missing", "not-repository", "nested"])
+def test_cli_init_target_errors_are_actionable_json(
+    tmp_path: Path, target: str, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    _mock_spec_kit(monkeypatch)
+    repo = tmp_path / "repo"
+    _init_git_repo(repo)
+    if target == "missing":
+        path = tmp_path / "does-not-exist"
+    elif target == "not-repository":
+        path = tmp_path / "plain"
+        path.mkdir()
+    else:
+        path = repo / "nested"
+        path.mkdir()
+    result = CliRunner().invoke(cli, ["init", "--target-dir", str(path), "--json"])
+    assert result.exit_code != 0
+    data = json.loads(result.output)
+    assert data["message"]
+    assert data["code"]
 
 
 def test_cli_check_healthy(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:

@@ -478,41 +478,47 @@ A task is complete when:
   - Fix any supported-host failure before claiming Windows async support is
     verified; retain fail-closed behavior on restrictive hosts.
 
-- [ ] **HSDLC-046 — Add canonical Spec Kit templates**  
+- [x] **HSDLC-046 — Add canonical Spec Kit templates**
   Files: `.specify/memory/constitution.md`, `.specify/templates/*.md`  
   Depends on: HSDLC-031  
   Acceptance:
   - Feature artifacts target top-level `specs/<NNN-feature>/`.
   - Templates require acceptance criteria, interfaces, test commands by profile name, and atomic tasks.
 
-- [ ] **HSDLC-047 — Define initializer ownership metadata**  
+- [x] **HSDLC-047 — Define initializer ownership metadata**
   Files: `src/hybrid_sdlc/spec_initializer.py`, `tests/unit/test_spec_initializer.py`  
   Depends on: HSDLC-046  
   Acceptance:
   - Generated files carry a toolkit version/checksum in a dedicated manifest.
   - User-owned files are distinguishable from unchanged generated files.
 
-- [ ] **HSDLC-048 — Implement safe idempotent initialization**  
+- [x] **HSDLC-048 — Implement safe idempotent initialization**
   Files: `src/hybrid_sdlc/spec_initializer.py`, `tests/integration/test_init.py`  
   Depends on: HSDLC-047  
   Acceptance:
+  - Canonical templates are available from an installed package, not only a source checkout.
   - First run creates missing files; second run is byte-for-byte idempotent.
   - Customized files are preserved unless `--force` is explicitly supplied.
   - `--force` creates a recoverable backup and reports every replacement.
+  - The built wheel includes all four canonical files; source-checkout and wheel resource loading are covered.
 
-- [ ] **HSDLC-049 — Integrate installed Spec Kit capability detection**  
-  Files: `src/hybrid_sdlc/spec_initializer.py`, `tests/unit/test_spec_initializer.py`  
+- [x] **HSDLC-049 — Integrate installed Spec Kit capability detection**
+  Files: `src/hybrid_sdlc/spec_initializer.py`, `tests/unit/test_spec_initializer.py`, `tests/integration/test_init.py`
   Depends on: HSDLC-048  
   Acceptance:
-  - Detection records the installed CLI version/features without downloading software.
-  - Missing or incompatible Spec Kit produces setup guidance rather than a partial initialization.
+  - Detection runs the local `specify version --features --json` capability probe with captured output and a timeout; it records the executable, version, and boolean feature statuses without network access.
+  - A valid machine-readable response is the compatibility floor; no unsupported minimum version or unrelated feature is assumed.
+  - Missing, timed out, non-zero, or malformed probes produce actionable setup guidance before any destination, backup, or manifest write.
 
-- [ ] **HSDLC-050 — Implement and test `hybrid-sdlc init`**  
+- [x] **HSDLC-050 — Implement and test `hybrid-sdlc init`**
   Files: `src/hybrid_sdlc/cli.py`, `tests/integration/test_cli.py`, `docs/spec-kit.md`  
   Depends on: HSDLC-048, HSDLC-049  
   Acceptance:
   - Supports target directory, dry-run, and explicit force behavior.
-  - Tests cover empty repositories, existing Spec Kit projects, customized templates, and interrupted initialization.
+  - Tests cover empty repositories, existing Spec Kit projects, customized templates, target errors, JSON output, and interrupted initialization.
+  - A durable journal precedes template, backup, and manifest writes; reruns reconcile exact initializer bytes, preserve intervening user edits, and retain force backups.
+  - Dry-run performs the same capability, path, and ownership preflight without writing destinations, journal, manifest, or backups.
+  - [Initialization instructions and recovery behavior](spec-kit.md) are documented.
 
 ---
 
