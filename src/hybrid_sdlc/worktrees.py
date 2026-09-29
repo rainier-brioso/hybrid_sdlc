@@ -11,7 +11,8 @@ import stat
 import subprocess
 import tempfile
 import uuid
-from collections.abc import Callable
+from collections.abc import Callable, Iterator
+from contextlib import contextmanager
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -21,6 +22,7 @@ from hybrid_sdlc.errors import RepositoryError
 from hybrid_sdlc.security import verify_repo_root
 
 _WORKTREE_ID_PATTERN = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$")
+WORKTREE_OPERATION_LOCK_TIMEOUT_SECONDS = 30.0
 
 
 @dataclass(frozen=True)
@@ -319,17 +321,31 @@ def _assert_untracked_path_is_safe(checkout: Path, path: Path, *, allow_leaf_sym
 
 def rollback_worktree(record: WorktreeRecord) -> None:
     """Restore a verified isolated checkout and its detached HEAD to its baseline."""
-    source, attempt_dir, checkout, attempt_identity, checkout_identity = _verified_rollback_record(
-        record
+    with acquire_worktree_operation_lock(record) as identity:
+        _rollback_verified_worktree(record, *identity)
+
+
+@contextmanager
+def acquire_worktree_operation_lock(
+    record: WorktreeRecord,
+) -> Iterator[tuple[Path, Path, Path, tuple[int, int], tuple[int, int]]]:
+    """Serialize mutations to one verified checkout across commit and rollback."""
+    identity = _verified_rollback_record(record)
+    source, attempt_dir, checkout, attempt_identity, checkout_identity = identity
+    lock = FileLock(
+        str(attempt_dir / ".operation.lock"),
+        timeout=WORKTREE_OPERATION_LOCK_TIMEOUT_SECONDS,
     )
-    lock = FileLock(str(attempt_dir.parent / ".rollback.lock"), timeout=30)
     try:
         with lock:
-            _rollback_verified_worktree(
-                record, source, attempt_dir, checkout, attempt_identity, checkout_identity
+            _validate_checkout_identity(
+                source, attempt_dir, checkout, attempt_identity, checkout_identity
             )
+            yield identity
     except Timeout as exc:
-        raise RepositoryError("Another rollback for this repository is still running") from exc
+        raise RepositoryError(
+            "Another operation for this isolated worktree is still running"
+        ) from exc
 
 
 def _rollback_verified_worktree(
@@ -340,7 +356,7 @@ def _rollback_verified_worktree(
     attempt_identity: tuple[int, int],
     checkout_identity: tuple[int, int],
 ) -> None:
-    """Perform rollback under the per-repository cooperative rollback lock."""
+    """Perform rollback under the verified worktree's cooperative operation lock."""
 
     def validate_identity() -> None:
         _validate_checkout_identity(

@@ -560,11 +560,11 @@ A task is complete when:
     symlink escape, checkout path replacement, submodule rejection, HEAD drift, and retry
     after interrupted cleanup.
 
-- [ ] **HSDLC-053 — Implement scoped commit creation**  
+- [x] **HSDLC-053 — Implement scoped commit creation**
   Files: `src/hybrid_sdlc/git_tools.py`, `tests/integration/test_commits.py`  
   Depends on: HSDLC-051  
   Acceptance:
-  - Commits are created only with explicit `--commit`.
+  - The commit backend is inert without explicit opt-in; the CLI `--commit` flag is wired when the isolated runner lands in HSDLC-055.
   - Commit includes only changes produced inside the isolated worktree and references the task ID.
   - Failed tests and policy failures cannot produce a commit.
 
@@ -579,6 +579,7 @@ A task is complete when:
   Files: `src/hybrid_sdlc/aider_runner.py`, `src/hybrid_sdlc/cli.py`, `tests/e2e/`  
   Depends on: HSDLC-052, HSDLC-054  
   Acceptance:
+  - `--commit` is exposed only after isolated execution and invokes the HSDLC-053 backend after successful tests and policy checks.
   - Existing Phase 2 and Phase 3 tests pass using isolated worktrees.
   - Failure rollback is available only for the isolated worktree.
   - User-checkout preservation is asserted in every end-to-end terminal condition.

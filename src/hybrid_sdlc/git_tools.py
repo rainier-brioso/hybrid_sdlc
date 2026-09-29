@@ -5,6 +5,7 @@ from __future__ import annotations
 import hashlib
 import json
 import os
+import re
 import subprocess
 from collections.abc import Iterator
 from contextlib import contextmanager
@@ -14,10 +15,189 @@ from typing import Any
 from filelock import FileLock, Timeout
 
 from hybrid_sdlc.artifacts import redact_secrets
-from hybrid_sdlc.errors import WorktreeDirtyError, WorktreeLockError
+from hybrid_sdlc.errors import RepositoryError, WorktreeDirtyError, WorktreeLockError
 from hybrid_sdlc.models import DiffSummary
+from hybrid_sdlc.worktrees import (
+    WorktreeRecord,
+    _index_has_gitlinks,
+    _tree_has_gitlinks,
+    _validate_checkout_identity,
+    _verified_rollback_record,
+    acquire_worktree_operation_lock,
+)
 
 MAX_DIFF_BYTES = 500 * 1024
+_TASK_ID_PATTERN = re.compile(r"^[A-Za-z][A-Za-z0-9]*-\d+[A-Za-z]?$", re.ASCII)
+
+
+def create_scoped_commit(
+    record: WorktreeRecord,
+    task_id: str,
+    message: str,
+    *,
+    commit_requested: bool,
+    tests_passed: bool,
+    policy_passed: bool,
+) -> str | None:
+    """Create a gated commit while holding the same lock used by rollback."""
+    if not commit_requested:
+        return None
+    with acquire_worktree_operation_lock(record):
+        return _create_scoped_commit_locked(
+            record,
+            task_id,
+            message,
+            commit_requested=commit_requested,
+            tests_passed=tests_passed,
+            policy_passed=policy_passed,
+        )
+
+
+def _create_scoped_commit_locked(
+    record: WorktreeRecord,
+    task_id: str,
+    message: str,
+    *,
+    commit_requested: bool,
+    tests_passed: bool,
+    policy_passed: bool,
+) -> str | None:
+    """Commit changes from one verified isolated checkout after all gates pass.
+
+    This backend is deliberately inert unless ``commit_requested`` is true. The
+    caller supplies final test and policy results; either failing result rejects
+    the operation before staging any files.
+    """
+    if not commit_requested:
+        return None
+    if not tests_passed:
+        raise RepositoryError("Cannot commit isolated changes because tests did not pass")
+    if not policy_passed:
+        raise RepositoryError("Cannot commit isolated changes because policy checks did not pass")
+    if _TASK_ID_PATTERN.fullmatch(task_id) is None:
+        raise RepositoryError("Task ID is invalid for a scoped commit")
+    subject = message.strip()
+    if not subject or "\n" in subject or "\r" in subject:
+        raise RepositoryError("Commit message must contain a single non-empty subject")
+
+    source, attempt_dir, checkout, attempt_identity, checkout_identity = _verified_rollback_record(
+        record
+    )
+    _validate_checkout_identity(source, attempt_dir, checkout, attempt_identity, checkout_identity)
+
+    def git(*args: str, check: bool = True) -> subprocess.CompletedProcess[str]:
+        return subprocess.run(
+            ["git", "-C", str(checkout), *args],
+            capture_output=True,
+            text=True,
+            check=check,
+        )
+
+    def reject_git_error(action: str, exc: subprocess.SubprocessError | OSError) -> RepositoryError:
+        diagnostic = getattr(exc, "stderr", None)
+        detail = (
+            diagnostic.strip() if isinstance(diagnostic, str) and diagnostic.strip() else str(exc)
+        )
+        return RepositoryError(f"Could not {action} in isolated worktree: {detail}")
+
+    symbolic_head = git("symbolic-ref", "-q", "HEAD", check=False)
+    if symbolic_head.returncode == 0:
+        raise RepositoryError("Scoped commits require a detached isolated worktree")
+    if symbolic_head.returncode != 1:
+        raise RepositoryError("Could not verify detached isolated worktree HEAD")
+    head = git("rev-parse", "--verify", "HEAD^{commit}").stdout.strip()
+    if head.lower() != record.baseline_commit.lower():
+        raise RepositoryError("Scoped commit checkout HEAD no longer matches its recorded baseline")
+    if _tree_has_gitlinks(source, record.baseline_commit):
+        raise RepositoryError("Scoped commits do not support baseline submodules")
+    if _index_has_gitlinks(checkout):
+        raise RepositoryError("Scoped commits do not support staged submodules")
+
+    staged = git("diff", "--cached", "--quiet", check=False)
+    if staged.returncode == 1:
+        raise RepositoryError("Scoped commit checkout already contains staged changes")
+    if staged.returncode != 0:
+        raise RepositoryError("Could not verify isolated worktree index")
+
+    _validate_checkout_identity(source, attempt_dir, checkout, attempt_identity, checkout_identity)
+    index_may_be_staged = False
+    try:
+        index_may_be_staged = True
+        git("add", "--all", "--", ".")
+        _validate_checkout_identity(
+            source, attempt_dir, checkout, attempt_identity, checkout_identity
+        )
+        if _index_has_gitlinks(checkout):
+            raise RepositoryError("Scoped commits do not support submodules")
+
+        changed = git("diff", "--cached", "--name-only", "-z", record.baseline_commit)
+        for raw_path in changed.stdout.split("\0"):
+            if not raw_path:
+                continue
+            relative = Path(raw_path)
+            if relative.is_absolute() or any(part in ("", ".", "..") for part in relative.parts):
+                raise RepositoryError("Git returned a path outside the isolated checkout")
+            candidate = checkout / relative
+            current = checkout
+            for part in relative.parts[:-1]:
+                current = current / part
+                if current.is_symlink():
+                    raise RepositoryError("Scoped commit path traverses a symlink")
+            if candidate.is_symlink():
+                raise RepositoryError("Scoped commits do not accept symlink changes")
+            if candidate.exists():
+                try:
+                    candidate.resolve(strict=True).relative_to(checkout)
+                except (OSError, ValueError) as exc:
+                    raise RepositoryError(
+                        "Scoped commit path escapes the isolated checkout"
+                    ) from exc
+
+        if not changed.stdout:
+            raise RepositoryError("There are no isolated changes to commit")
+        if git("diff", "--quiet").returncode != 0:
+            raise RepositoryError("Could not stage all isolated changes")
+
+        _validate_checkout_identity(
+            source, attempt_dir, checkout, attempt_identity, checkout_identity
+        )
+        commit_message = f"{task_id}: {subject}"
+        tree = git("write-tree").stdout.strip()
+        if not re.fullmatch(r"[0-9a-fA-F]{40,64}", tree):
+            raise RepositoryError("Git returned an invalid isolated tree identifier")
+        commit = git("commit-tree", tree, "-p", record.baseline_commit, "-m", commit_message)
+        commit_hash = commit.stdout.strip()
+        if not re.fullmatch(r"[0-9a-fA-F]{40,64}", commit_hash):
+            raise RepositoryError("Git returned an invalid scoped commit identifier")
+        # Update only this detached worktree's HEAD, and only if it still points
+        # at the recorded baseline. Plumbing commands avoid hooks that could
+        # rewrite the verified index between validation and ref update.
+        git(
+            "update-ref",
+            "--no-deref",
+            "HEAD",
+            commit_hash,
+            record.baseline_commit,
+        )
+        return commit_hash
+    except RepositoryError:
+        if index_may_be_staged:
+            try:
+                git("restore", "--staged", f"--source={record.baseline_commit}", "--", ":/")
+            except (OSError, subprocess.SubprocessError) as cleanup_exc:
+                raise RepositoryError(
+                    "Scoped commit was rejected, but the isolated index could not be restored"
+                ) from cleanup_exc
+        raise
+    except (OSError, subprocess.SubprocessError) as exc:
+        if index_may_be_staged:
+            try:
+                git("restore", "--staged", f"--source={record.baseline_commit}", "--", ":/")
+            except (OSError, subprocess.SubprocessError) as cleanup_exc:
+                raise RepositoryError(
+                    "Scoped commit failed, but the isolated index could not be restored"
+                ) from cleanup_exc
+        raise reject_git_error("create scoped commit", exc) from exc
 
 
 def _resolve_git_path(repo_root: Path, name: str) -> Path:
