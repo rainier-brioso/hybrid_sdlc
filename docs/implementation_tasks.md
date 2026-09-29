@@ -524,13 +524,16 @@ A task is complete when:
 
 ## Phase 5 — Isolated Worktrees and Opt-In Commits
 
-- [ ] **HSDLC-051 — Implement isolated worktree creation**  
+- [x] **HSDLC-051 — Implement isolated worktree creation**
   Files: `src/hybrid_sdlc/worktrees.py`, `tests/integration/test_worktrees.py`  
   Depends on: HSDLC-011, HSDLC-027  
   Acceptance:
   - Each delegated run uses a uniquely named worktree rooted at a recorded baseline commit.
   - The user's checkout remains byte-for-byte unchanged during execution.
   - Partial creation failures clean up only paths created by that attempt.
+  - Evidence: tests/integration/test_worktrees.py verifies baseline isolation, unchanged
+    source checkout files/status, unique worktrees, and safe cleanup after registered and
+    unregistered partial creation failures.
 
 - [ ] **HSDLC-052 — Implement safe isolated rollback**  
   Files: `src/hybrid_sdlc/worktrees.py`, `tests/integration/test_worktrees.py`  
