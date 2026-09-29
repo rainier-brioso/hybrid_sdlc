@@ -535,13 +535,30 @@ A task is complete when:
     source checkout files/status, unique worktrees, and safe cleanup after registered and
     unregistered partial creation failures.
 
-- [ ] **HSDLC-052 — Implement safe isolated rollback**  
+- [x] **HSDLC-052 — Implement safe isolated rollback**
   Files: `src/hybrid_sdlc/worktrees.py`, `tests/integration/test_worktrees.py`  
   Depends on: HSDLC-051  
   Acceptance:
   - Rollback restores the isolated worktree to its recorded baseline.
   - No command targets the user's checkout or an unresolved path.
   - Tests include spaces, Unicode, symlinks, and interrupted cleanup.
+  Evidence and limits:
+  - Rollback validates the caller record against its persisted identity, expected
+    per-repository temporary storage, and Git's linked-worktree registration before
+    mutation; it restores detached HEAD, index, and tracked files to the recorded baseline.
+  - Git restore and untracked cleanup target only the verified checkout. NUL-delimited
+    Git paths preserve spaces and Unicode; symlink leaves are removed without following
+    them, and empty directories are removed only when empty.
+  - Checkout and attempt-directory identity, canonical path, and linked registration are
+    rechecked before each Git mutation and untracked filesystem deletion/descent. This
+    catches path replacement between workflow steps; it cannot prevent a malicious
+    same-user process racing in the interval between a check and an operating-system call.
+  - Repositories with submodule gitlinks are unsupported: creation rejects a baseline
+    containing gitlinks, and rollback rejects gitlinks in its baseline or current index
+    before mutation.
+  - Tests cover forged and stale records, source-checkout preservation, spaces, Unicode,
+    symlink escape, checkout path replacement, submodule rejection, HEAD drift, and retry
+    after interrupted cleanup.
 
 - [ ] **HSDLC-053 — Implement scoped commit creation**  
   Files: `src/hybrid_sdlc/git_tools.py`, `tests/integration/test_commits.py`  

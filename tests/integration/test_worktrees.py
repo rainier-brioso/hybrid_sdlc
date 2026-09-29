@@ -3,8 +3,10 @@
 from __future__ import annotations
 
 import hashlib
+import json
 import subprocess
 from concurrent.futures import ThreadPoolExecutor
+from dataclasses import replace
 from pathlib import Path
 from threading import Barrier, Event, current_thread
 
@@ -245,3 +247,296 @@ def test_worktree_id_rejects_path_syntax(tmp_path: Path) -> None:
     repo = _create_repo(tmp_path)
     with pytest.raises(ValueError, match="safe identifier"):
         worktrees.create_worktree(repo, worktree_id="../escape")
+
+
+def test_rollback_restores_baseline_and_removes_untracked_unicode_and_ignored_paths(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from hybrid_sdlc import worktrees
+
+    repo = _create_repo(tmp_path)
+    (repo / ".gitignore").write_text("ignored file.txt\n", encoding="utf-8")
+    _git(repo, "add", ".gitignore")
+    _git(repo, "commit", "-m", "ignore test fixture")
+    (repo / "README.md").write_text("user checkout change\n", encoding="utf-8")
+    (repo / "user file.txt").write_text("leave untouched", encoding="utf-8")
+    temp_root = tmp_path / "external ü space"
+    temp_root.mkdir()
+    monkeypatch.setattr(worktrees.tempfile, "gettempdir", lambda: str(temp_root))
+    before = _checkout_snapshot(repo)
+    record = worktrees.create_worktree(repo, worktree_id="rollback-basic")
+    (record.path / "README.md").write_text("changed\n", encoding="utf-8")
+    _git(record.path, "add", "README.md")
+    (record.path / "nested ü space").mkdir()
+    (record.path / "nested ü space" / "new file.txt").write_text("untracked", encoding="utf-8")
+    (record.path / "ignored file.txt").write_text("ignored", encoding="utf-8")
+
+    worktrees.rollback_worktree(record)
+
+    assert _git(record.path, "rev-parse", "HEAD") == record.baseline_commit
+    assert (record.path / "README.md").read_text(encoding="utf-8") == "initial\n"
+    assert _git(record.path, "status", "--porcelain") == ""
+    assert not (record.path / "nested ü space").exists()
+    assert not (record.path / "ignored file.txt").exists()
+    assert _checkout_snapshot(repo) == before
+
+
+def test_rollback_removes_nested_untracked_repository_without_touching_checkout_parent(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from hybrid_sdlc import worktrees
+
+    repo = _create_repo(tmp_path)
+    temp_root = tmp_path / "external"
+    temp_root.mkdir()
+    monkeypatch.setattr(worktrees.tempfile, "gettempdir", lambda: str(temp_root))
+    before = _checkout_snapshot(repo)
+    record = worktrees.create_worktree(repo, worktree_id="rollback-nested-repo")
+
+    outside = tmp_path / "outside checkout.txt"
+    outside.write_text("preserve", encoding="utf-8")
+    nested = record.path / "nested repository"
+    nested.mkdir()
+    _git(nested, "init")
+    _git(nested, "config", "user.name", "Nested Tester")
+    _git(nested, "config", "user.email", "nested@local")
+    deeper = nested / "nested directory"
+    deeper.mkdir()
+    (deeper / "nested file.txt").write_text("remove recursively", encoding="utf-8")
+    _git(nested, "add", ".")
+    _git(nested, "commit", "-m", "nested repo")
+    listing = subprocess.run(
+        ["git", "-C", str(record.path), "ls-files", "--others", "-z"],
+        capture_output=True,
+        check=True,
+    ).stdout
+    assert b"nested repository" in listing
+
+    worktrees.rollback_worktree(record)
+
+    assert not nested.exists()
+    assert outside.read_text(encoding="utf-8") == "preserve"
+    assert _git(record.path, "status", "--porcelain") == ""
+    assert _checkout_snapshot(repo) == before
+
+
+def test_rollback_rejects_caller_forgery_and_persisted_record_tampering(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from hybrid_sdlc import worktrees
+
+    repo = _create_repo(tmp_path)
+    temp_root = tmp_path / "external"
+    temp_root.mkdir()
+    monkeypatch.setattr(worktrees.tempfile, "gettempdir", lambda: str(temp_root))
+    record = worktrees.create_worktree(repo, worktree_id="rollback-identity")
+    (record.path / "README.md").write_text("preserve on rejection", encoding="utf-8")
+
+    with pytest.raises(worktrees.RepositoryError, match="expected isolated checkout"):
+        worktrees.rollback_worktree(replace(record, path=repo))
+
+    data = json.loads(record.record_path.read_text(encoding="utf-8"))
+    data["baseline_commit"] = "0" * 40
+    record.record_path.write_text(json.dumps(data), encoding="utf-8")
+    with pytest.raises(worktrees.RepositoryError, match="persisted identity"):
+        worktrees.rollback_worktree(record)
+    assert (record.path / "README.md").read_text(encoding="utf-8") == "preserve on rejection"
+
+
+def test_rollback_fails_closed_if_checkout_path_is_swapped_before_mutation(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from hybrid_sdlc import worktrees
+
+    repo = _create_repo(tmp_path)
+    temp_root = tmp_path / "external"
+    temp_root.mkdir()
+    monkeypatch.setattr(worktrees.tempfile, "gettempdir", lambda: str(temp_root))
+    before = _checkout_snapshot(repo)
+    record = worktrees.create_worktree(repo, worktree_id="rollback-race")
+    extra = record.path / "keep until detected.txt"
+    extra.write_text("preserve", encoding="utf-8")
+    displaced = record.path.parent / "checkout.displaced"
+    original_validate = worktrees._validate_checkout_identity
+    swapped = False
+
+    def swap_then_validate(
+        source: Path,
+        attempt_dir: Path,
+        checkout: Path,
+        attempt_identity: tuple[int, int],
+        checkout_identity: tuple[int, int],
+    ) -> None:
+        nonlocal swapped
+        if not swapped:
+            checkout.rename(displaced)
+            checkout.mkdir()
+            swapped = True
+        original_validate(source, attempt_dir, checkout, attempt_identity, checkout_identity)
+
+    monkeypatch.setattr(worktrees, "_validate_checkout_identity", swap_then_validate)
+    try:
+        with pytest.raises(worktrees.RepositoryError, match="identity changed"):
+            worktrees.rollback_worktree(record)
+        assert (displaced / extra.name).read_text(encoding="utf-8") == "preserve"
+        assert _checkout_snapshot(repo) == before
+    finally:
+        if record.path.exists():
+            record.path.rmdir()
+        if displaced.exists():
+            displaced.rename(record.path)
+
+
+def test_rollback_removes_symlink_leaf_without_touching_external_target(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from hybrid_sdlc import worktrees
+
+    repo = _create_repo(tmp_path)
+    temp_root = tmp_path / "external"
+    temp_root.mkdir()
+    monkeypatch.setattr(worktrees.tempfile, "gettempdir", lambda: str(temp_root))
+    record = worktrees.create_worktree(repo, worktree_id="rollback-symlink")
+    outside = tmp_path / "outside"
+    outside.mkdir()
+    marker = outside / "keep.txt"
+    marker.write_text("keep", encoding="utf-8")
+    link = record.path / "escape"
+    try:
+        link.symlink_to(outside, target_is_directory=True)
+    except (OSError, NotImplementedError) as exc:
+        pytest.skip(f"directory symlinks are unavailable: {exc}")
+
+    worktrees.rollback_worktree(record)
+
+    assert not link.exists() and not link.is_symlink()
+    assert marker.read_text(encoding="utf-8") == "keep"
+
+
+def test_create_worktree_rejects_repository_baseline_with_gitlink(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from hybrid_sdlc import worktrees
+
+    repo = _create_repo(tmp_path)
+    linked_commit = _git(repo, "rev-parse", "HEAD")
+    _git(repo, "update-index", "--add", "--cacheinfo", f"160000,{linked_commit},nested-submodule")
+    _git(repo, "commit", "-m", "commit test gitlink")
+    before = _checkout_snapshot(repo)
+    temp_root = tmp_path / "external"
+    temp_root.mkdir()
+    monkeypatch.setattr(worktrees.tempfile, "gettempdir", lambda: str(temp_root))
+
+    with pytest.raises(worktrees.RepositoryError, match="do not yet support.*submodules"):
+        worktrees.create_worktree(repo, worktree_id="submodule-baseline")
+
+    assert _checkout_snapshot(repo) == before
+    assert not (temp_root / "hsdlc-wt").exists()
+
+
+def test_rollback_rejects_gitlink_in_index_before_any_rollback_mutation(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from hybrid_sdlc import worktrees
+
+    repo = _create_repo(tmp_path)
+    temp_root = tmp_path / "external"
+    temp_root.mkdir()
+    monkeypatch.setattr(worktrees.tempfile, "gettempdir", lambda: str(temp_root))
+    before = _checkout_snapshot(repo)
+    record = worktrees.create_worktree(repo, worktree_id="rollback-submodule-index")
+    linked_commit = record.baseline_commit
+    _git(
+        record.path,
+        "update-index",
+        "--add",
+        "--cacheinfo",
+        f"160000,{linked_commit},nested-submodule",
+    )
+    (record.path / "README.md").write_text("preserve before rejection", encoding="utf-8")
+    staged_index = _git(record.path, "ls-files", "--stage")
+
+    with pytest.raises(worktrees.RepositoryError, match="does not support.*submodules"):
+        worktrees.rollback_worktree(record)
+
+    assert _git(record.path, "ls-files", "--stage") == staged_index
+    assert (record.path / "README.md").read_text(encoding="utf-8") == "preserve before rejection"
+    assert _checkout_snapshot(repo) == before
+
+
+def test_rollback_moves_only_detached_head_back_to_recorded_baseline(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from hybrid_sdlc import worktrees
+
+    repo = _create_repo(tmp_path)
+    temp_root = tmp_path / "external"
+    temp_root.mkdir()
+    monkeypatch.setattr(worktrees.tempfile, "gettempdir", lambda: str(temp_root))
+    record = worktrees.create_worktree(repo, worktree_id="rollback-head")
+    (record.path / "README.md").write_text("temporary commit\n", encoding="utf-8")
+    _git(record.path, "add", "README.md")
+    _git(record.path, "commit", "-m", "temporary worktree commit")
+    source_head = _git(repo, "rev-parse", "HEAD")
+
+    worktrees.rollback_worktree(record)
+
+    assert _git(record.path, "rev-parse", "HEAD") == record.baseline_commit
+    assert (record.path / "README.md").read_text(encoding="utf-8") == "initial\n"
+    assert _git(repo, "rev-parse", "HEAD") == source_head
+
+
+def test_rollback_refuses_to_move_a_branch_attached_to_worktree(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from hybrid_sdlc import worktrees
+
+    repo = _create_repo(tmp_path)
+    temp_root = tmp_path / "external"
+    temp_root.mkdir()
+    monkeypatch.setattr(worktrees.tempfile, "gettempdir", lambda: str(temp_root))
+    record = worktrees.create_worktree(repo, worktree_id="rollback-branch")
+    _git(record.path, "switch", "-c", "rollback-test-branch")
+    (record.path / "README.md").write_text("preserve", encoding="utf-8")
+    branch_head = _git(record.path, "rev-parse", "HEAD")
+
+    with pytest.raises(worktrees.RepositoryError, match="move a branch"):
+        worktrees.rollback_worktree(record)
+
+    assert _git(record.path, "rev-parse", "HEAD") == branch_head
+    assert (record.path / "README.md").read_text(encoding="utf-8") == "preserve"
+
+
+def test_rollback_can_be_retried_after_interrupted_restore(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from hybrid_sdlc import worktrees
+
+    repo = _create_repo(tmp_path)
+    temp_root = tmp_path / "external"
+    temp_root.mkdir()
+    monkeypatch.setattr(worktrees.tempfile, "gettempdir", lambda: str(temp_root))
+    record = worktrees.create_worktree(repo, worktree_id="rollback-retry")
+    (record.path / "README.md").write_text("changed", encoding="utf-8")
+    extra = record.path / "extra.txt"
+    extra.write_text("remove", encoding="utf-8")
+    original_run = worktrees.subprocess.run
+    failed = False
+
+    def fail_once_on_restore(
+        args: list[str], **kwargs: object
+    ) -> subprocess.CompletedProcess[bytes]:
+        nonlocal failed
+        if "restore" in args and not failed:
+            failed = True
+            raise subprocess.CalledProcessError(1, args, stderr=b"simulated interruption")
+        return original_run(args, **kwargs)  # type: ignore[arg-type]
+
+    monkeypatch.setattr(worktrees.subprocess, "run", fail_once_on_restore)
+    with pytest.raises(worktrees.RepositoryError, match="simulated interruption"):
+        worktrees.rollback_worktree(record)
+
+    worktrees.rollback_worktree(record)
+    assert _git(record.path, "status", "--porcelain") == ""
+    assert (record.path / "README.md").read_text(encoding="utf-8") == "initial\n"
+    assert not extra.exists()
