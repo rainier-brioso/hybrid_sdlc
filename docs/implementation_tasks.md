@@ -601,12 +601,15 @@ A task is complete when:
 
 ## Phase 6 — Host Integrations and Skills
 
-- [ ] **HSDLC-056 — Author the host-neutral delegation skill**  
+- [x] **HSDLC-056 — Author the host-neutral delegation skill**
   Files: `skills/local-delegate/SKILL.md`  
   Depends on: HSDLC-044, HSDLC-055  
   Acceptance:
   - Skill explains trust assumptions, synchronous/asynchronous choices, validation, status handling, and review evidence.
   - It never promises reactive wakeup on unsupported hosts or labels agent review deterministic.
+  - Evidence: `skills/local-delegate/SKILL.md` documents the verified CLI/MCP
+    contracts, fail-closed async host limitations, bounded polling and cancellation,
+    and exact patch/commit review; skill metadata and `git diff --check` pass.
 
 - [ ] **HSDLC-057 — Add Codex manual MCP registration**  
   Files: `docs/hosts/codex.md`  
