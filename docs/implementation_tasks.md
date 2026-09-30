@@ -611,12 +611,16 @@ A task is complete when:
     contracts, fail-closed async host limitations, bounded polling and cancellation,
     and exact patch/commit review; skill metadata and `git diff --check` pass.
 
-- [ ] **HSDLC-057 — Add Codex manual MCP registration**  
+- [x] **HSDLC-057 — Add Codex manual MCP registration**
   Files: `docs/hosts/codex.md`  
   Depends on: HSDLC-044  
   Acceptance:
   - Instructions use `codex mcp add hybrid-sdlc -- hybrid-sdlc mcp` and include list/get/remove verification.
   - Manual MCP registration is clearly separated from plugin installation.
+  - Evidence: `docs/hosts/codex.md` documents prerequisites, registration,
+    list/get/remove commands, an optional non-job endpoint probe, security
+    caveats, and the separate HSDLC-058 plugin work; links and `git diff --check`
+    pass.
 
 - [ ] **HSDLC-058 — Package the Codex plugin and local marketplace entry**  
   Files: `.codex-plugin/plugin.json`, marketplace manifest files, `docs/hosts/codex.md`  
