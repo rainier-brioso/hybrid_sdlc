@@ -650,6 +650,10 @@ A task is complete when:
   Acceptance:
   - Discovery paths and MCP registration are verified on a pinned supported version.
   - Reactive wakeup is promoted from experimental only after a recorded end-to-end test.
+  - In progress: workspace skill and MCP configuration are checked in and their
+    canonical contents are covered by parity tests. Antigravity IDE `1.107.0`
+    is installed, but live workspace discovery and MCP tool availability still
+    need an in-IDE check; reactive wakeup remains experimental.
 
 - [ ] **HSDLC-061 — Add host capability tests and compatibility table**  
   Files: `docs/host-compatibility.md`, `tests/host_contracts/`  

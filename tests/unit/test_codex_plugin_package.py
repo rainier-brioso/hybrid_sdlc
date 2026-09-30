@@ -38,3 +38,17 @@ def test_codex_plugin_package_has_skill_and_stdio_mcp_server() -> None:
     assert server["command"] == "hybrid-sdlc"
     assert server["args"] == ["mcp"]
     assert (package / "skills" / "local-delegate" / "SKILL.md").is_file()
+
+
+def test_antigravity_workspace_files_match_canonical_skill_and_mcp() -> None:
+    root = Path(__file__).resolve().parents[2]
+
+    assert (root / ".agents" / "skills" / "local-delegate" / "SKILL.md").read_bytes() == (
+        root / "skills" / "local-delegate" / "SKILL.md"
+    ).read_bytes()
+
+    with (root / ".mcp.json").open("rb") as stream:
+        root_mcp = json.load(stream)
+    with (root / ".agents" / "mcp_config.json").open("rb") as stream:
+        antigravity_mcp = json.load(stream)
+    assert antigravity_mcp["mcpServers"]["hybrid-sdlc"] == root_mcp["mcpServers"]["hybrid-sdlc"]
