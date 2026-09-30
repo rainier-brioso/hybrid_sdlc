@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import os
 import subprocess
 from concurrent.futures import ThreadPoolExecutor
 from dataclasses import replace
@@ -70,6 +71,249 @@ def test_create_worktree_uses_unique_detached_baseline_and_preserves_source_chec
     assert (first.path / "README.md").read_text(encoding="utf-8") == "initial\n"
     assert first.record_path.is_file()
     assert _checkout_snapshot(repo) == before
+
+
+def test_export_worktree_result_writes_exact_patch_without_changing_index_or_source(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from hybrid_sdlc import worktrees
+
+    repo = _create_repo(tmp_path)
+    temp_root = tmp_path / "external"
+    temp_root.mkdir()
+    monkeypatch.setattr(worktrees.tempfile, "gettempdir", lambda: str(temp_root))
+    record = worktrees.create_worktree(repo, worktree_id="result-export")
+
+    (repo / "README.md").write_text("source checkout change\n", encoding="utf-8")
+    (repo / "source-untracked.txt").write_text("keep this file\n", encoding="utf-8")
+    (record.path / "README.md").write_text("tracked staged and unstaged\n", encoding="utf-8")
+    _git(record.path, "add", "README.md")
+    (record.path / "README.md").write_text("tracked final bytes\n", encoding="utf-8")
+    (record.path / "space and café.txt").write_bytes(b"new file\x00with binary bytes\xff\n")
+    index_before = _git(record.path, "diff", "--cached", "--binary")
+    source_before = _checkout_snapshot(repo)
+    source_head_before = _git(repo, "rev-parse", "HEAD")
+    source_index_before = _git(repo, "diff", "--cached", "--binary")
+
+    result = worktrees.export_worktree_result(record)
+
+    assert result.baseline_commit == record.baseline_commit
+    assert result.commit_hash is None
+    assert result.changed_paths == ("README.md", "space and café.txt")
+    assert result.patch_path == record.record_path.parent / "result.patch"
+    assert result.patch_path.is_file()
+    patch_bytes = result.patch_path.read_bytes()
+    assert b"GIT binary patch" in patch_bytes
+    assert _git(record.path, "diff", "--cached", "--binary") == index_before
+    assert _checkout_snapshot(repo) == source_before
+    assert _git(repo, "rev-parse", "HEAD") == source_head_before
+    assert _git(repo, "diff", "--cached", "--binary") == source_index_before
+
+    target = tmp_path / "patch target"
+    _git(repo, "worktree", "add", "--detach", str(target), record.baseline_commit)
+    subprocess.run(
+        ["git", "-C", str(target), "apply", "--binary", "--check", str(result.patch_path)],
+        check=True,
+        capture_output=True,
+    )
+    subprocess.run(
+        ["git", "-C", str(target), "apply", "--binary", str(result.patch_path)],
+        check=True,
+        capture_output=True,
+    )
+    assert (target / "README.md").read_text(encoding="utf-8") == "tracked final bytes\n"
+    assert (target / "space and café.txt").read_bytes() == b"new file\x00with binary bytes\xff\n"
+
+
+def test_exported_patch_conflict_fails_without_changing_target(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from hybrid_sdlc import worktrees
+
+    repo = _create_repo(tmp_path)
+    temp_root = tmp_path / "external"
+    temp_root.mkdir()
+    monkeypatch.setattr(worktrees.tempfile, "gettempdir", lambda: str(temp_root))
+    record = worktrees.create_worktree(repo, worktree_id="conflicting-result")
+    (record.path / "README.md").write_text("agent version\n", encoding="utf-8")
+    result = worktrees.export_worktree_result(record)
+
+    target = tmp_path / "conflict target"
+    _git(repo, "worktree", "add", "--detach", str(target), record.baseline_commit)
+    (target / "README.md").write_text("reviewer version\n", encoding="utf-8")
+    _git(target, "add", "README.md")
+    _git(target, "commit", "-m", "conflicting target change")
+    before = (target / "README.md").read_bytes()
+    failed = subprocess.run(
+        ["git", "-C", str(target), "apply", "--binary", "--check", str(result.patch_path)],
+        capture_output=True,
+    )
+
+    assert failed.returncode != 0
+    assert (target / "README.md").read_bytes() == before
+
+
+def test_export_result_atomic_replacement_preserves_previous_patch_on_failure(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from hybrid_sdlc import worktrees
+
+    repo = _create_repo(tmp_path)
+    temp_root = tmp_path / "external"
+    temp_root.mkdir()
+    monkeypatch.setattr(worktrees.tempfile, "gettempdir", lambda: str(temp_root))
+    record = worktrees.create_worktree(repo, worktree_id="atomic-result")
+    (record.path / "README.md").write_text("first result\n", encoding="utf-8")
+    result = worktrees.export_worktree_result(record)
+    original_patch = result.patch_path.read_bytes()
+    (record.path / "README.md").write_text("second result\n", encoding="utf-8")
+
+    def fail_replace(_source: Path, _target: Path) -> None:
+        raise OSError("simulated atomic replacement failure")
+
+    monkeypatch.setattr(worktrees.os, "replace", fail_replace)
+    with pytest.raises(
+        worktrees.RepositoryError, match="Could not export isolated worktree result"
+    ):
+        worktrees.export_worktree_result(record)
+
+    assert result.patch_path.read_bytes() == original_patch
+    assert not tuple(result.patch_path.parent.glob(".result-patch-*"))
+
+
+def test_export_result_git_metadata_failure_preserves_previous_patch(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from hybrid_sdlc import worktrees
+
+    repo = _create_repo(tmp_path)
+    temp_root = tmp_path / "external"
+    temp_root.mkdir()
+    monkeypatch.setattr(worktrees.tempfile, "gettempdir", lambda: str(temp_root))
+    record = worktrees.create_worktree(repo, worktree_id="metadata-failure-result")
+    (record.path / "README.md").write_text("first result\n", encoding="utf-8")
+    result = worktrees.export_worktree_result(record)
+    original_patch = result.patch_path.read_bytes()
+    (record.path / "README.md").write_text("second result\n", encoding="utf-8")
+    original_run = subprocess.run
+
+    def fail_name_only(args: list[str], **kwargs: object) -> subprocess.CompletedProcess[bytes]:
+        if "--name-only" in args:
+            raise subprocess.CalledProcessError(1, args, stderr=b"simulated metadata failure")
+        return original_run(args, **kwargs)  # type: ignore[arg-type]
+
+    monkeypatch.setattr(worktrees.subprocess, "run", fail_name_only)
+    with pytest.raises(
+        worktrees.RepositoryError, match="Could not export isolated worktree result"
+    ):
+        worktrees.export_worktree_result(record)
+
+    assert result.patch_path.read_bytes() == original_patch
+
+
+def test_export_untracked_snapshot_is_not_reopened_after_parent_path_swap(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from hybrid_sdlc import worktrees
+
+    if os.name == "nt":
+        pytest.skip("The test requires directory symlink privileges on Windows")
+
+    repo = _create_repo(tmp_path)
+    temp_root = tmp_path / "external"
+    temp_root.mkdir()
+    monkeypatch.setattr(worktrees.tempfile, "gettempdir", lambda: str(temp_root))
+    record = worktrees.create_worktree(repo, worktree_id="snapshot-path-swap")
+    nested = record.path / "nested"
+    nested.mkdir()
+    (nested / "draft.txt").write_text("inside checkout\n", encoding="utf-8")
+    outside = tmp_path / "outside"
+    outside.mkdir()
+    (outside / "draft.txt").write_text("outside secret\n", encoding="utf-8")
+    saved_directory = record.path / "nested-saved"
+    original_run = subprocess.run
+    swapped = False
+
+    def swap_before_git_diff(
+        args: list[str], **kwargs: object
+    ) -> subprocess.CompletedProcess[bytes]:
+        nonlocal swapped
+        if "--no-index" in args and not swapped:
+            nested.rename(saved_directory)
+            nested.symlink_to(outside, target_is_directory=True)
+            swapped = True
+        return original_run(args, **kwargs)  # type: ignore[arg-type]
+
+    monkeypatch.setattr(worktrees.subprocess, "run", swap_before_git_diff)
+    try:
+        result = worktrees.export_worktree_result(record)
+    finally:
+        if nested.is_symlink():
+            nested.unlink()
+        if saved_directory.exists():
+            saved_directory.rename(nested)
+
+    assert swapped
+    assert b"inside checkout" in result.patch_path.read_bytes()
+    assert b"outside secret" not in result.patch_path.read_bytes()
+
+
+def test_export_result_reports_only_explicit_scoped_commit_and_includes_later_changes(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from hybrid_sdlc import git_tools, worktrees
+
+    repo = _create_repo(tmp_path)
+    temp_root = tmp_path / "external"
+    temp_root.mkdir()
+    monkeypatch.setattr(worktrees.tempfile, "gettempdir", lambda: str(temp_root))
+    record = worktrees.create_worktree(repo, worktree_id="committed-result")
+    (record.path / "README.md").write_text("committed version\n", encoding="utf-8")
+    commit_hash = git_tools.create_scoped_commit(
+        record,
+        "HSDLC-054",
+        "Export committed result",
+        commit_requested=True,
+        tests_passed=True,
+        policy_passed=True,
+    )
+    assert commit_hash is not None
+    (record.path / "later.txt").write_text("after commit\n", encoding="utf-8")
+
+    implicit_commit = worktrees.export_worktree_result(record)
+    explicit_commit = worktrees.export_worktree_result(record, scoped_commit_hash=commit_hash)
+
+    assert implicit_commit.commit_hash is None
+    assert explicit_commit.commit_hash == commit_hash
+    assert explicit_commit.changed_paths == ("README.md", "later.txt")
+    target = tmp_path / "committed patch target"
+    _git(repo, "worktree", "add", "--detach", str(target), record.baseline_commit)
+    subprocess.run(
+        ["git", "-C", str(target), "apply", "--binary", str(explicit_commit.patch_path)],
+        check=True,
+        capture_output=True,
+    )
+    assert (target / "README.md").read_text(encoding="utf-8") == "committed version\n"
+    assert (target / "later.txt").read_text(encoding="utf-8") == "after commit\n"
+
+
+def test_export_result_rejects_commit_without_scoped_task_subject(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from hybrid_sdlc import worktrees
+
+    repo = _create_repo(tmp_path)
+    temp_root = tmp_path / "external"
+    temp_root.mkdir()
+    monkeypatch.setattr(worktrees.tempfile, "gettempdir", lambda: str(temp_root))
+    record = worktrees.create_worktree(repo, worktree_id="unscoped-commit")
+    (record.path / "README.md").write_text("manual commit\n", encoding="utf-8")
+    _git(record.path, "add", "README.md")
+    _git(record.path, "commit", "-m", "manual commit")
+    commit_hash = _git(record.path, "rev-parse", "HEAD")
+
+    with pytest.raises(worktrees.RepositoryError, match="scoped task ID subject"):
+        worktrees.export_worktree_result(record, scoped_commit_hash=commit_hash)
 
 
 def test_failed_add_cleans_unregistered_partial_checkout_only(

@@ -568,12 +568,22 @@ A task is complete when:
   - Commit includes only changes produced inside the isolated worktree and references the task ID.
   - Failed tests and policy failures cannot produce a commit.
 
-- [ ] **HSDLC-054 — Define result integration back into the user branch**  
+- [x] **HSDLC-054 — Define result integration back into the user branch**
   Files: `src/hybrid_sdlc/worktrees.py`, `docs/worktrees.md`, `tests/integration/test_worktrees.py`  
   Depends on: HSDLC-053  
   Acceptance:
-  - Default result is a commit hash and patch for review; no automatic merge occurs.
+  - Default result identifies the baseline commit and includes an exact, applyable patch; a commit hash is included only after explicit scoped commit opt-in.
+  - Patch export includes tracked and untracked changes, preserves binary content, and does not mutate the isolated index or source checkout.
+  - Patch artifacts are stored outside the checkout with documented sensitive-content handling.
+  - No automatic merge, cherry-pick, or source-branch mutation occurs.
   - Documentation gives explicit cherry-pick/apply steps and conflict behavior.
+  - Evidence: `pytest -q tests/integration/test_worktrees.py` reports 22 passed and two
+    Windows symlink-privilege skips. Tests apply the binary-capable patch in a separate
+    checkout, cover Unicode and spaced paths, preserve a dirty source checkout and the
+    isolated index, reject patch conflicts without changing the target, and preserve the
+    previous patch when Git metadata lookup or atomic replacement fails. A deterministic
+    parent-path swap test confirms Git reads the private snapshot instead of reopening an
+    untracked checkout path. Ruff, package mypy, and `git diff --check` pass.
 
 - [ ] **HSDLC-055 — Move the runner to isolated execution by default**  
   Files: `src/hybrid_sdlc/aider_runner.py`, `src/hybrid_sdlc/cli.py`, `tests/e2e/`  

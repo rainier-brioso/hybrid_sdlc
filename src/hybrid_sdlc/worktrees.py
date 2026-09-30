@@ -36,6 +36,16 @@ class WorktreeRecord:
     record_path: Path
 
 
+@dataclass(frozen=True)
+class WorktreeResult:
+    """Reviewable output exported from one verified isolated worktree."""
+
+    baseline_commit: str
+    patch_path: Path
+    changed_paths: tuple[str, ...]
+    commit_hash: str | None = None
+
+
 def _git(repo_root: Path, *args: str) -> str:
     """Run a Git command against the verified source repository."""
     result = subprocess.run(
@@ -323,6 +333,249 @@ def rollback_worktree(record: WorktreeRecord) -> None:
     """Restore a verified isolated checkout and its detached HEAD to its baseline."""
     with acquire_worktree_operation_lock(record) as identity:
         _rollback_verified_worktree(record, *identity)
+
+
+def _read_untracked_result_snapshot(
+    checkout: Path,
+    relative: Path,
+    checkout_identity: tuple[int, int],
+    validate_identity: Callable[[], None],
+) -> bytes:
+    """Read one regular untracked file without asking Git to reopen its live path.
+
+    On POSIX, directory-relative opens with O_NOFOLLOW anchor every path
+    component to the verified checkout. Windows does not expose equivalent
+    portable dir_fd traversal through Python, so the fallback validates the
+    final resolved path and file identity before and after reading its handle.
+    """
+    candidate = checkout / relative
+    validate_identity()
+
+    if (
+        os.name != "nt"
+        and os.open in os.supports_dir_fd
+        and hasattr(os, "O_NOFOLLOW")
+        and hasattr(os, "O_DIRECTORY")
+    ):
+        directory_flags = os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW  # type: ignore[attr-defined]
+        file_flags = os.O_RDONLY | os.O_NOFOLLOW
+        open_fds: list[int] = []
+        try:
+            parent_fd = os.open(checkout, directory_flags)
+            open_fds.append(parent_fd)
+            root_stat = os.fstat(parent_fd)
+            if (root_stat.st_dev, root_stat.st_ino) != checkout_identity:
+                raise RepositoryError("Untracked result checkout identity changed")
+            for part in relative.parts[:-1]:
+                parent_fd = os.open(part, directory_flags, dir_fd=parent_fd)
+                open_fds.append(parent_fd)
+            file_fd = os.open(relative.parts[-1], file_flags, dir_fd=parent_fd)
+            try:
+                file_stat = os.fstat(file_fd)
+                if not stat.S_ISREG(file_stat.st_mode):
+                    raise RepositoryError("Result export supports regular untracked files only")
+                with os.fdopen(file_fd, "rb") as file_handle:
+                    file_fd = -1
+                    content = file_handle.read()
+            finally:
+                if file_fd >= 0:
+                    os.close(file_fd)
+            validate_identity()
+            return content
+        except OSError as exc:
+            raise RepositoryError("Untracked result path changed during snapshot") from exc
+        finally:
+            for descriptor in reversed(open_fds):
+                os.close(descriptor)
+
+    # Windows fallback: compare the opened handle to the path's file identity
+    # and ensure the resolved path remains inside the checkout after the read.
+    for current in (
+        checkout,
+        *(checkout / Path(*relative.parts[:index]) for index in range(1, len(relative.parts))),
+    ):
+        if current.is_symlink():
+            raise RepositoryError("Untracked result path traverses a symlink or reparse point")
+    try:
+        resolved = candidate.resolve(strict=True)
+        resolved.relative_to(checkout)
+        before = candidate.lstat()
+        if stat.S_ISLNK(before.st_mode) or not stat.S_ISREG(before.st_mode):
+            raise RepositoryError("Result export supports regular untracked files only")
+        flags = os.O_RDONLY | getattr(os, "O_BINARY", 0) | getattr(os, "O_NOFOLLOW", 0)
+        file_fd = os.open(candidate, flags)
+        try:
+            opened = os.fstat(file_fd)
+            if not stat.S_ISREG(opened.st_mode) or (opened.st_dev, opened.st_ino) != (
+                before.st_dev,
+                before.st_ino,
+            ):
+                raise RepositoryError("Untracked result file changed while opening")
+            with os.fdopen(file_fd, "rb") as file_handle:
+                file_fd = -1
+                content = file_handle.read()
+        finally:
+            if file_fd >= 0:
+                os.close(file_fd)
+        after = candidate.lstat()
+        if stat.S_ISLNK(after.st_mode) or (after.st_dev, after.st_ino) != (
+            opened.st_dev,
+            opened.st_ino,
+        ):
+            raise RepositoryError("Untracked result file changed while reading")
+        candidate.resolve(strict=True).relative_to(checkout)
+        validate_identity()
+        return content
+    except (OSError, ValueError) as exc:
+        raise RepositoryError("Untracked result path changed or escaped during snapshot") from exc
+
+
+def export_worktree_result(
+    record: WorktreeRecord,
+    *,
+    scoped_commit_hash: str | None = None,
+) -> WorktreeResult:
+    """Save an exact, binary-capable patch outside the checkout for human review.
+
+    The isolated index is read but never changed. A commit is exposed in result
+    metadata only when its hash is explicitly supplied by the opt-in scoped
+    commit operation and verified as the direct child of the recorded baseline.
+    Patch artifacts can contain credentials or other private source content.
+    They are therefore written under the worktree's private artifact directory
+    without redaction or truncation, so applying the patch reproduces the result.
+    """
+    with acquire_worktree_operation_lock(record) as identity:
+        source, attempt_dir, checkout, attempt_identity, checkout_identity = identity
+
+        def validate_identity() -> None:
+            _validate_checkout_identity(
+                source, attempt_dir, checkout, attempt_identity, checkout_identity
+            )
+
+        validate_identity()
+        if _tree_has_gitlinks(source, record.baseline_commit) or _index_has_gitlinks(checkout):
+            raise RepositoryError("Result export does not support submodules")
+
+        def git_bytes(*args: str, check: bool = True) -> subprocess.CompletedProcess[bytes]:
+            return subprocess.run(
+                ["git", "-C", str(checkout), *args],
+                capture_output=True,
+                check=check,
+            )
+
+        try:
+            symbolic_head = git_bytes("symbolic-ref", "-q", "HEAD", check=False)
+            if symbolic_head.returncode == 0:
+                raise RepositoryError("Result export requires a detached isolated worktree")
+            if symbolic_head.returncode != 1:
+                raise RepositoryError("Could not verify detached isolated worktree HEAD")
+
+            head = git_bytes("rev-parse", "--verify", "HEAD^{commit}").stdout.decode().strip()
+            if _tree_has_gitlinks(source, head):
+                raise RepositoryError("Result export does not support submodules")
+
+            commit_hash: str | None = None
+            if scoped_commit_hash is not None:
+                if not re.fullmatch(r"[0-9a-fA-F]{40,64}", scoped_commit_hash):
+                    raise RepositoryError("Scoped commit hash is invalid")
+                if head.lower() != scoped_commit_hash.lower():
+                    raise RepositoryError(
+                        "Scoped commit hash does not match isolated worktree HEAD"
+                    )
+                parents = git_bytes("rev-list", "--parents", "-n", "1", head).stdout.decode()
+                fields = parents.split()
+                if len(fields) != 2 or fields[1].lower() != record.baseline_commit.lower():
+                    raise RepositoryError(
+                        "Scoped commit is not a direct child of the recorded baseline"
+                    )
+                subject = git_bytes("show", "-s", "--format=%s", head).stdout.decode().strip()
+                if re.match(r"^[A-Za-z][A-Za-z0-9]*-\d+[A-Za-z]?: .+$", subject) is None:
+                    raise RepositoryError("Commit does not have a scoped task ID subject")
+                commit_hash = head
+
+            tracked = git_bytes("diff", "--binary", record.baseline_commit, "--", ".").stdout
+            untracked_listing = git_bytes("ls-files", "--others", "--exclude-standard", "-z").stdout
+            untracked_paths = tuple(
+                sorted(os.fsdecode(raw) for raw in untracked_listing.split(b"\0") if raw)
+            )
+            untracked_patches: list[bytes] = []
+            with tempfile.TemporaryDirectory(
+                prefix=".result-snapshot-", dir=attempt_dir
+            ) as snapshot_name:
+                snapshot_root = Path(snapshot_name)
+                for relative_name in untracked_paths:
+                    relative = Path(relative_name)
+                    if (
+                        relative.is_absolute()
+                        or any(part in ("", ".", "..") for part in relative.parts)
+                        or relative.parts[0] == ".git"
+                    ):
+                        raise RepositoryError("Git returned an unsafe untracked result path")
+                    content = _read_untracked_result_snapshot(
+                        checkout, relative, checkout_identity, validate_identity
+                    )
+                    snapshot_file = snapshot_root / relative
+                    snapshot_file.parent.mkdir(parents=True, exist_ok=True)
+                    snapshot_file.write_bytes(content)
+                    result = subprocess.run(
+                        [
+                            "git",
+                            "diff",
+                            "--no-index",
+                            "--binary",
+                            "--",
+                            "/dev/null",
+                            relative.as_posix(),
+                        ],
+                        cwd=snapshot_root,
+                        capture_output=True,
+                        check=False,
+                    )
+                    if result.returncode not in (0, 1):
+                        diagnostic = result.stderr.decode(errors="replace").strip()
+                        raise RepositoryError(
+                            f"Could not generate untracked result patch: {diagnostic}"
+                        )
+                    untracked_patches.append(result.stdout)
+
+            name_result = git_bytes("diff", "--name-only", "-z", record.baseline_commit)
+            changed = {os.fsdecode(raw) for raw in name_result.stdout.split(b"\0") if raw}
+            changed.update(untracked_paths)
+
+            validate_identity()
+            patch_bytes = tracked + b"".join(untracked_patches)
+            patch_path = attempt_dir / "result.patch"
+            descriptor, temporary_name = tempfile.mkstemp(prefix=".result-patch-", dir=attempt_dir)
+            temporary_path = Path(temporary_name)
+            try:
+                if os.name != "nt":
+                    os.chmod(temporary_path, 0o600)
+                with os.fdopen(descriptor, "wb") as patch_file:
+                    patch_file.write(patch_bytes)
+                    patch_file.flush()
+                    os.fsync(patch_file.fileno())
+                validate_identity()
+                os.replace(temporary_path, patch_path)
+            except Exception:
+                temporary_path.unlink(missing_ok=True)
+                raise
+
+            return WorktreeResult(
+                baseline_commit=record.baseline_commit,
+                patch_path=patch_path,
+                changed_paths=tuple(sorted(changed)),
+                commit_hash=commit_hash,
+            )
+        except RepositoryError:
+            raise
+        except (OSError, subprocess.SubprocessError) as exc:
+            error_stderr = getattr(exc, "stderr", None)
+            detail = (
+                error_stderr.decode(errors="replace").strip()
+                if isinstance(error_stderr, bytes) and error_stderr
+                else str(exc)
+            )
+            raise RepositoryError(f"Could not export isolated worktree result: {detail}") from exc
 
 
 @contextmanager
