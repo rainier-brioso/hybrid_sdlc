@@ -1,7 +1,7 @@
 # Codex CLI
 
-This page covers manual registration of Hybrid SDLC as a Codex CLI MCP server.
-It does not install a Codex plugin.
+This page covers two ways to connect Hybrid SDLC to Codex CLI: installing the
+repository's local plugin, or registering its MCP server manually.
 
 ## Prerequisites
 
@@ -16,7 +16,36 @@ It does not install a Codex plugin.
   before launching Codex. The registration command stores the executable name;
   it does not install the package or configure a Python environment.
 
-## Register the MCP server
+## Install the repository plugin
+
+From the repository root, add its local marketplace and install the plugin:
+
+```sh
+codex plugin marketplace add .
+codex plugin add hybrid-sdlc@hybrid-sdlc-local
+codex plugin list --marketplace hybrid-sdlc-local
+```
+
+The marketplace points to the self-contained package under
+`plugins/hybrid-sdlc`, which installs the `local-delegate` skill and configures
+the stdio MCP server using `hybrid-sdlc mcp`. The `hybrid-sdlc` executable must
+be available on `PATH` when Codex starts the server. Start a new Codex
+conversation to load the installed skill and MCP tools. Confirm the skill is
+available and that the `hybrid-sdlc` MCP server exposes its tools before
+submitting a task.
+
+To uninstall the plugin and remove the local marketplace registration:
+
+```sh
+codex plugin remove hybrid-sdlc@hybrid-sdlc-local
+codex plugin marketplace remove hybrid-sdlc-local
+```
+
+## Register the MCP server manually
+
+Use manual registration when you want the MCP server without installing the
+plugin and skill. The plugin already configures this same server, so avoid
+registering it both ways in the same Codex profile.
 
 Run this in a terminal:
 
@@ -62,13 +91,6 @@ a local model and run repository-configured test commands. Use them only for a
 trusted repository, committed task spec, and trusted test profile, following
 the [local delegation skill](../../skills/local-delegate/SKILL.md). MCP tool
 access is not a sandbox boundary for untrusted repositories or instructions.
-
-## Manual registration and plugin installation
-
-The commands on this page register an MCP server manually through Codex CLI.
-They do not add a marketplace, install plugin files, or install the
-`local-delegate` skill into Codex. The separate HSDLC-058 work item covers
-packaging the Codex plugin and local marketplace entry.
 
 For Codex's current MCP CLI command reference, see the
 [Codex CLI MCP documentation](https://learn.chatgpt.com/docs/extend/mcp?surface=cli).

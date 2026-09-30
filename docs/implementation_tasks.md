@@ -622,12 +622,14 @@ A task is complete when:
     caveats, and the separate HSDLC-058 plugin work; links and `git diff --check`
     pass.
 
-- [ ] **HSDLC-058 — Package the Codex plugin and local marketplace entry**  
-  Files: `.codex-plugin/plugin.json`, marketplace manifest files, `docs/hosts/codex.md`  
+- [x] **HSDLC-058 — Package the Codex plugin and local marketplace entry**
+  Files: `.codex-plugin/plugin.json`, `plugins/hybrid-sdlc/`, `.agents/plugins/marketplace.json`, `docs/hosts/codex.md`, plugin package sync tests
   Depends on: HSDLC-056, HSDLC-057  
   Acceptance:
   - Manifest validates against the installed Codex version.
   - A clean test profile can add the marketplace, install the plugin, discover the skill/MCP server, and remove it.
+  - Verified with Codex CLI `0.158.0-alpha.2.1`: a process-scoped `CODEX_HOME` added the repo marketplace, installed and listed the plugin, confirmed the installed skill and MCP config, then removed the plugin and marketplace.
+  - Initialized the packaged stdio MCP server and listed `check_local_model`, `run_spec_task_sync`, `submit_spec_job`, `get_job_status`, and `cancel_spec_job`.
 
 - [ ] **HSDLC-059 — Add Claude Code integration**  
   Files: `CLAUDE.md`, `.claude/` configuration or documented commands, `docs/hosts/claude-code.md`  

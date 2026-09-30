@@ -1,0 +1,8 @@
+{
+  "mcpServers": {
+    "hybrid-sdlc": {
+      "command": "hybrid-sdlc",
+      "args": ["mcp"]
+    }
+  }
+}
