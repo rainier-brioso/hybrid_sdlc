@@ -631,12 +631,18 @@ A task is complete when:
   - Verified with Codex CLI `0.158.0-alpha.2.1`: a process-scoped `CODEX_HOME` added the repo marketplace, installed and listed the plugin, confirmed the installed skill and MCP config, then removed the plugin and marketplace.
   - Initialized the packaged stdio MCP server and listed `check_local_model`, `run_spec_task_sync`, `submit_spec_job`, `get_job_status`, and `cancel_spec_job`.
 
-- [ ] **HSDLC-059 — Add Claude Code integration**  
+- [x] **HSDLC-059 — Add Claude Code integration**
   Files: `CLAUDE.md`, `.claude/` configuration or documented commands, `docs/hosts/claude-code.md`  
   Depends on: HSDLC-044, HSDLC-056  
   Acceptance:
   - Configuration paths and commands are verified against a pinned supported Claude Code version.
   - Synchronous behavior and any notification limitations are documented accurately.
+  - Evidence: Claude Code CLI 2.1.268, run through an isolated npm cache and
+    `CLAUDE_CONFIG_DIR`, reported the repository `.mcp.json` server in project
+    scope as pending interactive approval; `claude mcp get hybrid-sdlc` showed
+    its configured command. The guide records project approval, optional
+    project registration/removal syntax, sync-call backgrounding from 2.1.212,
+    and explicit async job polling without cross-session wakeup claims.
 
 - [ ] **HSDLC-060 — Add Antigravity integration**  
   Files: Antigravity manifest/configuration, `.agents/skills/local-delegate/SKILL.md`, `docs/hosts/antigravity.md`  
