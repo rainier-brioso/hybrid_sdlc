@@ -20,9 +20,10 @@ from hybrid_sdlc.errors import (
     HybridSDLCError,
     ServerProbeError,
 )
+from hybrid_sdlc.git_tools import validate_committed_path
 from hybrid_sdlc.job_manager import InvalidJobTransitionError, JobManager, JobRecord, JobStatus
 from hybrid_sdlc.models import ProbeResult, RunStatus
-from hybrid_sdlc.security import verify_repo_root
+from hybrid_sdlc.security import resolve_confined_path, verify_repo_root
 from hybrid_sdlc.server_probe import probe_endpoint, select_active_endpoint
 from hybrid_sdlc.spec_initializer import (
     InitializationError,
@@ -242,6 +243,17 @@ def check_cmd(
 @click.option("--host-url", help="Override inference host URL.")
 @click.option("--model", help="Override target model name.")
 @click.option("--max-retries", type=int, help="Override maximum edit attempts.")
+@click.option(
+    "--commit",
+    "commit_requested",
+    is_flag=True,
+    help="Create a task-scoped commit after the final tests pass.",
+)
+@click.option(
+    "--rollback-on-failure",
+    is_flag=True,
+    help="Discard failed isolated changes after saving the review patch.",
+)
 @click.option("--json", "json_mode", is_flag=True, help="Output only structured RunResult JSON.")
 def run_task_cmd(
     spec_file: Path,
@@ -251,6 +263,8 @@ def run_task_cmd(
     host_url: str | None,
     model: str | None,
     max_retries: int | None,
+    commit_requested: bool,
+    rollback_on_failure: bool,
     json_mode: bool,
 ) -> None:
     """Synchronously execute a delegated spec task through the bounded editing and testing loop."""
@@ -280,11 +294,11 @@ def run_task_cmd(
     retries = max_retries if max_retries is not None else config.max_retries
     target_model = model or config.selected_model
 
-    # 1. Preflight: reject dirty tree BEFORE contacting model
-    from hybrid_sdlc.git_tools import check_worktree_clean
-
+    # Validate the committed spec before contacting the model. Other source
+    # checkout changes are safe because execution occurs in a detached worktree.
     try:
-        check_worktree_clean(verified_root)
+        resolved_spec = resolve_confined_path(spec_file, verified_root, must_exist=True)
+        validate_committed_path(verified_root, resolved_spec.relative_to(verified_root).as_posix())
     except HybridSDLCError as e:
         if json_mode:
             click.echo(json.dumps(e.to_failure_record().model_dump(mode="json"), indent=2))
@@ -331,6 +345,8 @@ def run_task_cmd(
             attempt_timeout_seconds=float(config.attempt_timeout_seconds),
             buffer_cap_bytes=config.log_buffer_cap_bytes,
             resolved_test_executable=resolved_test_executable,
+            commit_requested=commit_requested,
+            rollback_on_failure=rollback_on_failure,
         )
     except HybridSDLCError as e:
         if json_mode:
@@ -352,6 +368,16 @@ def run_task_cmd(
         else:
             if result.failure:
                 click.echo(f"  Failure [{result.failure.code}]: {result.failure.message}")
+        if result.worktree_path:
+            click.echo(f"  Isolated worktree: {result.worktree_path}")
+        if result.review_patch:
+            click.echo(f"  Review patch: {result.review_patch}")
+        if result.commit_hash:
+            click.echo(f"  Commit: {result.commit_hash}")
+        if result.worktree_rolled_back:
+            click.echo("  Failed isolated worktree was rolled back after patch export.")
+        elif result.worktree_path:
+            click.echo("  Isolated worktree retained for inspection.")
 
     if result.status == RunStatus.SUCCESS:
         sys.exit(ExitCode.SUCCESS)

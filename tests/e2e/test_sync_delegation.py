@@ -99,7 +99,7 @@ def test_successful_delegation_no_git_commit(tmp_path: Path) -> None:
         timeout_seconds=10,
     )
 
-    run_bounded_loop(
+    result = run_bounded_loop(
         repo_root=repo,
         spec_path=spec,
         task_id="TASK-E2E-NO-COMMIT",
@@ -111,7 +111,10 @@ def test_successful_delegation_no_git_commit(tmp_path: Path) -> None:
     )
 
     status = _get_git_status(repo)
-    assert "solution.py" in status, "solution.py should appear as untracked"
+    assert status == "", "default execution must preserve the source checkout"
+    assert result.worktree_path is not None
+    assert (Path(result.worktree_path) / "solution.py").is_file()
+    assert result.commit_hash is None
 
 
 def test_successful_delegation_diff_contains_expected_files(tmp_path: Path) -> None:

@@ -524,44 +524,78 @@ A task is complete when:
 
 ## Phase 5 — Isolated Worktrees and Opt-In Commits
 
-- [ ] **HSDLC-051 — Implement isolated worktree creation**  
+- [x] **HSDLC-051 — Implement isolated worktree creation**
   Files: `src/hybrid_sdlc/worktrees.py`, `tests/integration/test_worktrees.py`  
   Depends on: HSDLC-011, HSDLC-027  
   Acceptance:
   - Each delegated run uses a uniquely named worktree rooted at a recorded baseline commit.
   - The user's checkout remains byte-for-byte unchanged during execution.
   - Partial creation failures clean up only paths created by that attempt.
+  - Evidence: tests/integration/test_worktrees.py verifies baseline isolation, unchanged
+    source checkout files/status, unique worktrees, and safe cleanup after registered and
+    unregistered partial creation failures.
 
-- [ ] **HSDLC-052 — Implement safe isolated rollback**  
+- [x] **HSDLC-052 — Implement safe isolated rollback**
   Files: `src/hybrid_sdlc/worktrees.py`, `tests/integration/test_worktrees.py`  
   Depends on: HSDLC-051  
   Acceptance:
   - Rollback restores the isolated worktree to its recorded baseline.
   - No command targets the user's checkout or an unresolved path.
   - Tests include spaces, Unicode, symlinks, and interrupted cleanup.
+  Evidence and limits:
+  - Rollback validates the caller record against its persisted identity, expected
+    per-repository temporary storage, and Git's linked-worktree registration before
+    mutation; it restores detached HEAD, index, and tracked files to the recorded baseline.
+  - Git restore and untracked cleanup target only the verified checkout. NUL-delimited
+    Git paths preserve spaces and Unicode; symlink leaves are removed without following
+    them, and empty directories are removed only when empty.
+  - Checkout and attempt-directory identity, canonical path, and linked registration are
+    rechecked before each Git mutation and untracked filesystem deletion/descent. This
+    catches path replacement between workflow steps; it cannot prevent a malicious
+    same-user process racing in the interval between a check and an operating-system call.
+  - Repositories with submodule gitlinks are unsupported: creation rejects a baseline
+    containing gitlinks, and rollback rejects gitlinks in its baseline or current index
+    before mutation.
+  - Tests cover forged and stale records, source-checkout preservation, spaces, Unicode,
+    symlink escape, checkout path replacement, submodule rejection, HEAD drift, and retry
+    after interrupted cleanup.
 
-- [ ] **HSDLC-053 — Implement scoped commit creation**  
+- [x] **HSDLC-053 — Implement scoped commit creation**
   Files: `src/hybrid_sdlc/git_tools.py`, `tests/integration/test_commits.py`  
   Depends on: HSDLC-051  
   Acceptance:
-  - Commits are created only with explicit `--commit`.
+  - The commit backend is inert without explicit opt-in; the CLI `--commit` flag is wired when the isolated runner lands in HSDLC-055.
   - Commit includes only changes produced inside the isolated worktree and references the task ID.
   - Failed tests and policy failures cannot produce a commit.
 
-- [ ] **HSDLC-054 — Define result integration back into the user branch**  
+- [x] **HSDLC-054 — Define result integration back into the user branch**
   Files: `src/hybrid_sdlc/worktrees.py`, `docs/worktrees.md`, `tests/integration/test_worktrees.py`  
   Depends on: HSDLC-053  
   Acceptance:
-  - Default result is a commit hash and patch for review; no automatic merge occurs.
+  - Default result identifies the baseline commit and includes an exact, applyable patch; a commit hash is included only after explicit scoped commit opt-in.
+  - Patch export includes tracked and untracked changes, preserves binary content, and does not mutate the isolated index or source checkout.
+  - Patch artifacts are stored outside the checkout with documented sensitive-content handling.
+  - No automatic merge, cherry-pick, or source-branch mutation occurs.
   - Documentation gives explicit cherry-pick/apply steps and conflict behavior.
+  - Evidence: `pytest -q tests/integration/test_worktrees.py` reports 22 passed and two
+    Windows symlink-privilege skips. Tests apply the binary-capable patch in a separate
+    checkout, cover Unicode and spaced paths, preserve a dirty source checkout and the
+    isolated index, reject patch conflicts without changing the target, and preserve the
+    previous patch when Git metadata lookup or atomic replacement fails. A deterministic
+    parent-path swap test confirms Git reads the private snapshot instead of reopening an
+    untracked checkout path. Ruff, package mypy, and `git diff --check` pass.
 
-- [ ] **HSDLC-055 — Move the runner to isolated execution by default**  
-  Files: `src/hybrid_sdlc/aider_runner.py`, `src/hybrid_sdlc/cli.py`, `tests/e2e/`  
+- [x] **HSDLC-055 — Move the runner to isolated execution by default**
+  Files: `src/hybrid_sdlc/aider_runner.py`, `src/hybrid_sdlc/cli.py`, `src/hybrid_sdlc/models.py`, `src/hybrid_sdlc/submission.py`, `src/hybrid_sdlc/worker.py`, `src/hybrid_sdlc/git_tools.py`, `src/hybrid_sdlc/artifacts.py`, `docs/worktrees.md`, `tests/`
   Depends on: HSDLC-052, HSDLC-054  
   Acceptance:
-  - Existing Phase 2 and Phase 3 tests pass using isolated worktrees.
-  - Failure rollback is available only for the isolated worktree.
-  - User-checkout preservation is asserted in every end-to-end terminal condition.
+  - The runner uses a detached checkout at source `HEAD`; the source spec must be committed and unchanged, while unrelated dirty source changes are preserved.
+  - Aider and test commands run with the isolated checkout as their working directory; repo-local test executables are resolved in that checkout and fail closed with setup guidance when missing, while external executables retain their approved paths.
+  - Results identify the source repository, isolated worktree, baseline, exact review patch, and optional scoped commit. Run metadata and locks never enter the patch or commit.
+  - `run-task --commit` is explicit and invokes the HSDLC-053 backend only after the final tests pass; async and MCP execution never commits implicitly.
+  - Failed worktrees and their review patches are retained by default; optional rollback restores only the isolated worktree after patch export.
+  - Existing Phase 2 and Phase 3 tests pass using isolated worktrees, with source preservation asserted for success, failure, cancellation, timeout, dirty checkout, and rollback scenarios.
+  - Evidence: Windows full suite reports 344 passed, 10 skipped (Job Object and symlink privilege limits); Ruff, formatting, mypy, and diff checks pass.
 
 ---
 

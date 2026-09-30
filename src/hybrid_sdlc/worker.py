@@ -13,7 +13,6 @@ from hybrid_sdlc.aider_runner import run_bounded_loop
 from hybrid_sdlc.command_profiles import resolve_profile_executable
 from hybrid_sdlc.config import load_config
 from hybrid_sdlc.errors import HybridSDLCError
-from hybrid_sdlc.git_tools import check_worktree_clean
 from hybrid_sdlc.job_manager import JobManager, JobRecord, JobStatus
 from hybrid_sdlc.models import RunResult, RunStatus
 from hybrid_sdlc.processes import get_process_identity
@@ -53,7 +52,6 @@ def _execute(
     if job.test_profile is None:
         raise ValueError("Job does not contain a test_profile")
 
-    check_worktree_clean(manager.repo_root)
     config = load_config(repo_root=manager.repo_root)
     profile = config.command_profiles.get(job.test_profile)
     if profile is None:

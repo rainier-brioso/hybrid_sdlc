@@ -361,8 +361,10 @@ class TestFakeAiderScenarios:
         assert result.failure.code == "TASK_TIMEOUT"
 
         # The grandchild PID file should exist.
-        gc_pid_file = repo / "grandchild.pid"
+        assert result.worktree_path is not None
+        gc_pid_file = Path(result.worktree_path) / "grandchild.pid"
         assert gc_pid_file.exists(), "spawn-child should have written grandchild.pid"
+        assert not (repo / "grandchild.pid").exists()
         gc_pid = int(gc_pid_file.read_text().strip())
         # After cancellation, grandchild should be dead.
         if process_is_alive(gc_pid):

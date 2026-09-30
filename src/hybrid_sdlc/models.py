@@ -86,6 +86,11 @@ class RunResult(BaseSchemaModel):
     task_id: str
     spec_path: str
     repo_root: str
+    source_repo_root: str | None = None
+    worktree_path: str | None = None
+    review_patch: str | None = None
+    commit_hash: str | None = None
+    worktree_rolled_back: bool = False
     status: RunStatus
     started_at: str
     finished_at: str

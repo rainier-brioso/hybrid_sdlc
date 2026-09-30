@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import os
 import signal
+import subprocess
 import sys
 import threading
 import time
@@ -25,6 +26,39 @@ from hybrid_sdlc.processes import process_is_alive
 def _record_pid_file(path: Path, pid: int) -> None:
     """Write a PID to a file."""
     path.write_text(str(pid), encoding="utf-8")
+
+
+def _source_snapshot(repo: Path) -> tuple[str, str, bytes, tuple[tuple[str, bytes], ...]]:
+    """Capture source HEAD, index/worktree state, and untracked file bytes."""
+    head = subprocess.run(
+        ["git", "-C", str(repo), "rev-parse", "HEAD"],
+        capture_output=True,
+        text=True,
+        check=True,
+    ).stdout.strip()
+    status = subprocess.run(
+        ["git", "-C", str(repo), "status", "--porcelain=v1", "-z"],
+        capture_output=True,
+        check=True,
+    ).stdout
+    diff = subprocess.run(
+        ["git", "-C", str(repo), "diff", "--binary", "HEAD"],
+        capture_output=True,
+        check=True,
+    ).stdout
+    untracked_listing = subprocess.run(
+        ["git", "-C", str(repo), "ls-files", "--others", "--exclude-standard", "-z"],
+        capture_output=True,
+        check=True,
+    ).stdout
+    untracked = tuple(
+        sorted(
+            (os.fsdecode(raw), (repo / os.fsdecode(raw)).read_bytes())
+            for raw in untracked_listing.split(b"\0")
+            if raw
+        )
+    )
+    return head, os.fsdecode(status), diff, untracked
 
 
 def test_cancellation_during_aider_terminates_process(tmp_path: Path) -> None:
@@ -52,6 +86,7 @@ def test_cancellation_during_aider_terminates_process(tmp_path: Path) -> None:
         cwd=".",
         timeout_seconds=10,
     )
+    source_before = _source_snapshot(repo)
 
     cancel = threading.Event()
 
@@ -78,11 +113,13 @@ def test_cancellation_during_aider_terminates_process(tmp_path: Path) -> None:
     assert result.status == RunStatus.CANCELLED
     assert result.failure is not None
     assert result.failure.code == "CANCELLED"
+    assert _source_snapshot(repo) == source_before
 
     # Wait for cleanup to propagate.
     time.sleep(0.5)
 
-    aider_pid_file = repo / "aider.pid"
+    assert result.worktree_path is not None
+    aider_pid_file = Path(result.worktree_path) / "aider.pid"
     if aider_pid_file.exists():
         aider_pid = int(aider_pid_file.read_text().strip())
         # The aider process should have been alive (started) and is now dead.
@@ -126,6 +163,7 @@ def test_cancellation_during_tests_terminates_process(tmp_path: Path) -> None:
         cwd=".",
         timeout_seconds=30,
     )
+    source_before = _source_snapshot(repo)
 
     cancel = threading.Event()
 
@@ -152,12 +190,14 @@ def test_cancellation_during_tests_terminates_process(tmp_path: Path) -> None:
     assert result.status == RunStatus.CANCELLED
     assert result.failure is not None
     assert result.failure.code == "CANCELLED"
+    assert _source_snapshot(repo) == source_before
 
     # Wait for cleanup.
     time.sleep(0.5)
 
     # Verify the test process was alive (started) and is now dead.
-    test_pid_file = repo / "test.pid"
+    assert result.worktree_path is not None
+    test_pid_file = Path(result.worktree_path) / "test.pid"
     if test_pid_file.exists():
         test_pid = int(test_pid_file.read_text().strip())
         if process_is_alive(test_pid):
