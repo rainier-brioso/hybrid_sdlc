@@ -49,6 +49,7 @@ def _create_isolated(
 def _commit(
     record: WorktreeRecord,
     *,
+    task_id: str = "HSDLC-053",
     commit_requested: bool = True,
     tests_passed: bool = True,
     policy_passed: bool = True,
@@ -57,11 +58,25 @@ def _commit(
 
     return create_scoped_commit(
         record,
-        "HSDLC-053",
+        task_id,
         "add isolated result",
         commit_requested=commit_requested,
         tests_passed=tests_passed,
         policy_passed=policy_passed,
+    )
+
+
+def test_scoped_commit_accepts_public_multihyphen_task_id(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    _repo, record = _create_isolated(tmp_path, monkeypatch)
+    (record.path / "README.md").write_text("isolated edit\n", encoding="utf-8")
+
+    commit = _commit(record, task_id="TASK-E2E-001")
+
+    assert commit is not None
+    assert _git(record.path, "show", "-s", "--format=%s", "HEAD") == (
+        "TASK-E2E-001: add isolated result"
     )
 
 

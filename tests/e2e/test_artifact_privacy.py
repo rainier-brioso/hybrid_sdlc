@@ -130,7 +130,7 @@ def test_source_text_secret_not_in_artifacts(tmp_path: Path) -> None:
         timeout_seconds=10,
     )
 
-    run_bounded_loop(
+    result = run_bounded_loop(
         repo_root=repo,
         spec_path=repo / "spec.md",
         task_id="TASK-SOURCE-SECRET",
@@ -142,9 +142,11 @@ def test_source_text_secret_not_in_artifacts(tmp_path: Path) -> None:
     )
 
     # Verify Aider ran and the secret-bearing file was created.
-    output_py = repo / "output.py"
+    assert result.worktree_path is not None
+    output_py = Path(result.worktree_path) / "output.py"
     assert output_py.exists(), "Aider should have created output.py with the secret"
     assert "supersecret123" in output_py.read_text()
+    assert not (repo / "output.py").exists(), "Aider must not edit the source checkout"
 
     # Verify run artifacts were recorded.
     record = _ensure_run_completed(repo)

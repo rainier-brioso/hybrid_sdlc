@@ -16,7 +16,7 @@ from typing import Any
 from hybrid_sdlc.command_profiles import resolve_profile_executable
 from hybrid_sdlc.config import ServerCandidateConfig, load_config
 from hybrid_sdlc.errors import AsyncJobHostUnsupportedError
-from hybrid_sdlc.git_tools import check_worktree_clean
+from hybrid_sdlc.git_tools import validate_committed_path
 from hybrid_sdlc.job_manager import (
     InvalidJobTransitionError,
     JobManager,
@@ -156,7 +156,7 @@ def preflight_task_request(
     profile_cwd = resolve_confined_path(profile.cwd, verified_root, must_exist=True)
     if not profile_cwd.is_dir():
         raise ValueError(f"Working directory for test profile '{test_profile}' is not a directory")
-    check_worktree_clean(verified_root)
+    validate_committed_path(verified_root, relative_spec)
 
     retries = max_retries if max_retries is not None else config.max_retries
     if isinstance(retries, bool) or not isinstance(retries, int) or not 1 <= retries <= 10:

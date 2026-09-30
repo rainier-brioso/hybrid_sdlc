@@ -8,9 +8,20 @@ files. Binary file contents and Unicode or space-containing paths are
 preserved. Export reads the isolated index without changing it.
 
 Result export does not modify the source checkout, move a branch, merge, or
-cherry-pick. A commit hash is returned only when the caller explicitly passes
-the hash produced by the opt-in scoped commit operation; otherwise the result
-has no commit hash. The patch remains the complete snapshot to apply. If edits
+cherry-pick. The bounded runner starts from `HEAD` in a detached worktree and
+requires the spec file to be committed and unchanged; unrelated staged,
+unstaged, and untracked source files remain in the user's checkout and are not
+copied into the run. The test profile always runs with its working directory
+inside the isolated checkout. A repository-local test executable is resolved
+again at its corresponding path there; if it is absent (for example, a
+source-local `.venv/Scripts/pytest.exe`), the run fails closed with guidance
+instead of silently testing the source checkout. Install that runtime in the
+isolated checkout, or configure a bare/external executable. An external
+executable keeps its approved absolute path and still runs with the isolated
+working directory. A commit hash is returned only when
+`run-task --commit` is explicitly requested and the final test attempt passes;
+otherwise the result has no commit hash. Async and MCP runs never commit
+implicitly. The patch remains the complete snapshot to apply. If edits
 were made after the scoped commit, those edits appear in the patch but not in
 the commit hash.
 
@@ -21,6 +32,20 @@ other sensitive content. Keep the temporary worktree storage private, inspect
 the patch before sharing it, and remove it when it is no longer needed. On
 POSIX systems the patch file is created with mode `0600`; on Windows it uses
 the inherited permissions of the user's temporary directory.
+
+Per-attempt logs and lock files are also stored beside the worktree record, so
+they cannot become part of the exported patch or scoped commit. The final run
+record is written under the source repository's `.hybrid_sdlc/runs/` only when
+Git already ignores that location. Otherwise it stays in the private attempt
+directory to preserve the source checkout's Git status. Failed worktrees are
+retained for inspection by default. To restore only the isolated checkout to
+its baseline after exporting the patch, pass `--rollback-on-failure` to
+`run-task`.
+
+The patch and opt-in commit include non-ignored files left by the test command
+as well as model edits. Configure the target repository's ignore rules for
+generated outputs (such as `__pycache__/` or build directories), and review the
+patch before applying or cherry-picking it.
 
 Before producing a diff for an untracked file, the exporter copies its bytes
 from an opened, identity-checked file handle into a private temporary snapshot;

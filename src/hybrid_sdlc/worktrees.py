@@ -489,7 +489,7 @@ def export_worktree_result(
                         "Scoped commit is not a direct child of the recorded baseline"
                     )
                 subject = git_bytes("show", "-s", "--format=%s", head).stdout.decode().strip()
-                if re.match(r"^[A-Za-z][A-Za-z0-9]*-\d+[A-Za-z]?: .+$", subject) is None:
+                if re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9._:-]{0,127}: .+", subject) is None:
                     raise RepositoryError("Commit does not have a scoped task ID subject")
                 commit_hash = head
 

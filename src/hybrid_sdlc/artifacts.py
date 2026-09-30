@@ -90,17 +90,37 @@ def atomic_save_json(
     Uses a same-directory temporary file and atomic replacement (os.replace).
     """
     repo_root = repo_root.resolve()
-    target_path = target_path.resolve()
 
-    # Confine to .hybrid_sdlc within repo_root
+    # Keep the boundary lexical as well as resolved. Resolving the root first
+    # would make a .hybrid_sdlc symlink/junction to an external directory look
+    # like a valid artifact root and allow writes outside the repository.
     artifacts_root = repo_root / ".hybrid_sdlc"
+    resolved_artifacts_root = artifacts_root.resolve()
+    if resolved_artifacts_root != artifacts_root:
+        raise PathTraversalError(
+            "Artifact directory must not be a symlink or junction",
+            details={
+                "artifacts_root": str(artifacts_root),
+                "resolved_artifacts_root": str(resolved_artifacts_root),
+            },
+        )
+
+    target_path = target_path.absolute()
+    resolved_target = target_path.resolve()
     try:
         target_path.relative_to(artifacts_root)
+        resolved_target.relative_to(artifacts_root)
     except ValueError:
         raise PathTraversalError(
-            f"Artifact path '{target_path}' is outside artifacts directory '{artifacts_root}'",
-            details={"target_path": str(target_path), "artifacts_root": str(artifacts_root)},
+            f"Artifact path '{target_path}' escapes artifacts directory '{artifacts_root}'",
+            details={
+                "target_path": str(target_path),
+                "resolved_target": str(resolved_target),
+                "artifacts_root": str(artifacts_root),
+            },
         ) from None
+
+    target_path = resolved_target
 
     target_path.parent.mkdir(parents=True, exist_ok=True)
 

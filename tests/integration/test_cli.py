@@ -6,6 +6,7 @@ import json
 import os
 import subprocess
 import time
+from datetime import UTC, datetime
 from pathlib import Path
 
 import httpx
@@ -14,8 +15,10 @@ from click.testing import CliRunner
 
 from hybrid_sdlc import spec_initializer
 from hybrid_sdlc.cli import cli
+from hybrid_sdlc.config import ServerCandidateConfig
 from hybrid_sdlc.errors import ExitCode
 from hybrid_sdlc.job_manager import JobManager, JobRecord, JobStatus
+from hybrid_sdlc.models import RunResult, RunStatus
 from hybrid_sdlc.processes import get_process_identity
 from hybrid_sdlc.spec_initializer import SpecKitCapability, SpecKitFeature
 from hybrid_sdlc.submission import JobSubmissionError
@@ -57,6 +60,11 @@ def test_cli_help() -> None:
     assert "cancel" in result.output
     assert "clean" in result.output
     assert "init" in result.output
+
+    run_help = runner.invoke(cli, ["run-task", "--help"])
+    assert run_help.exit_code == 0
+    assert "--commit" in run_help.output
+    assert "--rollback-on-failure" in run_help.output
 
 
 def _mock_spec_kit(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -224,7 +232,7 @@ def test_cli_clean(tmp_path: Path) -> None:
     assert not old_run.exists()
 
 
-def test_cli_run_task_dirty_worktree_rejected(tmp_path: Path) -> None:
+def test_cli_run_task_rejects_uncommitted_spec(tmp_path: Path) -> None:
     _init_git_repo(tmp_path)
     # Commit config with test profile
     config_file = tmp_path / "hybrid_sdlc.toml"
@@ -239,7 +247,7 @@ def test_cli_run_task_dirty_worktree_rejected(tmp_path: Path) -> None:
 
     spec = tmp_path / "spec.md"
     spec.write_text("# Spec", encoding="utf-8")
-    # Leave spec untracked -> dirty worktree!
+    # The task spec itself must be committed, even though other dirty source files are allowed.
 
     runner = CliRunner()
     result = runner.invoke(
@@ -256,15 +264,15 @@ def test_cli_run_task_dirty_worktree_rejected(tmp_path: Path) -> None:
             "--json",
         ],
     )
-    assert result.exit_code == ExitCode.WORKTREE_DIRTY_OR_LOCKED
+    assert result.exit_code == ExitCode.POLICY_ERROR
     data = json.loads(result.output)
-    assert data["code"] == "WORKTREE_DIRTY"
+    assert data["code"] == "REPOSITORY_ERROR"
 
 
 def test_cli_run_task_json_stdout_only(tmp_path: Path) -> None:
     """run-task --json must emit ONLY valid JSON on stdout — no decorative text (HSDLC-029).
 
-    We deliberately trigger a dirty-worktree rejection so we don't need a model,
+    We deliberately trigger an uncommitted-spec rejection so we don't need a model,
     then assert the raw output is a single parseable JSON object and nothing else.
     """
     _init_git_repo(tmp_path)
@@ -281,7 +289,7 @@ def test_cli_run_task_json_stdout_only(tmp_path: Path) -> None:
 
     spec = tmp_path / "spec.md"
     spec.write_text("# Spec", encoding="utf-8")
-    # Leave spec untracked → dirty worktree triggers early rejection
+    # Leave spec untracked → committed-spec validation triggers early rejection.
 
     runner = CliRunner()
     result = runner.invoke(
@@ -305,6 +313,71 @@ def test_cli_run_task_json_stdout_only(tmp_path: Path) -> None:
     assert isinstance(parsed, dict)
     # Ensure no decorative lines snuck in before/after the JSON object
     assert stdout.startswith("{") and stdout.endswith("}")
+
+
+def test_cli_run_task_forwards_explicit_commit_and_reports_isolated_result(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    _init_git_repo(tmp_path)
+    config_file = tmp_path / "hybrid_sdlc.toml"
+    config_file.write_text("[command_profiles.pytest]\nargv = ['pytest']\n", encoding="utf-8")
+    spec = tmp_path / "spec.md"
+    spec.write_text("# Spec", encoding="utf-8")
+    subprocess.run(["git", "add", "hybrid_sdlc.toml", "spec.md"], cwd=tmp_path, check=True)
+    subprocess.run(["git", "commit", "-m", "add task inputs"], cwd=tmp_path, check=True)
+    (tmp_path / "untracked.txt").write_text("preserve", encoding="utf-8")
+    captured: dict[str, object] = {}
+
+    def fake_run(**kwargs: object) -> RunResult:
+        captured.update(kwargs)
+        return RunResult(
+            run_id="run_cli_commit",
+            task_id="T-1",
+            spec_path="spec.md",
+            repo_root=str(tmp_path),
+            source_repo_root=str(tmp_path),
+            worktree_path=str(tmp_path / "isolated"),
+            review_patch=str(tmp_path / "isolated.patch"),
+            commit_hash="a" * 40,
+            status=RunStatus.SUCCESS,
+            started_at=datetime.now(UTC).isoformat(),
+            finished_at=datetime.now(UTC).isoformat(),
+            total_duration_seconds=0.1,
+        )
+
+    monkeypatch.setattr(
+        "hybrid_sdlc.cli.resolve_profile_executable", lambda profile, root: Path("pytest")
+    )
+    monkeypatch.setattr(
+        "hybrid_sdlc.cli.select_active_endpoint",
+        lambda **kwargs: (ServerCandidateConfig(url="http://127.0.0.1:8090/v1"), None),
+    )
+    monkeypatch.setattr("hybrid_sdlc.cli.run_bounded_loop", fake_run)
+
+    response = CliRunner().invoke(
+        cli,
+        [
+            "run-task",
+            str(spec),
+            "--repo-root",
+            str(tmp_path),
+            "--task-id",
+            "T-1",
+            "--test-profile",
+            "pytest",
+            "--commit",
+            "--json",
+        ],
+    )
+
+    assert response.exit_code == 0, response.output
+    payload = json.loads(response.output)
+    assert captured["commit_requested"] is True
+    assert captured["rollback_on_failure"] is False
+    assert payload["commit_hash"] == "a" * 40
+    assert payload["worktree_path"] == str(tmp_path / "isolated")
+    assert payload["review_patch"] == str(tmp_path / "isolated.patch")
+    assert (tmp_path / "untracked.txt").read_text(encoding="utf-8") == "preserve"
 
 
 def test_cli_submit_human_and_json(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:

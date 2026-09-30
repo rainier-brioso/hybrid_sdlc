@@ -585,14 +585,17 @@ A task is complete when:
     parent-path swap test confirms Git reads the private snapshot instead of reopening an
     untracked checkout path. Ruff, package mypy, and `git diff --check` pass.
 
-- [ ] **HSDLC-055 — Move the runner to isolated execution by default**  
-  Files: `src/hybrid_sdlc/aider_runner.py`, `src/hybrid_sdlc/cli.py`, `tests/e2e/`  
+- [x] **HSDLC-055 — Move the runner to isolated execution by default**
+  Files: `src/hybrid_sdlc/aider_runner.py`, `src/hybrid_sdlc/cli.py`, `src/hybrid_sdlc/models.py`, `src/hybrid_sdlc/submission.py`, `src/hybrid_sdlc/worker.py`, `src/hybrid_sdlc/git_tools.py`, `src/hybrid_sdlc/artifacts.py`, `docs/worktrees.md`, `tests/`
   Depends on: HSDLC-052, HSDLC-054  
   Acceptance:
-  - `--commit` is exposed only after isolated execution and invokes the HSDLC-053 backend after successful tests and policy checks.
-  - Existing Phase 2 and Phase 3 tests pass using isolated worktrees.
-  - Failure rollback is available only for the isolated worktree.
-  - User-checkout preservation is asserted in every end-to-end terminal condition.
+  - The runner uses a detached checkout at source `HEAD`; the source spec must be committed and unchanged, while unrelated dirty source changes are preserved.
+  - Aider and test commands run with the isolated checkout as their working directory; repo-local test executables are resolved in that checkout and fail closed with setup guidance when missing, while external executables retain their approved paths.
+  - Results identify the source repository, isolated worktree, baseline, exact review patch, and optional scoped commit. Run metadata and locks never enter the patch or commit.
+  - `run-task --commit` is explicit and invokes the HSDLC-053 backend only after the final tests pass; async and MCP execution never commits implicitly.
+  - Failed worktrees and their review patches are retained by default; optional rollback restores only the isolated worktree after patch export.
+  - Existing Phase 2 and Phase 3 tests pass using isolated worktrees, with source preservation asserted for success, failure, cancellation, timeout, dirty checkout, and rollback scenarios.
+  - Evidence: Windows full suite reports 344 passed, 10 skipped (Job Object and symlink privilege limits); Ruff, formatting, mypy, and diff checks pass.
 
 ---
 

@@ -5,12 +5,52 @@ from __future__ import annotations
 import sys
 from pathlib import Path
 
+import pytest
+
 from hybrid_sdlc.aider_runner import (
+    _isolated_test_executable,
     build_aider_argv,
     extract_failure_signature,
     run_test_profile,
 )
 from hybrid_sdlc.command_profiles import CommandProfile
+from hybrid_sdlc.errors import CommandPolicyError
+
+
+def test_repo_root_executable_is_resolved_inside_isolated_checkout(tmp_path: Path) -> None:
+    source = tmp_path / "source"
+    checkout = tmp_path / "checkout"
+    source.mkdir()
+    checkout.mkdir()
+    source_executable = source / "runner.exe"
+    isolated_executable = checkout / "runner.exe"
+    source_executable.write_bytes(b"source executable")
+    isolated_executable.write_bytes(b"isolated executable")
+    source_executable.chmod(0o755)
+    isolated_executable.chmod(0o755)
+    profile = CommandProfile(name="repo-runner", argv=["runner.exe"])
+
+    resolved = _isolated_test_executable(profile, source, checkout, source_executable)
+
+    assert resolved == isolated_executable.resolve()
+
+
+def test_repo_local_executable_missing_from_isolated_checkout_fails_closed(
+    tmp_path: Path,
+) -> None:
+    source = tmp_path / "source"
+    checkout = tmp_path / "checkout"
+    source.mkdir()
+    checkout.mkdir()
+    source_executable = source / ".venv" / "Scripts" / "pytest.exe"
+    source_executable.parent.mkdir(parents=True)
+    source_executable.write_bytes(b"source-only test runtime")
+    profile = CommandProfile(name="pytest", argv=[".venv/Scripts/pytest.exe", "-q"])
+
+    with pytest.raises(CommandPolicyError, match="Install the test runtime") as exc_info:
+        _isolated_test_executable(profile, source, checkout, source_executable)
+
+    assert exc_info.value.code == "COMMAND_POLICY_ISOLATED_EXECUTABLE_MISSING"
 
 
 def test_build_aider_argv(tmp_path: Path) -> None:

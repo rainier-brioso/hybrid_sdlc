@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import hashlib
 import re
+import subprocess
 import threading
 import time
 import uuid
@@ -16,7 +17,9 @@ from hybrid_sdlc.command_profiles import CommandProfile, resolve_profile_executa
 from hybrid_sdlc.errors import (
     BaselineTestFailureError,
     CancellationError,
+    CommandPolicyError,
     HybridSDLCError,
+    RepositoryError,
     RetryExhaustedError,
     StuckLoopError,
     TaskExecutionError,
@@ -26,7 +29,9 @@ from hybrid_sdlc.git_tools import (
     acquire_repo_lock,
     capture_diff_summary,
     check_worktree_clean,
+    create_scoped_commit,
     get_baseline_commit,
+    validate_committed_path,
 )
 from hybrid_sdlc.models import (
     AttemptRecord,
@@ -37,6 +42,12 @@ from hybrid_sdlc.models import (
 )
 from hybrid_sdlc.processes import SubprocessResult, run_bounded_subprocess
 from hybrid_sdlc.security import build_sanitized_environment, resolve_confined_path
+from hybrid_sdlc.worktrees import (
+    WorktreeRecord,
+    create_worktree,
+    export_worktree_result,
+    rollback_worktree,
+)
 
 # Regexes for normalizing failure signatures
 RE_HEX_ADDR = re.compile(r"0x[0-9a-fA-F]+")
@@ -161,7 +172,7 @@ def run_test_profile(
     )
 
 
-def run_bounded_loop(
+def _run_bounded_loop_in_checkout(
     repo_root: Path,
     spec_path: Path | str,
     task_id: str,
@@ -177,6 +188,7 @@ def run_bounded_loop(
     resolved_test_executable: Path | None = None,
     cancel_event: threading.Event | None = None,
     process_observer: Callable[[int, datetime | None], None] | None = None,
+    artifact_root: Path | None = None,
 ) -> RunResult:
     """Execute the bounded editing and testing state machine."""
     repo_root = repo_root.resolve()
@@ -190,7 +202,11 @@ def run_bounded_loop(
     check_worktree_clean(repo_root)
 
     # 2. Acquire advisory execution lock
-    with acquire_repo_lock(repo_root, run_id=run_id):
+    with acquire_repo_lock(
+        repo_root,
+        run_id=run_id,
+        lock_directory=(artifact_root / "locks") if artifact_root is not None else None,
+    ):
         resolved_test_executable = resolved_test_executable or resolve_profile_executable(
             profile, repo_root
         )
@@ -250,8 +266,13 @@ def run_bounded_loop(
                 final_diff=None,
                 failure=failure_record,
             )
-            out_path = repo_root / ".hybrid_sdlc" / "runs" / f"{run_id}.json"
-            atomic_save_json(out_path, result, repo_root=repo_root)
+            artifact_dir = artifact_root or (repo_root / ".hybrid_sdlc")
+            out_path = artifact_dir / "runs" / f"{run_id}.json"
+            atomic_save_json(
+                out_path,
+                result,
+                repo_root=artifact_root.parent if artifact_root is not None else repo_root,
+            )
             return result
 
         # 4. Attempt loop
@@ -308,7 +329,8 @@ def run_bounded_loop(
                 break
 
             # Capture diff
-            patch_path = repo_root / ".hybrid_sdlc" / "runs" / f"{run_id}_att{attempt_idx}.patch"
+            artifact_dir = artifact_root or (repo_root / ".hybrid_sdlc")
+            patch_path = artifact_dir / "runs" / f"{run_id}_att{attempt_idx}.patch"
             diff_summary = capture_diff_summary(
                 repo_root=repo_root,
                 baseline_commit=baseline_commit,
@@ -421,6 +443,180 @@ def run_bounded_loop(
                 "run_record": f".hybrid_sdlc/runs/{run_id}.json",
             },
         )
-        out_path = repo_root / ".hybrid_sdlc" / "runs" / f"{run_id}.json"
-        atomic_save_json(out_path, result, repo_root=repo_root)
+        artifact_dir = artifact_root or (repo_root / ".hybrid_sdlc")
+        out_path = artifact_dir / "runs" / f"{run_id}.json"
+        atomic_save_json(
+            out_path,
+            result,
+            repo_root=artifact_root.parent if artifact_root is not None else repo_root,
+        )
         return result
+
+
+def _isolated_test_executable(
+    profile: CommandProfile,
+    source_root: Path,
+    checkout: Path,
+    resolved_executable: Path | None,
+) -> Path:
+    """Re-resolve repository-local executables in the isolated checkout."""
+    source_executable = resolved_executable or resolve_profile_executable(profile, source_root)
+    try:
+        relative = source_executable.resolve().relative_to(source_root.resolve())
+    except ValueError:
+        return source_executable
+    checkout_executable = checkout / relative
+    if not checkout_executable.is_file():
+        raise CommandPolicyError(
+            "Repository-local test executable is missing from the isolated worktree: "
+            f"'{relative.as_posix()}'. Install the test runtime in the isolated checkout, "
+            "or configure a bare/external executable that can run with the isolated checkout as cwd.",
+            code="COMMAND_POLICY_ISOLATED_EXECUTABLE_MISSING",
+            details={
+                "source_executable": str(source_executable),
+                "isolated_executable": str(checkout_executable),
+            },
+        )
+    return resolve_profile_executable(
+        profile.model_copy(update={"argv": [f"./{relative.as_posix()}", *profile.argv[1:]]}),
+        checkout,
+    )
+
+
+def run_bounded_loop(
+    repo_root: Path,
+    spec_path: Path | str,
+    task_id: str,
+    profile: CommandProfile,
+    endpoint_url: str,
+    model_name: str,
+    max_retries: int = 3,
+    task_timeout_seconds: float = 600.0,
+    attempt_timeout_seconds: float = 180.0,
+    buffer_cap_bytes: int = 500 * 1024,
+    aider_cmd: list[str] | str = "aider",
+    task_instruction: str = "",
+    resolved_test_executable: Path | None = None,
+    cancel_event: threading.Event | None = None,
+    process_observer: Callable[[int, datetime | None], None] | None = None,
+    commit_requested: bool = False,
+    rollback_on_failure: bool = False,
+) -> RunResult:
+    """Run the bounded workflow in a detached worktree based on source HEAD."""
+    source_root = repo_root.resolve()
+    source_spec = resolve_confined_path(spec_path, repo_root=source_root, must_exist=True)
+    if not source_spec.is_file():
+        raise RepositoryError("spec_path must identify an existing regular file")
+    relative_spec = source_spec.relative_to(source_root).as_posix()
+    validate_committed_path(source_root, relative_spec)
+
+    record: WorktreeRecord = create_worktree(source_root)
+    try:
+        validate_committed_path(record.path, relative_spec)
+        isolated_executable = _isolated_test_executable(
+            profile, source_root, record.path, resolved_test_executable
+        )
+        result = _run_bounded_loop_in_checkout(
+            repo_root=record.path,
+            spec_path=record.path / Path(relative_spec),
+            task_id=task_id,
+            profile=profile,
+            endpoint_url=endpoint_url,
+            model_name=model_name,
+            max_retries=max_retries,
+            task_timeout_seconds=task_timeout_seconds,
+            attempt_timeout_seconds=attempt_timeout_seconds,
+            buffer_cap_bytes=buffer_cap_bytes,
+            aider_cmd=aider_cmd,
+            task_instruction=task_instruction,
+            resolved_test_executable=isolated_executable,
+            cancel_event=cancel_event,
+            process_observer=process_observer,
+            artifact_root=record.record_path.parent / ".hybrid_sdlc",
+        )
+
+        commit_hash = None
+        if commit_requested and result.status == RunStatus.SUCCESS:
+            commit_hash = create_scoped_commit(
+                record,
+                task_id,
+                f"Implement {task_id}",
+                commit_requested=True,
+                tests_passed=bool(result.attempts and result.attempts[-1].test_passed),
+                policy_passed=True,
+            )
+        exported = export_worktree_result(record, scoped_commit_hash=commit_hash)
+        if rollback_on_failure and result.status != RunStatus.SUCCESS:
+            rollback_worktree(record)
+    except HybridSDLCError as exc:
+        raise RepositoryError(
+            f"{exc.message}. Isolated worktree retained at '{record.path}'; "
+            f"recovery record: '{record.record_path}'",
+            code=exc.code,
+            details={
+                **exc.details,
+                "worktree_path": str(record.path),
+                "worktree_record": str(record.record_path),
+            },
+            exit_code=exc.exit_code,
+        ) from exc
+    except Exception as exc:
+        raise RepositoryError(
+            f"Isolated run failed with {type(exc).__name__}; worktree retained at '{record.path}' "
+            f"with recovery record '{record.record_path}'",
+            details={
+                "worktree_path": str(record.path),
+                "worktree_record": str(record.record_path),
+            },
+        ) from exc
+    final_diff = result.final_diff
+    if final_diff is not None:
+        final_diff = final_diff.model_copy(
+            update={
+                "patch_file": str(exported.patch_path),
+                "changed_files": list(exported.changed_paths),
+                "is_empty": not exported.changed_paths,
+            }
+        )
+
+    result = result.model_copy(
+        update={
+            "repo_root": str(source_root),
+            "source_repo_root": str(source_root),
+            "worktree_path": str(record.path),
+            "baseline_commit": record.baseline_commit,
+            "spec_path": relative_spec,
+            "final_diff": final_diff,
+            "review_patch": str(exported.patch_path),
+            "commit_hash": commit_hash,
+            "worktree_rolled_back": rollback_on_failure and result.status != RunStatus.SUCCESS,
+            "artifacts": {
+                **result.artifacts,
+                "review_patch": str(exported.patch_path),
+                "worktree_record": str(record.record_path),
+            },
+        }
+    )
+    source_record_dir = source_root / ".hybrid_sdlc" / "runs"
+    ignored = subprocess.run(
+        ["git", "-C", str(source_root), "check-ignore", "--quiet", ".hybrid_sdlc/runs"],
+        capture_output=True,
+        check=False,
+    )
+    if ignored.returncode == 0:
+        out_path = source_record_dir / f"{result.run_id}.json"
+        result_repo_root = source_root
+        run_record_ref = out_path.relative_to(source_root).as_posix()
+    else:
+        out_path = record.record_path.parent / ".hybrid_sdlc" / "runs" / f"{result.run_id}.json"
+        result_repo_root = record.record_path.parent
+        run_record_ref = str(out_path)
+    result = result.model_copy(
+        update={"artifacts": {**result.artifacts, "run_record": run_record_ref}}
+    )
+    atomic_save_json(
+        out_path,
+        result,
+        repo_root=result_repo_root,
+    )
+    return result

@@ -70,6 +70,25 @@ def test_atomic_save_json_rejects_outside_artifacts(tmp_path: Path) -> None:
         atomic_save_json(outside, {"foo": "bar"}, repo_root=repo_root)
 
 
+def test_atomic_save_json_rejects_artifacts_symlink_escape(tmp_path: Path) -> None:
+    repo_root = tmp_path / "repo"
+    outside = tmp_path / "outside"
+    repo_root.mkdir()
+    outside.mkdir()
+    try:
+        (repo_root / ".hybrid_sdlc").symlink_to(outside, target_is_directory=True)
+    except OSError as exc:
+        pytest.skip(f"Directory symlinks are unavailable: {exc}")
+
+    with pytest.raises(PathTraversalError, match="symlink or junction"):
+        atomic_save_json(
+            repo_root / ".hybrid_sdlc" / "runs" / "escape.json",
+            {"foo": "bar"},
+            repo_root=repo_root,
+        )
+    assert not (outside / "runs" / "escape.json").exists()
+
+
 def test_clean_artifacts_retention(tmp_path: Path) -> None:
     repo_root = tmp_path
     artifacts_dir = repo_root / ".hybrid_sdlc" / "runs"

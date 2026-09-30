@@ -204,15 +204,28 @@ def test_worker_persists_launch_failure(tmp_path: Path, monkeypatch: pytest.Monk
     assert failed.finished_at is not None
 
 
-def test_worker_dirty_worktree_is_persisted_as_terminal_failure(tmp_path: Path) -> None:
+def test_worker_accepts_dirty_source_checkout(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
     _init_repo(tmp_path)
-    job = JobManager(tmp_path).create("spec.md", "T001", test_profile="pytest")
+    manager = JobManager(tmp_path)
+    job = manager.create("spec.md", "T001", test_profile="pytest")
     (tmp_path / "untracked.txt").write_text("dirty", encoding="utf-8")
+    monkeypatch.setattr(
+        "hybrid_sdlc.worker.resolve_profile_executable", lambda profile, root: Path("pytest")
+    )
+    monkeypatch.setattr(
+        "hybrid_sdlc.worker.select_active_endpoint",
+        lambda **kwargs: (ServerCandidateConfig(url="http://127.0.0.1:8090/v1"), None),
+    )
+    monkeypatch.setattr(
+        "hybrid_sdlc.worker.run_bounded_loop", lambda **kwargs: _success_result(tmp_path)
+    )
 
-    failed = run_worker(job.job_id, tmp_path)
+    completed = run_worker(job.job_id, tmp_path)
 
-    assert failed.status is JobStatus.FAILED
-    assert failed.failure_reason == "worktree_dirty"
+    assert completed.status is JobStatus.COMPLETED
+    assert (tmp_path / "untracked.txt").read_text(encoding="utf-8") == "dirty"
 
 
 def test_heartbeat_failure_interrupts_worker_and_is_persisted(

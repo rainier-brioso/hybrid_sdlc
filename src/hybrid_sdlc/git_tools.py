@@ -27,7 +27,7 @@ from hybrid_sdlc.worktrees import (
 )
 
 MAX_DIFF_BYTES = 500 * 1024
-_TASK_ID_PATTERN = re.compile(r"^[A-Za-z][A-Za-z0-9]*-\d+[A-Za-z]?$", re.ASCII)
+_TASK_ID_PATTERN = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$", re.ASCII)
 
 
 def create_scoped_commit(
@@ -304,18 +304,43 @@ def check_worktree_clean(repo_root: Path) -> None:
         )
 
 
+def validate_committed_path(repo_root: Path, relative_path: str) -> None:
+    """Require a repository-relative file to exist in HEAD and match its bytes."""
+    try:
+        entry = subprocess.run(
+            ["git", "-C", str(repo_root), "ls-tree", "-z", "HEAD", "--", relative_path],
+            capture_output=True,
+            check=True,
+        ).stdout
+        diff = subprocess.run(
+            ["git", "-C", str(repo_root), "diff", "--quiet", "HEAD", "--", relative_path],
+            capture_output=True,
+            check=False,
+        )
+    except (OSError, subprocess.SubprocessError) as exc:
+        raise RepositoryError(f"Could not validate committed file '{relative_path}'") from exc
+    if not entry or diff.returncode == 1:
+        raise RepositoryError(
+            f"File '{relative_path}' must be committed and unchanged in the source repository"
+        )
+    if diff.returncode != 0:
+        raise RepositoryError(f"Could not validate committed file '{relative_path}'")
+
+
 @contextmanager
 def acquire_repo_lock(
     repo_root: Path,
     run_id: str,
     timeout_seconds: float = 0.5,
+    *,
+    lock_directory: Path | None = None,
 ) -> Iterator[Path]:
     """Acquire an advisory execution lock on the repository.
 
     Raises WorktreeLockError if another runner holds the lock.
     """
     repo_root = repo_root.resolve()
-    lock_dir = repo_root / ".hybrid_sdlc"
+    lock_dir = (lock_directory or repo_root / ".hybrid_sdlc").resolve()
     lock_dir.mkdir(parents=True, exist_ok=True)
     lock_file = lock_dir / "runner.lock"
     meta_file = lock_dir / "runner.lock.meta"
