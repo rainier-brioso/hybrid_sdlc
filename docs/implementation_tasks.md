@@ -601,33 +601,48 @@ A task is complete when:
 
 ## Phase 6 — Host Integrations and Skills
 
-- [ ] **HSDLC-056 — Author the host-neutral delegation skill**  
+- [x] **HSDLC-056 — Author the host-neutral delegation skill**
   Files: `skills/local-delegate/SKILL.md`  
   Depends on: HSDLC-044, HSDLC-055  
   Acceptance:
   - Skill explains trust assumptions, synchronous/asynchronous choices, validation, status handling, and review evidence.
   - It never promises reactive wakeup on unsupported hosts or labels agent review deterministic.
+  - Evidence: `skills/local-delegate/SKILL.md` documents the verified CLI/MCP
+    contracts, fail-closed async host limitations, bounded polling and cancellation,
+    and exact patch/commit review; skill metadata and `git diff --check` pass.
 
-- [ ] **HSDLC-057 — Add Codex manual MCP registration**  
+- [x] **HSDLC-057 — Add Codex manual MCP registration**
   Files: `docs/hosts/codex.md`  
   Depends on: HSDLC-044  
   Acceptance:
   - Instructions use `codex mcp add hybrid-sdlc -- hybrid-sdlc mcp` and include list/get/remove verification.
   - Manual MCP registration is clearly separated from plugin installation.
+  - Evidence: `docs/hosts/codex.md` documents prerequisites, registration,
+    list/get/remove commands, an optional non-job endpoint probe, security
+    caveats, and the separate HSDLC-058 plugin work; links and `git diff --check`
+    pass.
 
-- [ ] **HSDLC-058 — Package the Codex plugin and local marketplace entry**  
-  Files: `.codex-plugin/plugin.json`, marketplace manifest files, `docs/hosts/codex.md`  
+- [x] **HSDLC-058 — Package the Codex plugin and local marketplace entry**
+  Files: `.codex-plugin/plugin.json`, `plugins/hybrid-sdlc/`, `.agents/plugins/marketplace.json`, `docs/hosts/codex.md`, plugin package sync tests
   Depends on: HSDLC-056, HSDLC-057  
   Acceptance:
   - Manifest validates against the installed Codex version.
   - A clean test profile can add the marketplace, install the plugin, discover the skill/MCP server, and remove it.
+  - Verified with Codex CLI `0.158.0-alpha.2.1`: a process-scoped `CODEX_HOME` added the repo marketplace, installed and listed the plugin, confirmed the installed skill and MCP config, then removed the plugin and marketplace.
+  - Initialized the packaged stdio MCP server and listed `check_local_model`, `run_spec_task_sync`, `submit_spec_job`, `get_job_status`, and `cancel_spec_job`.
 
-- [ ] **HSDLC-059 — Add Claude Code integration**  
-  Files: `CLAUDE.md`, `.claude/` configuration or documented commands, `docs/hosts/claude-code.md`  
+- [x] **HSDLC-059 — Add Claude Code integration**
+  Files: `.mcp.json`, `docs/hosts/claude-code.md`
   Depends on: HSDLC-044, HSDLC-056  
   Acceptance:
   - Configuration paths and commands are verified against a pinned supported Claude Code version.
   - Synchronous behavior and any notification limitations are documented accurately.
+  - Evidence: Claude Code CLI 2.1.268, run through an isolated npm cache and
+    `CLAUDE_CONFIG_DIR`, reported the repository `.mcp.json` server in project
+    scope as pending interactive approval; `claude mcp get hybrid-sdlc` showed
+    its configured command. The guide records project approval, optional
+    project registration/removal syntax, sync-call backgrounding from 2.1.212,
+    and explicit async job polling without cross-session wakeup claims.
 
 - [ ] **HSDLC-060 — Add Antigravity integration**  
   Files: Antigravity manifest/configuration, `.agents/skills/local-delegate/SKILL.md`, `docs/hosts/antigravity.md`  
@@ -635,6 +650,22 @@ A task is complete when:
   Acceptance:
   - Discovery paths and MCP registration are verified on a pinned supported version.
   - Reactive wakeup is promoted from experimental only after a recorded end-to-end test.
+  - In progress: Antigravity IDE `1.107.0` discovered the workspace skill, but
+    did not list the checked-in `.agents/mcp_config.json` server after an IDE
+    reload, even though its terminal resolved `hybrid-sdlc`. A workspace-plugin
+    experiment also did not appear, so it was not retained. Explicit
+    user-profile registration made the server and all five tools appear in the
+    IDE MCP list. The CLI now has an opt-in setup command. Following review
+    (2026-10-05), existing configurations receive a separate merged proposal
+    for manual review/application with the IDE closed; setup never replaces
+    them. New configurations use atomic publication without overwriting a
+    concurrent creator. An end-to-end tool call still needs an in-IDE check. Reactive
+    wakeup remains experimental.
+  - Race-fix validation (2026-10-05): 405 tests passed with 12 environment-limited
+    skips; coverage 80.26%, Ruff lint/format and mypy passed. Regression tests
+    preserve late config edits and concurrent creation, distinguish proposal
+    output and dry-run, and tolerate temporary cleanup failure after publication.
+    Independent review confirmed the original lost-update race is resolved.
 
 - [ ] **HSDLC-061 — Add host capability tests and compatibility table**  
   Files: `docs/host-compatibility.md`, `tests/host_contracts/`  
@@ -661,6 +692,98 @@ A task is complete when:
   - Compose mounts model weights read-only, publishes only to host loopback, requests the NVIDIA GPU, and limits llama.cpp to one parallel request.
   - Worker and interactive profiles are parseable, model paths remain user-owned configuration, and no weights or machine-specific paths are committed.
   - GPU passthrough, `/health`, and `/v1/models` are verified on the RTX 3090 before the task is completed.
+
+  Evaluation status (2026-10-04): the user paused the remaining llama.cpp
+  `SMOKE-001` live rerun while Strata is configured. The earlier task run passed
+  its tests but modified `.gitignore` through Aider's automatic ignore rule.
+  The runner fix is implemented; a live result restricted to `calculator.py`
+  and `test_smoke.py` is still pending. Keep this evidence open and resume it
+  when the llama.cpp evaluation is resumed.
+
+- [x] **HSDLC-064A - Configure and validate optional Strata Docker deployment**
+  Files: `compose.strata.yaml`, `config/strata/worker-defaults.json`, `config/model-profiles/strata-coder-rtx3090-worker.toml`, `docs/strata-server-docker.md`, `docs/strata-validation-checklist.md`
+  Depends on: HSDLC-034
+  Acceptance:
+  - Build from an immutable upstream revision, expose only host loopback, request the NVIDIA GPU, and persist model data in a Docker named volume.
+  - Configure the Coder IQ1_M model at 16K context with low-RAM mode for the evaluation host (RTX 3090, 32 GB RAM, 24 GB WSL2 memory cap); record the resident-versus-mapped decision rather than assume fit.
+  - Verify Compose rendering, image build, GPU passthrough, loaded health, `/v1/models`, low-reasoning settings, and a bounded chat completion.
+  - Document first-run downloads and persisted configuration behavior. Do not claim API health or structural validation proves Aider task compatibility or performance parity.
+  Progress (2026-10-04): Compose rendering, repository layout checks, CUDA 13
+  GPU passthrough, and the pinned image build passed. Setup accepted Coder
+  IQ1_M at 16K with resident low-RAM mode as its predicted fit. Both model
+  shards downloaded (58.4 GB total); recreation reused the volume. Loaded
+  health, exact model ID, mounted low reasoning/4096 output defaults, the
+  Hybrid SDLC availability probe, and a bounded arithmetic chat passed.
+  Performance comparison remains open under HSDLC-064B.
+
+- [ ] **HSDLC-064B - Verify Strata task compatibility and Docker performance**
+  Files: `benchmarks/results/strata/`, `docs/strata-server-docker.md`
+  Depends on: HSDLC-064A, HSDLC-065
+  Acceptance:
+  - Run the trusted smoke fixture through Hybrid SDLC and Aider using only the Strata endpoint and the exact advertised model ID. Tests must pass and the diff must contain only authorized source/test files.
+  - Compare native Strata and Docker/WSL2 using identical model files, engine revision, context, reasoning effort, prompts, and at least three repetitions per runtime.
+  - Record cold/warm startup, prompt processing, generation, RAM, VRAM, disk reads, and end-to-end time-to-green. Separately compare Strata's model with the existing Qwen 3.6 worker without attributing model differences to Docker overhead.
+  - Retain Strata as a candidate until measured stability and performance justify promotion. WSL pinned-memory and KV-streaming restrictions must remain explicit.
+  Progress (2026-10-04): Strata/Aider SMOKE-001 passed in one attempt (56.7 s),
+  and its two unittest methods passed an independent rerun. The diff also
+  contains `.aider.tags.cache.v4/cache.db`, so that run failed authorized-files-only
+  acceptance. A subsequent explicit no-map fixture run
+  (`run_1791140948_7f6efcb2`, 116.2 s) passed in one attempt with exactly the
+  authorized source/test files changed and both test methods independently
+  rerun successfully. Both worktrees are retained. Task compatibility for this
+  tiny fixture is verified; native-versus-Docker measurements remain pending.
+  Diagnostic follow-up (2026-10-04): a 1,321-token synthetic prompt took
+  12.671 s, with identical repeats taking 0.172/0.125 s and 1,314 reused
+  tokens. Prior Aider requests reported zero prompt reuse. Evidence and the
+  reusable probe are under `benchmarks/results/strata/` and
+  `benchmarks/strata_prompt_probe.py`. This is not a coding-performance or
+  native-versus-Docker benchmark. Prompt construction/reuse and observed
+  Windows memory pressure need controlled follow-up; runtime defaults remain
+  unchanged.
+
+  File-context follow-up (2026-10-04): starting Aider with the known editable
+  files reduced this tiny fixture from two requests to one. The diagnostic
+  passed in 22.6 s; the source CLI's optional `aider_edit_files` configuration
+  run passed in 21.3 s with four independently verified test methods and only
+  the authorized two files changed. This does not establish a general speedup
+  or caching improvement: both requests reported zero reused tokens. See
+  `benchmarks/results/strata/aider-file-context-cli-20261004.json`. Targets are
+  existing committed regular files, validated in source and isolated checkout;
+  they are context hints, not an edit allowlist.
+
+  Source regression validation (2026-10-04): 400 passed, 12 environment-limited
+  skips; Ruff lint/format and mypy (20 source files) passed. File-context
+  implementation received independent read-only review with no confirmed
+  defect. The installed CLI was refreshed after the operator stopped the
+  processes holding its installation directory. A fresh SDK stdio MCP client
+  discovered all five tools, passed the model probe, and completed
+  `run_1791148535_3b03da02` in one attempt (19.7 s), with two independently
+  passing test methods and only the authorized source/test files changed.
+  See `benchmarks/results/strata/installed-mcp-smoke-20261004.json`.
+  The existing Codex chat connection still returned `Transport closed`;
+  fresh-client success does not verify that connection.
+
+  Runtime comparison decision (2026-10-04): at the user's request, defer the
+  native-versus-Docker benchmark until a real task delegation provides a
+  representative fixture. HSDLC-064B remains open; no runtime parity or
+  candidate promotion is claimed by the successful synchronous smoke.
+
+- [ ] **HSDLC-064C - Keep Aider repository-map cache out of bounded task patches**
+  Depends on: the first live Strata smoke evidence under HSDLC-064B
+  Acceptance:
+  - Address `.aider.tags.cache.v4/cache.db` without deleting user-owned caches,
+    changing the user's ignore rules, or hiding arbitrary unexpected changes.
+  - Choose and document a supported strategy. Installed Aider 0.86.2 hardcodes
+    the cache under the repository root; `--map-tokens 0` prevents RepoMap
+    construction but removes repository-map context. Do not silently disable
+    maps for all tasks merely to make this tiny smoke pass.
+  - Add regression coverage and rerun the isolated authorized-files-only smoke;
+    preserve the failing clean-diff evidence and the paused llama.cpp fixture.
+  Progress (2026-10-04): optional, strictly validated `aider_repo_map_tokens`
+  now reaches Aider through CLI, sync MCP, and background workers. Default
+  omission preserves repository-map context; the explicit `0` fixture rerun
+  passed clean-diff acceptance. Keep this task open for map-enabled cache
+  handling: this opt-in mode does not solve cache artifacts for general tasks.
 
 - [ ] **HSDLC-065 — Define the hardware benchmark protocol**  
   Files: `benchmarks/README.md`, `benchmarks/benchmark_task.json`  
@@ -717,6 +840,9 @@ A task is complete when:
 ---
 
 ## Deferred Work — Not Required for the Initial Release
+
+- [ ] **HSDLC-D06 — Evaluate an optional fully local persona workflow** after Strata endpoint and task compatibility are validated.
+  Planning note (2026-10-04): keep one model loaded and serialize repository analyst, implementation worker, and patch reviewer. Start a fresh client conversation on each role switch and forward only validated, bounded handoffs, not full histories. Use explicit per-request reasoning effort, thinking budgets, and output caps; the proposed starting budgets remain experimental. Enforce analyst/reviewer read-only capabilities in the tool/controller layer, preserve worker execution policies, and add endpoint-wide scheduling before supporting overlapping jobs across repositories. Keep multi-conversation parking disabled initially under the 24 GB WSL limit. Verify Aider forwards provider-specific settings, context reserves output room, truncated/invalid results fail safely, and switching roles does not reload model weights or inherit another role's transcript. Same-model review is not independent evidence of correctness; retain tests and deterministic checks. Host-native cheaper cloud subagent configuration remains separate and must not be overwritten. No implementation or deployment change is authorized by this planning note.
 
 - [ ] **HSDLC-D01 — Evaluate a persistent supervisor daemon** after per-job worker behavior is stable.
 - [ ] **HSDLC-D02 — Add pluggable OS sandbox providers** for genuinely untrusted repositories.

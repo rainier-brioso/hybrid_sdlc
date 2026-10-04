@@ -10,7 +10,7 @@ from typing import NoReturn
 import click
 
 from hybrid_sdlc import __version__
-from hybrid_sdlc.aider_runner import run_bounded_loop
+from hybrid_sdlc.aider_runner import run_bounded_loop, validate_aider_target_files
 from hybrid_sdlc.artifacts import clean_artifacts
 from hybrid_sdlc.command_profiles import resolve_profile_executable
 from hybrid_sdlc.config import ServerCandidateConfig, load_config
@@ -21,6 +21,7 @@ from hybrid_sdlc.errors import (
     ServerProbeError,
 )
 from hybrid_sdlc.git_tools import validate_committed_path
+from hybrid_sdlc.host_setup import HostSetupError, setup_antigravity
 from hybrid_sdlc.job_manager import InvalidJobTransitionError, JobManager, JobRecord, JobStatus
 from hybrid_sdlc.models import ProbeResult, RunStatus
 from hybrid_sdlc.security import resolve_confined_path, verify_repo_root
@@ -69,6 +70,44 @@ def parse_duration_seconds(val: str) -> float:
 def cli() -> None:
     """Hybrid Spec-Driven SDLC Toolkit."""
     pass
+
+
+@cli.group("setup")
+def setup_group() -> None:
+    """Configure optional integrations with host applications."""
+
+
+@setup_group.command("antigravity")
+@click.option("--dry-run", is_flag=True, help="Preview the MCP config change without writing it.")
+def setup_antigravity_cmd(dry_run: bool) -> None:
+    """Register hybrid-sdlc in Antigravity's user-level MCP configuration."""
+
+    try:
+        result = setup_antigravity(dry_run=dry_run)
+    except HostSetupError as exc:
+        raise click.ClickException(str(exc)) from exc
+
+    if not result.changed:
+        click.echo(f"Already configured in {result.config_path}")
+        return
+    if result.dry_run:
+        if result.proposal_path is not None:
+            click.echo(f"Would prepare a proposal for {result.config_path}")
+            click.echo(f"  proposal: {result.proposal_path}")
+        else:
+            click.echo(f"Would add hybrid-sdlc to {result.config_path}")
+    elif result.proposal_path is not None:
+        click.echo(f"Prepared a proposal for {result.config_path}")
+        click.echo("  original config was not changed")
+        click.echo(f"  proposal: {result.proposal_path}")
+        click.echo(
+            "  close Antigravity, review the proposal, then merge its hybrid-sdlc entry "
+            "into the current config manually"
+        )
+    else:
+        click.echo(f"Added hybrid-sdlc to {result.config_path}")
+    click.echo(f"  command: {result.executable}")
+    click.echo("  args: mcp")
 
 
 @cli.command("init")
@@ -299,6 +338,9 @@ def run_task_cmd(
     try:
         resolved_spec = resolve_confined_path(spec_file, verified_root, must_exist=True)
         validate_committed_path(verified_root, resolved_spec.relative_to(verified_root).as_posix())
+        validate_aider_target_files(
+            verified_root, resolved_spec, [Path(path) for path in config.aider_edit_files]
+        )
     except HybridSDLCError as e:
         if json_mode:
             click.echo(json.dumps(e.to_failure_record().model_dump(mode="json"), indent=2))
@@ -347,6 +389,8 @@ def run_task_cmd(
             resolved_test_executable=resolved_test_executable,
             commit_requested=commit_requested,
             rollback_on_failure=rollback_on_failure,
+            repo_map_tokens=config.aider_repo_map_tokens,
+            target_files=[Path(path) for path in config.aider_edit_files],
         )
     except HybridSDLCError as e:
         if json_mode:

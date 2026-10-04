@@ -7,6 +7,7 @@ import math
 import os
 import re
 import signal
+from pathlib import Path
 from typing import Annotated, Any, NoReturn, cast
 from urllib.parse import urlsplit, urlunsplit
 
@@ -152,6 +153,8 @@ async def run_spec_task_sync(
             attempt_timeout_seconds=float(config.attempt_timeout_seconds),
             buffer_cap_bytes=config.log_buffer_cap_bytes,
             resolved_test_executable=executable,
+            repo_map_tokens=config.aider_repo_map_tokens,
+            target_files=[Path(path) for path in config.aider_edit_files],
         )
         await ctx.report_progress(1, total=1, message="Bounded task run finished")
         return _safe_response(result.model_dump(mode="json"))

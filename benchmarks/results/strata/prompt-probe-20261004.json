@@ -1,0 +1,89 @@
+{
+  "kind": "synthetic_prompt_reuse_diagnostic",
+  "observed_at": "2026-10-04T19:48:38.509433+00:00",
+  "runtime": "Docker/WSL2",
+  "strata_version": "0.1.39",
+  "upstream_revision": "6f32ec070f23ced9f50e704d854d775da52591ab",
+  "model": "qwen3.8-flash-next-coder-iq1_m",
+  "prompt_sha256": "1b34686ac1b51e0519531a2c11823f3c7b388eeff04fdedcecae950f21474434",
+  "prompt_chars": 4988,
+  "request_settings": {
+    "reasoning_effort": "none",
+    "temperature": 0,
+    "max_tokens": 64,
+    "stream": true,
+    "repeats": 3
+  },
+  "shared_defaults_unchanged": {
+    "reasoning_effort": "low",
+    "max_tokens": 4096
+  },
+  "operator_reports_other_local_model_loaded": false,
+  "results": [
+    {
+      "repeat": 1,
+      "started_at": "2026-10-04T19:48:38.509433+00:00",
+      "first_sse_ms": 31.0,
+      "first_nonempty_content_ms": 12609.0,
+      "elapsed_ms": 12671.0,
+      "content": "ACK",
+      "reasoning_chars": 0,
+      "finish_reason": "stop",
+      "prompt_tokens": 1321,
+      "completion_tokens": 2,
+      "reused_tokens": 0,
+      "prompt_read": 1321,
+      "prompt_ms": 12533.0,
+      "decode_ms": 94.4,
+      "decode_tok_s": 21.2,
+      "expert_hit_rate": 0.944,
+      "metric_attribution": "matched_new_row"
+    },
+    {
+      "repeat": 2,
+      "started_at": "2026-10-04T19:48:51.194009+00:00",
+      "first_sse_ms": 16.0,
+      "first_nonempty_content_ms": 109.0,
+      "elapsed_ms": 172.0,
+      "content": "ACK",
+      "reasoning_chars": 0,
+      "finish_reason": "stop",
+      "prompt_tokens": 1321,
+      "completion_tokens": 2,
+      "reused_tokens": 1314,
+      "prompt_read": 7,
+      "prompt_ms": 68.0,
+      "decode_ms": 77.9,
+      "decode_tok_s": 25.7,
+      "expert_hit_rate": 0.944,
+      "metric_attribution": "matched_new_row"
+    },
+    {
+      "repeat": 3,
+      "started_at": "2026-10-04T19:48:51.393116+00:00",
+      "first_sse_ms": 0.0,
+      "first_nonempty_content_ms": 78.0,
+      "elapsed_ms": 125.0,
+      "content": "ACK",
+      "reasoning_chars": 0,
+      "finish_reason": "stop",
+      "prompt_tokens": 1321,
+      "completion_tokens": 2,
+      "reused_tokens": 1314,
+      "prompt_read": 7,
+      "prompt_ms": 58.3,
+      "decode_ms": 54.9,
+      "decode_tok_s": 36.4,
+      "expert_hit_rate": 0.986,
+      "metric_attribution": "matched_new_row"
+    }
+  ],
+  "limitations": [
+    "Already loaded model; first request is not a cold model start.",
+    "Only one fresh prompt; two repeated-prompt cache measurements.",
+    "Two generated tokens per response are not a generation throughput benchmark.",
+    "Does not measure code quality, prompt peak resource usage, or native parity.",
+    "Windows host memory pressure was observed; no causal comparison performed.",
+    "Recorded from live JSONL output; final helper metadata checks were tightened afterward without changing this prompt."
+  ]
+}

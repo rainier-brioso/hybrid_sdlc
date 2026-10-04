@@ -1,0 +1,29 @@
+schema_version = 1
+id = "strata-coder-rtx3090-worker"
+status = "candidate"
+purpose = "Bounded hybrid-sdlc implementation and repair tasks; Strata Coder IQ1_M evaluation"
+
+[model]
+family = "qwen3.8-flash-next-coder"
+variant = "IQ1_M"
+quantization = "IQ1_M"
+alias = "qwen3.8-flash-next-coder-iq1_m"
+
+[endpoint]
+base_url = "http://127.0.0.1:8080/v1"
+max_concurrency = 1
+
+[limits]
+context_tokens = 16384
+output_tokens = 4096
+
+[strata]
+family = "coder"
+model = "IQ1_M"
+reasoning_effort = "low"
+shared_defaults_file = "config/strata/worker-defaults.json"
+container_image = "hybrid-sdlc/strata:v0.1.39-cuda13-sm86"
+upstream_revision = "6f32ec070f23ced9f50e704d854d775da52591ab"
+
+# Candidate only. Validate endpoint/model ID and benchmark against the native
+# Strata launcher before treating this profile as supported.

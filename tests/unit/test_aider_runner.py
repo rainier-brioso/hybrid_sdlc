@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import os
 import sys
 from pathlib import Path
 
@@ -53,16 +54,16 @@ def test_repo_local_executable_missing_from_isolated_checkout_fails_closed(
     assert exc_info.value.code == "COMMAND_POLICY_ISOLATED_EXECUTABLE_MISSING"
 
 
-def test_build_aider_argv(tmp_path: Path) -> None:
-    spec_file = tmp_path / "spec.md"
-    spec_file.write_text("# Spec", encoding="utf-8")
+def test_build_aider_argv() -> None:
+    spec_file = Path("spec.md")
+    target_file = Path("app.py")
 
     argv = build_aider_argv(
         endpoint_url="http://127.0.0.1:8090/v1",
         model_name="Qwen2.5-Coder-32B",
         spec_file=spec_file,
         task_instruction="Implement task 1",
-        target_files=[tmp_path / "app.py"],
+        target_files=[target_file],
     )
 
     assert "aider" in argv[0]
@@ -75,10 +76,43 @@ def test_build_aider_argv(tmp_path: Path) -> None:
     assert "--edit-format" in argv
     assert "diff" in argv
     assert "--no-auto-commits" in argv
+    assert "--no-gitignore" in argv
+    assert argv[argv.index("--input-history-file") + 1] == os.devnull
+    assert argv[argv.index("--chat-history-file") + 1] == os.devnull
     assert "--no-suggest-shell-commands" in argv
     assert "--yes-always" in argv
     assert str(spec_file) in argv
-    assert str(tmp_path / "app.py") in argv
+    assert str(target_file) in argv
+
+
+def test_automated_aider_skips_metadata_prompt_without_disabling_settings_checks() -> None:
+    argv = build_aider_argv(
+        endpoint_url="http://127.0.0.1:8080/v1",
+        model_name="qwen3.8-flash-next-coder-iq1_m",
+        spec_file=Path("spec.md"),
+        task_instruction="Implement SMOKE-001",
+    )
+
+    assert "--yes-always" in argv
+    assert "--no-show-model-warnings" in argv
+    assert "--no-check-model-accepts-settings" not in argv
+
+
+def test_build_aider_argv_only_sets_repo_map_when_explicit() -> None:
+    common = {
+        "endpoint_url": "http://127.0.0.1:8080/v1",
+        "model_name": "local-model",
+        "spec_file": Path("spec.md"),
+        "task_instruction": "Implement task",
+    }
+
+    default_argv = build_aider_argv(**common)
+    zero_argv = build_aider_argv(**common, repo_map_tokens=0)
+    positive_argv = build_aider_argv(**common, repo_map_tokens=1024)
+
+    assert "--map-tokens" not in default_argv
+    assert zero_argv[zero_argv.index("--map-tokens") + 1] == "0"
+    assert positive_argv[positive_argv.index("--map-tokens") + 1] == "1024"
 
 
 def test_extract_failure_signature_normalization() -> None:

@@ -1,0 +1,22 @@
+{
+  "name": "hybrid-sdlc",
+  "version": "0.1.0",
+  "description": "Delegate trusted spec-driven implementation tasks to a local Hybrid SDLC runner.",
+  "skills": "./skills/",
+  "mcpServers": "./.mcp.json",
+  "author": {
+    "name": "Hybrid SDLC Contributors"
+  },
+  "license": "MIT",
+  "interface": {
+    "displayName": "Hybrid SDLC",
+    "shortDescription": "Local spec task delegation",
+    "longDescription": "Use the local Hybrid SDLC runner for bounded implementation work from trusted, committed task specs.",
+    "developerName": "Hybrid SDLC Contributors",
+    "category": "Productivity",
+    "capabilities": ["Delegate local spec tasks"],
+    "defaultPrompt": [
+      "Delegate this trusted spec task locally"
+    ]
+  }
+}

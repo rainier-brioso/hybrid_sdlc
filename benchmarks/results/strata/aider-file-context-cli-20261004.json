@@ -1,0 +1,34 @@
+{
+  "kind": "isolated_cli_file_context_validation",
+  "run_id": "run_1791145561_9634b0d7",
+  "baseline_commit": "a648df7d7c402f61c41ce3a88eb46f6e0bd9693e",
+  "model": "qwen3.8-flash-next-coder-iq1_m",
+  "aider_edit_files": ["calculator.py", "test_smoke.py"],
+  "aider_repo_map_tokens": 0,
+  "task_duration_seconds": 21.306246899999678,
+  "attempts": 1,
+  "status": "success",
+  "test_exit_code": 0,
+  "independent_focused_tests_passed": 4,
+  "changed_files": ["calculator.py", "test_smoke.py"],
+  "commit_hash": null,
+  "diff_hash": "cba90faea6de2adfecf70298a50e95e45d39ddf8ffe2330da907d4a8c398615d",
+  "worktree_path": "C:\\Users\\ray\\AppData\\Local\\Temp\\hsdlc-wt\\17c0fc4239de24363218\\b1a89a79c4844c43bbf76c717c0ad62b\\checkout",
+  "request_metrics": {
+    "time": 1791145566.3778574,
+    "duration_s": 15.3,
+    "prompt_tokens": 2302,
+    "reused": 0,
+    "output_tokens": 418,
+    "prompt_ms": 8950.0,
+    "decode_ms": 6337.0,
+    "decode_tok_s": 66.0,
+    "hit_rate": 0.972
+  },
+  "limitations": [
+    "Single optional-configuration validation run, not a controlled performance comparison.",
+    "Source-worktree CLI used; globally installed CLI/MCP not refreshed.",
+    "No prompt reuse occurred; no cache/server settings changed.",
+    "The model split the three new input cases into separate test methods; generated patch is semantically correct but differs from the first preloading experiment."
+  ]
+}

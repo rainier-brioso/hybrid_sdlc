@@ -1,5 +1,11 @@
 # Dockerized llama.cpp Server
 
+Evaluation status (2026-10-04): the user paused the remaining live smoke
+rerun while [Strata's optional Docker deployment](strata-server-docker.md) is
+configured. Previous GPU/API checks and the initial passing task run remain
+recorded; the Aider clean-diff rerun and native-versus-Docker benchmarks are
+still pending. This pause does not promote either backend to verified status.
+
 Docker is the preferred reproducible deployment for the local inference server. The
 `hybrid-sdlc` runtime itself remains endpoint-first: it can connect to this container, a
 native `llama-server`, or another compatible external server without changing task execution.

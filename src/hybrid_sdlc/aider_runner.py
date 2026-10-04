@@ -3,7 +3,9 @@
 from __future__ import annotations
 
 import hashlib
+import os
 import re
+import stat
 import subprocess
 import threading
 import time
@@ -14,6 +16,7 @@ from pathlib import Path
 
 from hybrid_sdlc.artifacts import atomic_save_json, redact_secrets
 from hybrid_sdlc.command_profiles import CommandProfile, resolve_profile_executable
+from hybrid_sdlc.config import normalize_aider_edit_files
 from hybrid_sdlc.errors import (
     BaselineTestFailureError,
     CancellationError,
@@ -66,10 +69,13 @@ def build_aider_argv(
     target_files: list[Path] | None = None,
     extra_flags: list[str] | None = None,
     aider_cmd: list[str] | str = "aider",
+    repo_map_tokens: int | None = None,
 ) -> list[str]:
     """Construct a deterministic argv array for invoking Aider.
 
     Includes diff mode, no auto-commit, no shell suggestions, yes-always.
+    Redirects Aider histories and prevents automatic ignore-file edits.
+    Skips the metadata-warning prompt so yes-always cannot launch its browser URL.
     """
     cmd_prefix = [aider_cmd] if isinstance(aider_cmd, str) else list(aider_cmd)
     argv = cmd_prefix + [
@@ -82,6 +88,12 @@ def build_aider_argv(
         "--edit-format",
         "diff",
         "--no-auto-commits",
+        "--no-show-model-warnings",
+        "--no-gitignore",
+        "--input-history-file",
+        os.devnull,
+        "--chat-history-file",
+        os.devnull,
         "--no-suggest-shell-commands",
         "--yes-always",
         "--read",
@@ -94,10 +106,55 @@ def build_aider_argv(
         for tf in target_files:
             argv.append(str(tf))
 
+    if repo_map_tokens is not None:
+        argv.extend(["--map-tokens", str(repo_map_tokens)])
+
     if extra_flags:
         argv.extend(extra_flags)
 
     return argv
+
+
+def validate_aider_target_files(
+    repo_root: Path,
+    spec_file: Path,
+    target_files: list[Path] | None,
+) -> list[Path]:
+    """Resolve configured Aider context files and require committed regular files."""
+    if not target_files:
+        return []
+
+    root = repo_root.resolve()
+    resolved_spec = spec_file.resolve()
+    spec_relative = resolved_spec.relative_to(root).as_posix()
+    try:
+        relative_paths = normalize_aider_edit_files([str(path) for path in target_files])
+    except ValueError as exc:
+        raise RepositoryError(f"Invalid Aider context file path: {exc}") from exc
+    resolved: list[Path] = []
+    for relative in relative_paths:
+        if relative == spec_relative:
+            raise RepositoryError("aider_edit_files cannot include the task specification")
+        candidate = root / Path(relative)
+        try:
+            source_mode = candidate.lstat().st_mode
+        except OSError as exc:
+            raise RepositoryError(f"Aider context file '{relative}' does not exist") from exc
+        if not stat.S_ISREG(source_mode):
+            raise RepositoryError(
+                f"Aider context file '{relative}' must be a regular file, not a symlink or directory"
+            )
+        try:
+            confined = resolve_confined_path(candidate, repo_root=root, must_exist=True)
+        except (OSError, ValueError) as exc:
+            raise RepositoryError(
+                f"Aider context file '{relative}' is not a regular repository file"
+            ) from exc
+        if confined == resolved_spec:
+            raise RepositoryError("aider_edit_files cannot include the task specification")
+        validate_committed_path(root, relative)
+        resolved.append(confined)
+    return resolved
 
 
 def extract_failure_signature(stdout: str, stderr: str) -> str:
@@ -189,6 +246,8 @@ def _run_bounded_loop_in_checkout(
     cancel_event: threading.Event | None = None,
     process_observer: Callable[[int, datetime | None], None] | None = None,
     artifact_root: Path | None = None,
+    repo_map_tokens: int | None = None,
+    target_files: list[Path] | None = None,
 ) -> RunResult:
     """Execute the bounded editing and testing state machine."""
     repo_root = repo_root.resolve()
@@ -197,6 +256,7 @@ def _run_bounded_loop_in_checkout(
     start_perf = time.perf_counter()
 
     spec_file = resolve_confined_path(spec_path, repo_root=repo_root, must_exist=True)
+    resolved_target_files = validate_aider_target_files(repo_root, spec_file, target_files)
 
     # 1. Verify clean worktree before starting
     check_worktree_clean(repo_root)
@@ -301,6 +361,8 @@ def _run_bounded_loop_in_checkout(
                 spec_file=spec_file,
                 task_instruction=instruction,
                 aider_cmd=aider_cmd,
+                repo_map_tokens=repo_map_tokens,
+                target_files=resolved_target_files,
             )
 
             # Run Aider
@@ -501,6 +563,8 @@ def run_bounded_loop(
     process_observer: Callable[[int, datetime | None], None] | None = None,
     commit_requested: bool = False,
     rollback_on_failure: bool = False,
+    repo_map_tokens: int | None = None,
+    target_files: list[Path] | None = None,
 ) -> RunResult:
     """Run the bounded workflow in a detached worktree based on source HEAD."""
     source_root = repo_root.resolve()
@@ -509,6 +573,10 @@ def run_bounded_loop(
         raise RepositoryError("spec_path must identify an existing regular file")
     relative_spec = source_spec.relative_to(source_root).as_posix()
     validate_committed_path(source_root, relative_spec)
+    source_target_files = validate_aider_target_files(source_root, source_spec, target_files)
+    relative_target_files = [
+        Path(path.relative_to(source_root).as_posix()) for path in source_target_files
+    ]
 
     record: WorktreeRecord = create_worktree(source_root)
     try:
@@ -533,6 +601,8 @@ def run_bounded_loop(
             cancel_event=cancel_event,
             process_observer=process_observer,
             artifact_root=record.record_path.parent / ".hybrid_sdlc",
+            repo_map_tokens=repo_map_tokens,
+            target_files=relative_target_files,
         )
 
         commit_hash = None

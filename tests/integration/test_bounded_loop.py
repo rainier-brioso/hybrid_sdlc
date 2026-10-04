@@ -2,13 +2,17 @@
 
 from __future__ import annotations
 
+import json
 import subprocess
 import sys
 import threading
 from pathlib import Path
 
+import pytest
+
 from hybrid_sdlc.aider_runner import run_bounded_loop
 from hybrid_sdlc.command_profiles import CommandProfile
+from hybrid_sdlc.errors import RepositoryError
 from hybrid_sdlc.models import RunStatus
 
 
@@ -42,6 +46,117 @@ def _commit_file(path: Path, filename: str) -> None:
     subprocess.run(
         ["git", "commit", "-m", f"add {filename}"], cwd=str(path), check=True, capture_output=True
     )
+
+
+@pytest.mark.parametrize(
+    "target_name", ["../outside.py", "spec.md", "untracked.py", "modified.py", "folder"]
+)
+def test_invalid_aider_context_files_fail_before_worktree_creation(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, target_name: str
+) -> None:
+    _setup_git_repo(tmp_path)
+    (tmp_path / "spec.md").write_text("# Spec", encoding="utf-8")
+    (tmp_path / "outside.py").write_text("outside", encoding="utf-8")
+    (tmp_path / "untracked.py").write_text("untracked", encoding="utf-8")
+    (tmp_path / "modified.py").write_text("committed value\n", encoding="utf-8")
+    (tmp_path / "folder").mkdir()
+    (tmp_path / "folder" / "child.py").write_text("child", encoding="utf-8")
+    _commit_file(tmp_path, "spec.md")
+    _commit_file(tmp_path, "folder/child.py")
+    _commit_file(tmp_path, "modified.py")
+    if target_name == "modified.py":
+        (tmp_path / "modified.py").write_text("changed after commit\n", encoding="utf-8")
+
+    def fail_if_worktree_created(*args: object, **kwargs: object) -> None:
+        raise AssertionError("invalid context path reached worktree creation")
+
+    monkeypatch.setattr("hybrid_sdlc.aider_runner.create_worktree", fail_if_worktree_created)
+    profile = CommandProfile(
+        name="pytest", argv=[Path(sys.executable).name, "-c", "pass"], timeout_seconds=10
+    )
+
+    with pytest.raises(RepositoryError):
+        run_bounded_loop(
+            repo_root=tmp_path,
+            spec_path=tmp_path / "spec.md",
+            task_id="TASK-CONTEXT",
+            profile=profile,
+            endpoint_url="http://127.0.0.1:8090/v1",
+            model_name="Qwen",
+            target_files=[Path(target_name)],
+        )
+
+
+def test_committed_symlink_context_file_is_rejected(tmp_path: Path) -> None:
+    _setup_git_repo(tmp_path)
+    (tmp_path / "spec.md").write_text("# Spec", encoding="utf-8")
+    try:
+        (tmp_path / "alias.md").symlink_to(tmp_path / "README.md")
+    except OSError as exc:
+        pytest.skip(f"Creating symlinks is unavailable: {exc}")
+    subprocess.run(["git", "add", "spec.md", "alias.md"], cwd=tmp_path, check=True)
+    subprocess.run(["git", "commit", "-m", "add task and symlink"], cwd=tmp_path, check=True)
+    profile = CommandProfile(
+        name="pytest", argv=[Path(sys.executable).name, "-c", "pass"], timeout_seconds=10
+    )
+
+    with pytest.raises(RepositoryError, match="regular file"):
+        run_bounded_loop(
+            repo_root=tmp_path,
+            spec_path=tmp_path / "spec.md",
+            task_id="TASK-CONTEXT",
+            profile=profile,
+            endpoint_url="http://127.0.0.1:8090/v1",
+            model_name="Qwen",
+            target_files=[Path("alias.md")],
+        )
+
+
+def test_bounded_loop_passes_context_file_from_isolated_checkout(tmp_path: Path) -> None:
+    _setup_git_repo(tmp_path)
+    (tmp_path / "spec.md").write_text("# Spec", encoding="utf-8")
+    (tmp_path / "context.py").write_text("value = 1\n", encoding="utf-8")
+    _commit_file(tmp_path, "spec.md")
+    _commit_file(tmp_path, "context.py")
+
+    capture_file = tmp_path / ".hybrid_sdlc" / "captured-argv.json"
+    capture_file.parent.mkdir(exist_ok=True)
+    helper = tmp_path / "helpers" / "capture_aider.py"
+    helper.parent.mkdir()
+    helper.write_text(
+        "import json, sys\n"
+        f"with open({str(capture_file)!r}, 'w', encoding='utf-8') as f: "
+        "json.dump(sys.argv[1:], f)\n"
+        "with open('solution.py', 'w', encoding='utf-8') as f: "
+        "f.write('def answer(): return 42\\n')\n",
+        encoding="utf-8",
+    )
+    profile = CommandProfile(
+        name="solution",
+        argv=[
+            Path(sys.executable).name,
+            "-c",
+            "import os, sys\n"
+            "if not os.path.exists('solution.py'): sys.exit(0)\n"
+            "from solution import answer; assert answer() == 42",
+        ],
+        timeout_seconds=10,
+    )
+
+    result = run_bounded_loop(
+        repo_root=tmp_path,
+        spec_path=tmp_path / "spec.md",
+        task_id="TASK-CONTEXT",
+        profile=profile,
+        endpoint_url="http://127.0.0.1:8090/v1",
+        model_name="Qwen",
+        aider_cmd=[sys.executable, str(helper)],
+        target_files=[Path("context.py")],
+    )
+
+    assert result.status is RunStatus.SUCCESS, result.failure
+    argv = json.loads(capture_file.read_text(encoding="utf-8"))
+    assert str(Path(result.worktree_path or "") / "context.py") in argv
 
 
 def test_bounded_loop_baseline_failure_aborts(tmp_path: Path) -> None:

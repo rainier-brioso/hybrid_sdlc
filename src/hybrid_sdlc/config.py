@@ -23,6 +23,31 @@ DEFAULT_ATTEMPT_TIMEOUT_SECONDS = 180
 DEFAULT_LOG_BUFFER_CAP_BYTES = 500 * 1024
 
 
+def normalize_aider_edit_files(value: object) -> list[str]:
+    """Validate unique, normalized repository-relative file paths."""
+    if not isinstance(value, list) or any(not isinstance(item, str) for item in value):
+        raise ValueError("aider_edit_files must be a list of strings")
+
+    normalized: list[str] = []
+    for item in value:
+        if not item or "\x00" in item:
+            raise ValueError("aider_edit_files entries must be non-empty paths")
+        path = item.replace("\\", "/")
+        parts = path.split("/")
+        if (
+            path.startswith("/")
+            or (len(path) >= 2 and path[1] == ":")
+            or any(part in ("", ".", "..") for part in parts)
+        ):
+            raise ValueError(
+                f"aider_edit_files entry must be a normalized repository-relative path: {item!r}"
+            )
+        if path in normalized:
+            raise ValueError(f"aider_edit_files contains duplicate path: {path!r}")
+        normalized.append(path)
+    return normalized
+
+
 class ServerCandidateConfig(BaseModel):
     """Configuration for an inference server candidate."""
 
@@ -59,7 +84,14 @@ class ToolkitConfig(BaseModel):
     log_buffer_cap_bytes: int = Field(
         default=DEFAULT_LOG_BUFFER_CAP_BYTES, ge=1024, le=10 * 1024 * 1024
     )
+    aider_repo_map_tokens: int | None = Field(default=None, strict=True, ge=0)
+    aider_edit_files: list[str] = Field(default_factory=list, strict=True)
     command_profiles: dict[str, CommandProfile] = Field(default_factory=dict)
+
+    @field_validator("aider_edit_files", mode="before")
+    @classmethod
+    def validate_aider_edit_files(cls, value: object) -> list[str]:
+        return normalize_aider_edit_files(value)
 
 
 def load_config(
