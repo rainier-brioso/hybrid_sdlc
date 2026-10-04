@@ -264,8 +264,8 @@ Rather than assuming all tools share a single installation marketplace, each hos
    - The standalone IDE did not discover either the loose workspace MCP definition or a workspace-plugin experiment in a live check.
    - An explicit, opt-in CLI setup command registers the user-profile MCP entry without replacing other servers. This made the server and its five tools appear in the IDE, but is broader in scope than the repository; an end-to-end call remains to be verified.
 2. **Claude Code**:
-   - Configured via `.claude/mcp.json` or user `~/.claude.json` referencing `hybrid-sdlc mcp`.
-   - Workflow documented in repository `CLAUDE.md`.
+   - Project MCP configuration uses `.mcp.json` referencing `hybrid-sdlc mcp`.
+   - Installation and delegation workflow documented in `docs/hosts/claude-code.md`; repository development instructions live in `AGENTS.md`.
 3. **Codex CLI**:
    - Manual MCP registration uses `codex mcp add hybrid-sdlc -- hybrid-sdlc mcp`, persisted by Codex in the user configuration (`~/.codex/config.toml`). The project does not claim `.codex/mcp.json` support.
    - Plugin distribution uses `.codex-plugin/plugin.json`, a root `skills/local-delegate/SKILL.md`, and a tested local marketplace entry. Manual MCP registration and plugin installation are documented as separate paths.

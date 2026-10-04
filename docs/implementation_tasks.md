@@ -632,7 +632,7 @@ A task is complete when:
   - Initialized the packaged stdio MCP server and listed `check_local_model`, `run_spec_task_sync`, `submit_spec_job`, `get_job_status`, and `cancel_spec_job`.
 
 - [x] **HSDLC-059 — Add Claude Code integration**
-  Files: `CLAUDE.md`, `.claude/` configuration or documented commands, `docs/hosts/claude-code.md`  
+  Files: `.mcp.json`, `docs/hosts/claude-code.md`
   Depends on: HSDLC-044, HSDLC-056  
   Acceptance:
   - Configuration paths and commands are verified against a pinned supported Claude Code version.
