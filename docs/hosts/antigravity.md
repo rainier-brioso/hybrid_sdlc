@@ -37,11 +37,21 @@ hybrid-sdlc setup antigravity --dry-run
 hybrid-sdlc setup antigravity
 ```
 
-The setup command must be invoked explicitly. It preserves other MCP servers,
-uses the absolute path of the installed `hybrid-sdlc` executable, backs up an
-existing config before changing it, and rejects a conflicting `hybrid-sdlc`
-entry instead of overwriting it. For manual setup, the entry has this shape;
-the CLI uses an absolute executable path for `command`:
+The setup command must be invoked explicitly. It uses the absolute path of the
+installed `hybrid-sdlc` executable and rejects a conflicting `hybrid-sdlc`
+entry. If the config already exists and needs an update, the command leaves it
+untouched and creates a private sibling proposal such as
+`mcp_config.json.proposed.json` (numbered if that name already exists). Close
+Antigravity, review the proposal against the current config, and manually merge
+the `hybrid-sdlc` entry into the current `mcpServers` object. Do not blindly
+replace the current file with a proposal, since another process may have
+updated the config after the proposal was prepared. If the config does not yet
+exist, the command creates it atomically and refuses to overwrite a file
+created concurrently. Proposal files use mode `0600` on POSIX systems. Windows
+uses the access control inherited from the parent directory, so keep the user
+configuration directory restricted to the intended Windows account. For
+manual setup, the entry has this shape; the CLI uses an absolute executable
+path for `command`:
 
 ```json
 "hybrid-sdlc": {

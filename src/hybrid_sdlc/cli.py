@@ -90,12 +90,24 @@ def setup_antigravity_cmd(dry_run: bool) -> None:
     if not result.changed:
         click.echo(f"Already configured in {result.config_path}")
         return
-    action = "Would add" if result.dry_run else "Added"
-    click.echo(f"{action} hybrid-sdlc to {result.config_path}")
+    if result.dry_run:
+        if result.proposal_path is not None:
+            click.echo(f"Would prepare a proposal for {result.config_path}")
+            click.echo(f"  proposal: {result.proposal_path}")
+        else:
+            click.echo(f"Would add hybrid-sdlc to {result.config_path}")
+    elif result.proposal_path is not None:
+        click.echo(f"Prepared a proposal for {result.config_path}")
+        click.echo("  original config was not changed")
+        click.echo(f"  proposal: {result.proposal_path}")
+        click.echo(
+            "  close Antigravity, review the proposal, then merge its hybrid-sdlc entry "
+            "into the current config manually"
+        )
+    else:
+        click.echo(f"Added hybrid-sdlc to {result.config_path}")
     click.echo(f"  command: {result.executable}")
     click.echo("  args: mcp")
-    if result.backup_path:
-        click.echo(f"  backup: {result.backup_path}")
 
 
 @cli.command("init")

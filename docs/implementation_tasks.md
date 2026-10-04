@@ -655,9 +655,17 @@ A task is complete when:
     reload, even though its terminal resolved `hybrid-sdlc`. A workspace-plugin
     experiment also did not appear, so it was not retained. Explicit
     user-profile registration made the server and all five tools appear in the
-    IDE MCP list. The CLI now has an opt-in registration
-    command; an end-to-end tool call still needs an in-IDE check. Reactive
+    IDE MCP list. The CLI now has an opt-in setup command. Following review
+    (2026-10-05), existing configurations receive a separate merged proposal
+    for manual review/application with the IDE closed; setup never replaces
+    them. New configurations use atomic publication without overwriting a
+    concurrent creator. An end-to-end tool call still needs an in-IDE check. Reactive
     wakeup remains experimental.
+  - Race-fix validation (2026-10-05): 405 tests passed with 12 environment-limited
+    skips; coverage 80.26%, Ruff lint/format and mypy passed. Regression tests
+    preserve late config edits and concurrent creation, distinguish proposal
+    output and dry-run, and tolerate temporary cleanup failure after publication.
+    Independent review confirmed the original lost-update race is resolved.
 
 - [ ] **HSDLC-061 — Add host capability tests and compatibility table**  
   Files: `docs/host-compatibility.md`, `tests/host_contracts/`  

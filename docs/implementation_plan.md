@@ -262,7 +262,7 @@ Rather than assuming all tools share a single installation marketplace, each hos
 1. **Antigravity IDE**:
    - Workspace skill at `.agents/skills/local-delegate/SKILL.md` and checked-in MCP definition at `.agents/mcp_config.json`.
    - The standalone IDE did not discover either the loose workspace MCP definition or a workspace-plugin experiment in a live check.
-   - An explicit, opt-in CLI setup command registers the user-profile MCP entry without replacing other servers. This made the server and its five tools appear in the IDE, but is broader in scope than the repository; an end-to-end call remains to be verified.
+   - Explicit user-profile registration made the server and its five tools appear in the IDE. The CLI creates a missing config without overwriting a concurrent creator; for an existing config it prepares a separate merged proposal for manual review/application with the IDE closed. This prevents setup from overwriting another writer's settings. Registration is broader in scope than the repository; an end-to-end call remains to be verified.
 2. **Claude Code**:
    - Project MCP configuration uses `.mcp.json` referencing `hybrid-sdlc mcp`.
    - Installation and delegation workflow documented in `docs/hosts/claude-code.md`; repository development instructions live in `AGENTS.md`.

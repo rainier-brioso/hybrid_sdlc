@@ -19,7 +19,7 @@ from hybrid_sdlc.host_setup import (
 )
 
 
-def test_antigravity_setup_adds_server_preserves_entries_and_backs_up(
+def test_antigravity_setup_prepares_proposal_and_preserves_original(
     tmp_path: Path,
 ) -> None:
     config = tmp_path / "mcp_config.json"
@@ -32,12 +32,13 @@ def test_antigravity_setup_adds_server_preserves_entries_and_backs_up(
     result = setup_antigravity(config_path=config, executable=executable)
 
     assert result.changed
-    assert result.backup_path is not None
-    assert result.backup_path.read_text(encoding="utf-8") == original
+    assert result.proposal_path == tmp_path / "mcp_config.json.proposed.json"
+    assert config.read_text(encoding="utf-8") == original
     assert stat.S_IMODE(config.stat().st_mode) == original_mode
-    backup_mode = stat.S_IMODE(result.backup_path.stat().st_mode)
-    assert backup_mode & ~original_mode == 0
-    data = json.loads(config.read_text(encoding="utf-8"))
+    if os.name == "posix":
+        proposal_mode = stat.S_IMODE(result.proposal_path.stat().st_mode)
+        assert proposal_mode & ~0o600 == 0
+    data = json.loads(result.proposal_path.read_text(encoding="utf-8"))
     assert data["mcpServers"]["github"] == {"command": "docker"}
     assert data["mcpServers"]["hybrid-sdlc"] == {
         "command": str(executable.resolve()),
@@ -46,7 +47,7 @@ def test_antigravity_setup_adds_server_preserves_entries_and_backs_up(
 
 
 @pytest.mark.skipif(os.name != "posix", reason="POSIX permission bits are required")
-def test_antigravity_backup_stays_private_when_source_is_world_readable(
+def test_antigravity_proposal_stays_private_when_source_is_world_readable(
     tmp_path: Path,
 ) -> None:
     config = tmp_path / "mcp_config.json"
@@ -55,9 +56,9 @@ def test_antigravity_backup_stays_private_when_source_is_world_readable(
 
     result = setup_antigravity(config_path=config, executable=tmp_path / "hybrid-sdlc")
 
-    assert result.backup_path is not None
+    assert result.proposal_path is not None
     assert stat.S_IMODE(config.stat().st_mode) == 0o644
-    assert stat.S_IMODE(result.backup_path.stat().st_mode) == 0o600
+    assert stat.S_IMODE(result.proposal_path.stat().st_mode) == 0o600
 
 
 def test_antigravity_dry_run_does_not_create_files_or_directories(tmp_path: Path) -> None:
@@ -72,6 +73,22 @@ def test_antigravity_dry_run_does_not_create_files_or_directories(tmp_path: Path
     assert not config.parent.exists()
 
 
+def test_antigravity_existing_config_dry_run_does_not_create_proposal(tmp_path: Path) -> None:
+    config = tmp_path / "mcp_config.json"
+    original = b'{"mcpServers": {"github": {}}}\n'
+    config.write_bytes(original)
+
+    result = setup_antigravity(
+        config_path=config, executable=tmp_path / "hybrid-sdlc.exe", dry_run=True
+    )
+
+    assert result.changed
+    assert result.dry_run
+    assert result.proposal_path == tmp_path / "mcp_config.json.proposed.json"
+    assert config.read_bytes() == original
+    assert not list(tmp_path.glob("*.proposed*"))
+
+
 def test_antigravity_setup_is_noop_for_identical_absolute_entry(tmp_path: Path) -> None:
     config = tmp_path / "mcp_config.json"
     executable = tmp_path / "hybrid-sdlc.exe"
@@ -84,9 +101,9 @@ def test_antigravity_setup_is_noop_for_identical_absolute_entry(tmp_path: Path) 
     result = setup_antigravity(config_path=config, executable=executable)
 
     assert not result.changed
-    assert result.backup_path is None
+    assert result.proposal_path is None
     assert config.read_bytes() == before
-    assert not list(tmp_path.glob("*.bak*"))
+    assert not list(tmp_path.glob("*.proposed*"))
 
 
 def test_antigravity_setup_accepts_unqualified_command_resolving_to_same_executable(
@@ -131,7 +148,7 @@ def test_antigravity_malformed_configuration_fails_without_writes(
         setup_antigravity(config_path=config, executable=tmp_path / "hybrid-sdlc.exe")
 
     assert config.read_bytes() == before
-    assert not list(tmp_path.glob("*.bak*"))
+    assert not list(tmp_path.glob("*.proposed*"))
 
 
 def test_antigravity_conflicting_entry_fails_without_writes(tmp_path: Path) -> None:
@@ -146,7 +163,7 @@ def test_antigravity_conflicting_entry_fails_without_writes(tmp_path: Path) -> N
         setup_antigravity(config_path=config, executable=tmp_path / "hybrid-sdlc.exe")
 
     assert config.read_bytes() == before
-    assert not list(tmp_path.glob("*.bak*"))
+    assert not list(tmp_path.glob("*.proposed*"))
 
 
 def test_antigravity_entry_with_extra_options_is_a_conflict(tmp_path: Path) -> None:
@@ -171,34 +188,91 @@ def test_antigravity_entry_with_extra_options_is_a_conflict(tmp_path: Path) -> N
         setup_antigravity(config_path=config, executable=tmp_path / "hybrid-sdlc.exe")
 
     assert config.read_bytes() == before
-    assert not list(tmp_path.glob("*.bak*"))
+    assert not list(tmp_path.glob("*.proposed*"))
 
 
-def test_antigravity_refuses_to_replace_config_changed_during_update(
+def test_antigravity_proposal_preserves_late_concurrent_config_edit(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     config = tmp_path / "mcp_config.json"
     original = b'{"mcpServers": {"github": {"command": "docker"}}}\n'
     concurrent = b'{"mcpServers": {"new-entry": {"command": "keep-me"}}}\n'
     config.write_bytes(original)
-    actual_write = host_setup._write_atomically
+    actual_publish = host_setup._publish_no_clobber
 
-    def change_then_write(
-        path: Path,
-        contents: bytes,
-        mode: int,
-        expected_original: bytes | None,
-    ) -> None:
-        config.write_bytes(concurrent)
-        actual_write(path, contents, mode, expected_original)
+    def change_then_publish(path: Path, contents: bytes, mode: int) -> None:
+        if path == config.with_name("mcp_config.json.proposed.json"):
+            config.write_bytes(concurrent)
+        actual_publish(path, contents, mode)
 
-    monkeypatch.setattr(host_setup, "_write_atomically", change_then_write)
+    monkeypatch.setattr(host_setup, "_publish_no_clobber", change_then_publish)
 
-    with pytest.raises(HostSetupError, match="changed while preparing"):
+    result = setup_antigravity(config_path=config, executable=tmp_path / "hybrid-sdlc.exe")
+
+    assert config.read_bytes() == concurrent
+    assert result.proposal_path is not None
+    assert "github" in json.loads(result.proposal_path.read_text(encoding="utf-8"))["mcpServers"]
+    assert not list(tmp_path.glob(".*.tmp"))
+
+
+def test_antigravity_proposal_uses_numbered_name_without_overwriting(
+    tmp_path: Path,
+) -> None:
+    config = tmp_path / "mcp_config.json"
+    first = tmp_path / "mcp_config.json.proposed.json"
+    first.write_text("keep existing proposal", encoding="utf-8")
+    config.write_text('{"mcpServers": {"github": {}}}\n', encoding="utf-8")
+
+    result = setup_antigravity(config_path=config, executable=tmp_path / "hybrid-sdlc.exe")
+
+    assert result.proposal_path == tmp_path / "mcp_config.json.proposed.1.json"
+    assert first.read_text(encoding="utf-8") == "keep existing proposal"
+
+
+def test_antigravity_setup_succeeds_when_temporary_cleanup_fails(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    config = tmp_path / "mcp_config.json"
+    actual_unlink = Path.unlink
+
+    def fail_temp_cleanup(path: Path, *, missing_ok: bool = False) -> None:
+        if path.name.endswith(".tmp"):
+            raise OSError("simulated temporary file lock")
+        actual_unlink(path, missing_ok=missing_ok)
+
+    monkeypatch.setattr(Path, "unlink", fail_temp_cleanup)
+
+    result = setup_antigravity(config_path=config, executable=tmp_path / "hybrid-sdlc.exe")
+
+    assert result.changed
+    assert config.exists()
+    assert json.loads(config.read_text(encoding="utf-8"))["mcpServers"]["hybrid-sdlc"]
+    temporary_files = list(tmp_path.glob(".*.tmp"))
+    assert len(temporary_files) == 1
+    monkeypatch.setattr(Path, "unlink", actual_unlink)
+    temporary_files[0].unlink()
+
+
+def test_antigravity_new_config_does_not_overwrite_concurrent_creator(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    config = tmp_path / "mcp_config.json"
+    concurrent = b'{"mcpServers": {"other": {"command": "keep-me"}}}\n'
+    actual_link = os.link
+
+    def link_with_concurrent_creator(source: Path, destination: Path) -> None:
+        if destination == config:
+            descriptor = os.open(destination, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
+            with os.fdopen(descriptor, "wb") as output:
+                output.write(concurrent)
+        actual_link(source, destination)
+
+    monkeypatch.setattr(host_setup.os, "link", link_with_concurrent_creator)
+
+    with pytest.raises(HostSetupError, match="appeared while setup was running"):
         setup_antigravity(config_path=config, executable=tmp_path / "hybrid-sdlc.exe")
 
     assert config.read_bytes() == concurrent
-    assert (tmp_path / "mcp_config.json.bak").read_bytes() == original
     assert not list(tmp_path.glob(".*.tmp"))
 
 
@@ -209,7 +283,7 @@ def test_antigravity_setup_creates_new_config(tmp_path: Path) -> None:
     result = setup_antigravity(config_path=config, executable=executable)
 
     assert result.changed
-    assert result.backup_path is None
+    assert result.proposal_path is None
     assert json.loads(config.read_text(encoding="utf-8")) == {
         "mcpServers": {"hybrid-sdlc": {"command": str(executable.resolve()), "args": ["mcp"]}}
     }
@@ -219,20 +293,43 @@ def test_antigravity_cli_forwards_dry_run_and_reports_plan(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     config = tmp_path / "mcp_config.json"
+    proposal = tmp_path / "mcp_config.json.proposed.json"
     executable = tmp_path / "hybrid-sdlc.exe"
     calls: list[bool] = []
 
     def setup(*, dry_run: bool = False) -> AntigravitySetupResult:
         calls.append(dry_run)
-        return AntigravitySetupResult(config, executable, True, dry_run)
+        return AntigravitySetupResult(config, executable, True, dry_run, proposal)
 
     monkeypatch.setattr("hybrid_sdlc.cli.setup_antigravity", setup)
     result = CliRunner().invoke(cli, ["setup", "antigravity", "--dry-run"])
 
     assert result.exit_code == 0, result.output
     assert calls == [True]
-    assert "Would add hybrid-sdlc" in result.output
+    assert "Would prepare a proposal" in result.output
+    assert str(proposal) in result.output
     assert str(executable) in result.output
+
+
+def test_antigravity_cli_reports_existing_config_proposal(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    config = tmp_path / "mcp_config.json"
+    proposal = tmp_path / "mcp_config.json.proposed.json"
+    executable = tmp_path / "hybrid-sdlc.exe"
+
+    def setup(*, dry_run: bool = False) -> AntigravitySetupResult:
+        return AntigravitySetupResult(config, executable, True, dry_run, proposal)
+
+    monkeypatch.setattr("hybrid_sdlc.cli.setup_antigravity", setup)
+    result = CliRunner().invoke(cli, ["setup", "antigravity"])
+
+    assert result.exit_code == 0, result.output
+    assert "Prepared a proposal" in result.output
+    assert "original config was not changed" in result.output
+    assert "close Antigravity" in result.output
+    assert str(proposal) in result.output
+    assert "Added hybrid-sdlc" not in result.output
 
 
 def test_antigravity_cli_reports_setup_errors(monkeypatch: pytest.MonkeyPatch) -> None:

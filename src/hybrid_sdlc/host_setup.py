@@ -7,6 +7,7 @@ import os
 import shutil
 import stat
 import tempfile
+from contextlib import suppress
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
@@ -24,7 +25,7 @@ class AntigravitySetupResult:
     executable: Path
     changed: bool
     dry_run: bool
-    backup_path: Path | None = None
+    proposal_path: Path | None = None
 
 
 def antigravity_config_path() -> Path:
@@ -79,21 +80,9 @@ def _existing_entry_matches(entry: Any, executable: Path) -> bool:
         return False
 
 
-def _backup_path(path: Path) -> Path:
-    candidate = path.with_name(path.name + ".bak")
-    suffix = 1
-    while candidate.exists():
-        candidate = path.with_name(f"{path.name}.bak.{suffix}")
-        suffix += 1
-    return candidate
+def _publish_no_clobber(path: Path, contents: bytes, mode: int) -> None:
+    """Publish bytes at path atomically without replacing an existing file."""
 
-
-def _write_atomically(
-    path: Path,
-    contents: bytes,
-    mode: int,
-    expected_original: bytes | None,
-) -> None:
     file_descriptor, temporary_name = tempfile.mkstemp(
         prefix=f".{path.name}.", suffix=".tmp", dir=path.parent
     )
@@ -104,22 +93,37 @@ def _write_atomically(
             temporary_file.flush()
             os.fsync(temporary_file.fileno())
         os.chmod(temporary_path, mode)
-        if path.is_symlink():
-            raise HostSetupError(f"Refusing to replace symlinked configuration file: {path}")
+        os.link(temporary_path, path)
+    finally:
+        with suppress(OSError):
+            temporary_path.unlink(missing_ok=True)
+
+
+def _proposal_path(path: Path, contents: bytes) -> Path:
+    """Publish a private, uniquely named proposal beside an existing config."""
+
+    suffix = 0
+    while True:
+        candidate = _proposal_candidate(path, suffix)
         try:
-            current = path.read_bytes() if path.exists() else None
-        except OSError as exc:
-            raise HostSetupError(
-                f"Cannot recheck configuration before replacing {path}: {exc}"
-            ) from exc
-        if current != expected_original:
-            raise HostSetupError(
-                f"Configuration changed while preparing the update; refusing to replace {path}"
-            )
-        os.replace(temporary_path, path)
-    except BaseException:
-        temporary_path.unlink(missing_ok=True)
-        raise
+            _publish_no_clobber(candidate, contents, 0o600)
+            return candidate
+        except FileExistsError:
+            suffix += 1
+
+
+def _proposal_candidate(path: Path, suffix: int) -> Path:
+    name = f"{path.name}.proposed.json" if suffix == 0 else f"{path.name}.proposed.{suffix}.json"
+    return path.with_name(name)
+
+
+def _next_proposal_candidate(path: Path) -> Path:
+    suffix = 0
+    while True:
+        candidate = _proposal_candidate(path, suffix)
+        if not candidate.exists():
+            return candidate
+        suffix += 1
 
 
 def setup_antigravity(
@@ -171,7 +175,8 @@ def setup_antigravity(
     serialized = (json.dumps(updated, indent=2, ensure_ascii=False) + "\n").encode("utf-8")
 
     if dry_run:
-        return AntigravitySetupResult(target, command_path, True, True)
+        proposal = _next_proposal_candidate(target) if original_bytes is not None else None
+        return AntigravitySetupResult(target, command_path, True, True, proposal)
 
     try:
         target.parent.mkdir(parents=True, exist_ok=True)
@@ -179,28 +184,24 @@ def setup_antigravity(
         raise HostSetupError(
             f"Could not create configuration directory {target.parent}: {exc}"
         ) from exc
-    backup: Path | None = None
-    if original_bytes is not None:
-        backup = _backup_path(target)
-        backup_created = False
-        try:
-            backup_descriptor = os.open(
-                backup,
-                os.O_WRONLY | os.O_CREAT | os.O_EXCL,
-                0o600,
-            )
-            backup_created = True
-            with os.fdopen(backup_descriptor, "wb") as backup_file:
-                backup_file.write(original_bytes)
-                backup_file.flush()
-                os.fsync(backup_file.fileno())
-        except OSError as exc:
-            if backup_created:
-                backup.unlink(missing_ok=True)
-            raise HostSetupError(f"Could not back up {target}: {exc}") from exc
 
+    if original_bytes is not None:
+        try:
+            proposal = _proposal_path(target, serialized)
+        except OSError as exc:
+            raise HostSetupError(
+                f"Could not prepare a private proposal for {target}: {exc}"
+            ) from exc
+        return AntigravitySetupResult(target, command_path, True, False, proposal)
+
+    if target.is_symlink():
+        raise HostSetupError(f"Refusing to create configuration over symlink: {target}")
     try:
-        _write_atomically(target, serialized, target_mode, original_bytes)
+        _publish_no_clobber(target, serialized, target_mode)
+    except FileExistsError as exc:
+        raise HostSetupError(
+            f"Configuration appeared while setup was running; refusing to overwrite {target}"
+        ) from exc
     except OSError as exc:
-        raise HostSetupError(f"Could not safely update {target}: {exc}") from exc
-    return AntigravitySetupResult(target, command_path, True, False, backup)
+        raise HostSetupError(f"Could not safely create {target}: {exc}") from exc
+    return AntigravitySetupResult(target, command_path, True, False)
