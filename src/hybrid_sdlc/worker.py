@@ -77,6 +77,8 @@ def _execute(
         resolved_test_executable=executable,
         cancel_event=cancel_event,
         process_observer=process_observer,
+        repo_map_tokens=config.aider_repo_map_tokens,
+        target_files=[Path(path) for path in config.aider_edit_files],
     )
 
 

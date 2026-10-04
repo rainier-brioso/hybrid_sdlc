@@ -320,7 +320,11 @@ def test_cli_run_task_forwards_explicit_commit_and_reports_isolated_result(
 ) -> None:
     _init_git_repo(tmp_path)
     config_file = tmp_path / "hybrid_sdlc.toml"
-    config_file.write_text("[command_profiles.pytest]\nargv = ['pytest']\n", encoding="utf-8")
+    config_file.write_text(
+        'aider_repo_map_tokens = 0\naider_edit_files = ["README.md"]\n'
+        "[command_profiles.pytest]\nargv = ['pytest']\n",
+        encoding="utf-8",
+    )
     spec = tmp_path / "spec.md"
     spec.write_text("# Spec", encoding="utf-8")
     subprocess.run(["git", "add", "hybrid_sdlc.toml", "spec.md"], cwd=tmp_path, check=True)
@@ -374,6 +378,8 @@ def test_cli_run_task_forwards_explicit_commit_and_reports_isolated_result(
     payload = json.loads(response.output)
     assert captured["commit_requested"] is True
     assert captured["rollback_on_failure"] is False
+    assert captured["repo_map_tokens"] == 0
+    assert captured["target_files"] == [Path("README.md")]
     assert payload["commit_hash"] == "a" * 40
     assert payload["worktree_path"] == str(tmp_path / "isolated")
     assert payload["review_patch"] == str(tmp_path / "isolated.patch")

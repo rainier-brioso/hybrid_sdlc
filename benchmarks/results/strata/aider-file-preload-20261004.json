@@ -1,0 +1,41 @@
+{
+  "kind": "isolated_aider_file_preload_diagnostic",
+  "run_id": "run_1791145126_3ccf13d7",
+  "baseline_commit": "7e123e6cf6d3ecde909fec78b079738c9f43e42a",
+  "model": "qwen3.8-flash-next-coder-iq1_m",
+  "endpoint": "http://127.0.0.1:8080/v1",
+  "runtime": "Docker/WSL2 Strata 0.1.39",
+  "aider_version": "0.86.2",
+  "preloaded_files": ["calculator.py", "test_smoke.py"],
+  "method": "Existing runner API aider_cmd prefix with two positional files; no production configuration change for this diagnostic",
+  "repo_map_tokens": 0,
+  "task_duration_seconds": 22.55687860000762,
+  "attempts": 1,
+  "status": "success",
+  "test_exit_code": 0,
+  "independent_focused_tests_passed": 2,
+  "changed_files": ["calculator.py", "test_smoke.py"],
+  "diff_hash": "34b9deb313018a70a9bbb14f5fbef47be9309fb8ca7450a149f93c9c6558dd39",
+  "commit_hash": null,
+  "worktree_path": "C:\\Users\\ray\\AppData\\Local\\Temp\\hsdlc-wt\\17c0fc4239de24363218\\5aadf689d5604306be84fed949d0b62f\\checkout",
+  "new_request_metrics": [
+    {
+      "time": 1791145131.736245,
+      "duration_s": 16.0,
+      "prompt_tokens": 2302,
+      "reused": 0,
+      "prompt_read": 2302,
+      "prompt_ms": 8613.5,
+      "decode_ms": 7334.5,
+      "output_tokens": 399,
+      "decode_tok_s": 54.4,
+      "hit_rate": 0.969
+    }
+  ],
+  "limitations": [
+    "One coding-task observation, not a controlled speed benchmark.",
+    "No prompt reuse occurred; the improvement targeted an extra file-discovery request.",
+    "Expert/page cache and host memory conditions differ from previous runs.",
+    "No private prompt history persisted or inspected; file-add reflection is inferred from Aider source and request-count change."
+  ]
+}

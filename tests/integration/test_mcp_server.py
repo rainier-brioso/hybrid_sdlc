@@ -197,8 +197,15 @@ def test_sync_tool_returns_structured_run_result(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     _init_repo(tmp_path)
+    (tmp_path / "context.py").write_text("value = 1\n", encoding="utf-8")
+    subprocess.run(["git", "add", "context.py"], cwd=tmp_path, check=True)
+    subprocess.run(["git", "commit", "-qm", "add context file"], cwd=tmp_path, check=True)
     config = ToolkitConfig.model_validate(
-        {"command_profiles": {"pytest": {"name": "pytest", "argv": ["python", "-c", "pass"]}}}
+        {
+            "aider_repo_map_tokens": 1536,
+            "aider_edit_files": ["context.py"],
+            "command_profiles": {"pytest": {"name": "pytest", "argv": ["python", "-c", "pass"]}},
+        }
     )
     started = datetime.now(UTC).isoformat()
     result = RunResult(
@@ -220,7 +227,13 @@ def test_sync_tool_returns_structured_run_result(
     )
     monkeypatch.setattr("hybrid_sdlc.mcp_server.load_config", lambda **kwargs: config)
     monkeypatch.setattr("hybrid_sdlc.mcp_server.resolve_profile_executable", lambda *args: tmp_path)
-    monkeypatch.setattr("hybrid_sdlc.mcp_server.run_bounded_loop", lambda **kwargs: result)
+    captured: dict[str, object] = {}
+
+    def fake_run(**kwargs: object) -> RunResult:
+        captured.update(kwargs)
+        return result
+
+    monkeypatch.setattr("hybrid_sdlc.mcp_server.run_bounded_loop", fake_run)
 
     response = _call_tool(
         "run_spec_task_sync",
@@ -235,6 +248,8 @@ def test_sync_tool_returns_structured_run_result(
     assert response.is_error is False
     assert response.structured_content["status"] == RunStatus.SUCCESS.value
     assert response.structured_content["run_id"] == "run-mcp-test"
+    assert captured["repo_map_tokens"] == 1536
+    assert captured["target_files"] == [Path("context.py")]
     assert "topSecret123" not in str(response.structured_content)
     assert "secretUser" not in str(response.structured_content)
     assert "secretValue" not in str(response.structured_content)

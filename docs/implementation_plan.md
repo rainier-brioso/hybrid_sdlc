@@ -35,7 +35,7 @@ Standard MCP does not define agent turn suspension or background resume. To ensu
 
 | Host Environment | Recommended Mode | Wakeup / Resume Mechanism |
 | :--- | :--- | :--- |
-| **Antigravity IDE** | Asynchronous Job | Native reactive wakeup: triggers background process, yields turn, wakes on process exit via IDE task messaging. |
+| **Antigravity IDE** | Synchronous or asynchronous with polling | Native reactive wakeup remains unverified; poll job status until an end-to-end host test proves resume behavior. |
 | **Claude Code** | Synchronous Tool | Blocking tool execution with MCP progress notifications; or background terminal command with notification. |
 | **Codex CLI / Cursor** | Synchronous or Polling | Synchronous tool execution, or asynchronous job with explicit polling fallback (`hybrid-sdlc status <job_id>`). |
 | **Headless CI / CLI** | Synchronous | Direct CLI exit code (`hybrid-sdlc run-task ...`). |
@@ -225,6 +225,12 @@ The execution engine depends only on a verified OpenAI-compatible endpoint. Depl
   - It is not considered an automatic performance downgrade: it has more active parameters per token and must be compared on end-to-end patch quality and time-to-green.
 - Model profiles remain `candidate` until repeatable hardware evidence promotes them to supported status.
 
+#### Current Evaluation Status (2026-10-04)
+- At the user's request, the remaining llama.cpp live smoke rerun is paused while Strata is evaluated. This is a change in evaluation order, not completion of the pending evidence.
+- The earlier `SMOKE-001` run passed its tests but included Aider's automatic `.gitignore` edit. The runner now disables that edit and discards Aider input/chat history; the clean-diff live rerun remains unverified.
+- Strata is an optional OpenAI-compatible backend candidate. Its Docker deployment and native-versus-Docker performance must be verified before it replaces the existing launcher recommendation.
+- The evaluation host has an RTX 3090 (24 GiB), approximately 32 GB system RAM, and a 24 GB WSL2 memory limit. The initial Strata candidate must target that available memory rather than assume a 64 GB host.
+
 #### Docker Deployment Contract
 - `compose.yaml` uses the official CUDA-enabled llama.cpp server image and mounts a user-provided model directory read-only.
 - The container listens on `0.0.0.0` internally while the published host port is restricted to `127.0.0.1`.
@@ -232,6 +238,8 @@ The execution engine depends only on a verified OpenAI-compatible endpoint. Depl
 - `LLAMA_CPP_IMAGE` is pinned to a tested build tag or immutable digest before release; floating tags are evaluation-only.
 - One large model and one inference request run at a time on the RTX 3090. An accelerator lease/queue must prevent asynchronous jobs from bypassing this constraint.
 - Native Windows and Docker/WSL2 deployments use the same model profile and benchmark protocol. Docker becomes the sole recommended launcher only if its memory use and stability are comparable.
+- The optional Strata deployment uses a separate Compose file, an immutable upstream build revision, and a Docker named volume for its model data. It must not require llama.cpp's model-path variables to start.
+- Strata Coder IQ1_M at 16K context is the initial 32 GB host candidate. Docker/WSL2 performance is unverified: upstream documents pinned-memory limits and disabled KV streaming under WSL, so container convenience does not imply parity with native Windows.
 
 #### Aider Invocation Parameters
 Parameters are passed explicitly via CLI:
@@ -252,8 +260,9 @@ aider --model openai/<model_id> \
 Rather than assuming all tools share a single installation marketplace, each host is targeted with its native mechanism:
 
 1. **Antigravity IDE**:
-   - Discoverable via workspace customizations (`.agents/skills/local-delegate/SKILL.md`) or global config plugin (`~/.gemini/config/plugins/hybrid-sdlc/plugin.json`).
-   - Registers MCP server via `mcp_config.json`.
+   - Workspace skill at `.agents/skills/local-delegate/SKILL.md` and checked-in MCP definition at `.agents/mcp_config.json`.
+   - The standalone IDE did not discover either the loose workspace MCP definition or a workspace-plugin experiment in a live check.
+   - An explicit, opt-in CLI setup command registers the user-profile MCP entry without replacing other servers. This made the server and its five tools appear in the IDE, but is broader in scope than the repository; an end-to-end call remains to be verified.
 2. **Claude Code**:
    - Configured via `.claude/mcp.json` or user `~/.claude.json` referencing `hybrid-sdlc mcp`.
    - Workflow documented in repository `CLAUDE.md`.
@@ -388,6 +397,7 @@ closure are recorded in `docs/implementation_tasks.md`.
 ### Phase 7: Packaging, Runtime Deployment, Hardware Benchmarks & Release Validation
 - Extend the Phase 2 CI foundation with distribution packaging and clean-install smoke tests.
 - Validate the Docker Compose deployment and document external/native server fallbacks.
+- Prioritize the optional Strata Docker setup and compatibility evaluation while the remaining llama.cpp live smoke rerun is paused. Record GPU/API validation separately from Aider smoke and native-versus-Docker performance evidence (HSDLC-064A/064B).
 - Benchmark Qwen 3.6 35B-A3B (`Q4_K_S`) on the RTX 3090 under the 16K worker profile.
 - Compare native Windows and Docker/WSL2 using identical weights, prompts, contexts, and task fixtures.
 - Evaluate Qwen 3.6 27B only as a measured quality profile, not as an assumed speed improvement.
@@ -436,4 +446,4 @@ closure are recorded in `docs/implementation_tasks.md`.
 ### 4.3 Manual & Hardware Verification
 - **RTX 3090 Local Run**: Execute a realistic refactoring task against a Python fixture repository using Qwen 3.6 35B-A3B on `llama-server`. Measure weights, KV cache, compute buffers, total VRAM, prompt processing, generation throughput, time-to-green, and patch success rate at 16K context before promoting the candidate profile to supported status.
 - **Runtime Comparison**: Repeat the same benchmark with the native Windows server and Docker/WSL2. Record startup time, peak host committed memory, peak VRAM, and inference performance. Keep both launch paths if Docker imposes a material stability or memory penalty.
-- **Antigravity IDE Integration**: Run `submit_spec_job`, yield turn, observe reactive wakeup when the task completes, and verify diff summary presentation.
+- **Antigravity IDE Integration**: Run `submit_spec_job`, poll `get_job_status` to completion, and verify diff summary presentation. Record a separate end-to-end result before claiming reactive wakeup.

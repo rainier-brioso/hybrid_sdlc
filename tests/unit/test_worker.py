@@ -127,6 +127,14 @@ def test_worker_executes_claim_and_persists_result_while_ignoring_artifacts(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     _init_repo(tmp_path)
+    (tmp_path / "context.py").write_text("value = 1\n", encoding="utf-8")
+    (tmp_path / "hybrid_sdlc.toml").write_text(
+        'aider_repo_map_tokens = 2048\naider_edit_files = ["context.py"]\n'
+        '[command_profiles.pytest]\nargv = ["pytest"]\n',
+        encoding="utf-8",
+    )
+    subprocess.run(["git", "add", "hybrid_sdlc.toml", "context.py"], cwd=tmp_path, check=True)
+    subprocess.run(["git", "commit", "-qm", "configure Aider context"], cwd=tmp_path, check=True)
     manager = JobManager(tmp_path)
     job = manager.create("spec.md", "T001", test_profile="pytest")
     # The queued record and transition lock live under the ignored artifact directory.
@@ -168,11 +176,19 @@ def test_worker_executes_claim_and_persists_result_while_ignoring_artifacts(
         assert child_result.exit_code == 0
         return _success_result(tmp_path)
 
-    monkeypatch.setattr("hybrid_sdlc.worker.run_bounded_loop", fake_run_loop)
+    captured_args: dict[str, object] = {}
+
+    def capture_run_loop(**kwargs: object) -> RunResult:
+        captured_args.update(kwargs)
+        return fake_run_loop(**kwargs)
+
+    monkeypatch.setattr("hybrid_sdlc.worker.run_bounded_loop", capture_run_loop)
 
     completed = run_worker(job.job_id, tmp_path, heartbeat_interval_seconds=0.01)
 
     assert completed.status is JobStatus.COMPLETED
+    assert captured_args["repo_map_tokens"] == 2048
+    assert captured_args["target_files"] == [Path("context.py")]
     assert completed.worker_pid is not None
     assert completed.worker_created_at is not None
     assert abs(
