@@ -150,19 +150,23 @@ class JobManager:
         host_url: str | None = None,
         model: str | None = None,
         max_retries: int | None = None,
+        job_id: str | None = None,
     ) -> JobRecord:
         """Persist a queued job, retrying if an ID already exists."""
 
+        allocated_id = validate_job_id(job_id) if job_id is not None else None
         for _ in range(10):
-            job_id = new_job_id()
-            path = self._job_path(job_id)
+            current_id = allocated_id or new_job_id()
+            path = self._job_path(current_id)
             path.parent.mkdir(parents=True, exist_ok=True)
             with FileLock(str(path) + ".transition.lock"):
                 if path.exists():
+                    if allocated_id is not None:
+                        raise RuntimeError("Requested job ID already exists")
                     continue
                 now = datetime.now(UTC)
                 record = JobRecord(
-                    job_id=job_id,
+                    job_id=current_id,
                     spec_path=spec_path,
                     task_id=task_id,
                     test_profile=test_profile,

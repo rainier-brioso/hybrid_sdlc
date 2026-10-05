@@ -699,12 +699,29 @@ A task is complete when:
 
 ## Phase 7 — Packaging, Runtime Deployment, Hardware Validation, and Release
 
-- [ ] **HSDLC-063 — Add packaging smoke tests**  
-  Files: `.github/workflows/ci.yml`, `tests/packaging/`  
+- [x] **HSDLC-063 — Add packaging smoke tests**
+  Files: `.github/workflows/ci.yml`, `pyproject.toml`, `scripts/packaging_smoke.py`, `tests/packaging/`, `docs/development.md`
   Depends on: HSDLC-062  
   Acceptance:
   - Build wheel and source distribution, install each into a clean environment, and run both entry points.
   - Built distributions contain required templates and exclude tests, logs, weights, and local artifacts as intended.
+  Validation (2026-10-05): Windows clean-install smoke passed for the wheel,
+  source distribution, and a wheel rebuilt from the source distribution in
+  separate Python 3.12 environments. Both CLI help entry points and installed
+  MCP imports passed; module origins were inside the new environments, not the
+  checkout. Archive templates matched canonical source bytes and installed
+  initialization output. Only the external Spec Kit capability probe was
+  mocked for initialization; this is not a live Spec Kit compatibility test.
+  The opt-in packaging pytest invocation passed all six checks, including
+  missing-input failure and template-drift regressions. Lint/format passed.
+  The former integration wheel-build test moved to this dedicated path so
+  ordinary pytest stays offline. CI now requires the Ubuntu/Python 3.12
+  packaging job through `CI / Required`; remote CI execution is still pending.
+  Regression validation: 410 passed, 13 skipped (12 Windows environment limits
+  plus the intentionally opt-in distribution smoke), coverage 80.26%; final
+  packaging checks passed all six tests separately. Mypy passed for 20 source
+  files. Independent review identified source-archive prefix and canonical
+  template-parity gaps; both were corrected and validated before handoff.
 
 - [x] **HSDLC-064 — Validate the portable llama.cpp deployment contract**  
   Files: `compose.yaml`, `.env.example`, `config/model-profiles/`, `docs/llama-server-docker.md`, `tests/unit/test_repository_layout.py`  
@@ -805,6 +822,62 @@ A task is complete when:
   omission preserves repository-map context; the explicit `0` fixture rerun
   passed clean-diff acceptance. Keep this task open for map-enabled cache
   handling: this opt-in mode does not solve cache artifacts for general tasks.
+
+- [x] **HSDLC-064D - Add explicit managed Strata lifecycle commands**
+  Files: `src/hybrid_sdlc/runtime_strata.py`, `src/hybrid_sdlc/_runtime/strata/`,
+  CLI/runner/submission/worker hooks, runtime unit/CLI integration tests,
+  `docs/runtime-management.md`
+  Depends on: HSDLC-063, HSDLC-064A
+  Acceptance:
+  - Ship the required runtime assets and provide explicit start, stop, restart,
+    status, and bounded logs commands for an opt-in managed Docker service.
+  - Resolve the configured service identity, use bounded argv subprocesses,
+    and never execute arbitrary repository-supplied Compose configuration.
+  - Do not stop/restart user-owned or external endpoints. Coordinate lifecycle
+    operations with task execution and refuse disruptive commands while managed
+    jobs are queued/running, including synchronous work and concurrent clients.
+  - Preserve model volumes and user configuration; no volume deletion or
+    automatic large download/build as a side effect of status/diagnostics.
+  - Test lifecycle behavior with mocks; document Docker prerequisites and
+    distinguish startup/loading from inference readiness.
+  Evidence (2026-10-06): implemented opt-in `runtime strata configure`,
+  `start`, `stop`, `restart`, `status`, and bounded `logs`, with JSON output.
+  Packaged assets and validated per-user state establish a unique ownership
+  token, project, model volume, and local Docker context. Common synchronous
+  runner leases and durable submission/worker reservations coordinate clients
+  across repositories; corrupt/unresolved records and uncertain Docker
+  mutations fail closed. Model volumes are never deleted, and image absence
+  produces explicit build guidance from a read-only preflight.
+  Validation: full frozen-source suite 471 passed / 14 skipped, plus the final
+  corrupt-job-record regression passed with appended coverage (81.05% total;
+  runtime module 86%). Ruff lint/format and mypy (21 source files) passed.
+  Seven distribution checks passed, including isolated wheel, sdist, and
+  rebuilt-wheel installs with canonical asset parity. A rendered temporary
+  Compose definition passed read-only validation. Cross-process activity,
+  real submission launch-failure cleanup, and worker terminalization hooks
+  passed without live model calls or Docker mutations.
+  The manual evaluation container retained its exact ID/start time; local
+  repository configuration and installed user CLI were not changed. Windows
+  Job Object survival, symlink privileges, and POSIX-mode tests remain
+  environment-limited; the opt-in packaging test was verified separately.
+  No live managed-service migration/start/stop/restart is claimed, and remote
+  CI for this branch has not yet run. See [runtime guide](runtime-management.md).
+
+- [ ] **HSDLC-064E - Add runtime readiness and suspected-stall diagnostics**
+  Depends on: HSDLC-064D, HSDLC-020
+  Acceptance:
+  - Keep default MCP health checks read-only and non-generating; expose bounded
+    opt-in inference readiness distinctly from endpoint/model availability.
+  - Distinguish unavailable, loading, busy, ready, and suspected-stalled states
+    using available observations; label uncertainty and unsupported telemetry.
+    Idle time, a single timeout, or low token throughput does not prove a stall.
+  - Do not send diagnostic inference concurrently with active managed work or
+    automatically restart on timeout. Recovery remains an explicit lifecycle
+    operation subject to ownership and active-job checks.
+  - Preserve capped, redacted Aider timeout diagnostics without raw prompt or
+    secret persistence; cover diagnostic retention and cleanup in tests.
+  - Record controlled long-idle/retry evidence separately from the successful
+    smoke; do not claim the 2026-10-05 restart proved the prior stall's cause.
 
 - [ ] **HSDLC-065 — Define the hardware benchmark protocol**  
   Files: `benchmarks/README.md`, `benchmarks/benchmark_task.json`  

@@ -11,6 +11,10 @@ Settings are resolved in the following priority order:
 
 Configuration loading is strictly confined to the repository root. `hybrid-sdlc` will never traverse parent directories looking for configuration files.
 
+Optional [managed Strata lifecycle](runtime-management.md) settings are separate,
+user-level Docker service state. Configuring that service does not change this
+repository configuration or select its endpoint for tasks automatically.
+
 ## Aider Repository Map
 
 `aider_repo_map_tokens` optionally sets Aider's repository-map token budget for each task:

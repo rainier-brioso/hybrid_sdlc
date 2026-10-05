@@ -76,10 +76,18 @@ def test_spec_kit_templates_use_canonical_layout_and_require_contracts() -> None
     with (root / "pyproject.toml").open("rb") as stream:
         build_config = tomllib.load(stream)
     force_include = build_config["tool"]["hatch"]["build"]["targets"]["wheel"]["force-include"]
-    assert set(force_include) == {
+    specify_force_include = {
         ".specify/memory/constitution.md",
         ".specify/templates/spec-template.md",
         ".specify/templates/plan-template.md",
         ".specify/templates/tasks-template.md",
     }
-    assert all(path.startswith("hybrid_sdlc/_specify/") for path in force_include.values())
+    runtime_force_include = {
+        "src/hybrid_sdlc/_runtime/strata/compose.yaml": "hybrid_sdlc/_runtime/strata/compose.yaml",
+        "src/hybrid_sdlc/_runtime/strata/worker-defaults.json": "hybrid_sdlc/_runtime/strata/worker-defaults.json",
+    }
+    assert set(force_include) == set(specify_force_include) | set(runtime_force_include)
+    assert all(
+        force_include[path].startswith("hybrid_sdlc/_specify/") for path in specify_force_include
+    )
+    assert {path: force_include[path] for path in runtime_force_include} == runtime_force_include
