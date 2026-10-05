@@ -1,0 +1,47 @@
+{
+  "kind": "antigravity_mcp_sync_smoke",
+  "host_version": null,
+  "host_evidence": "User-reported in-IDE invocation; saved run and patch independently inspected; current IDE version not supplied",
+  "run_id": "run_1791233269_f701bc55",
+  "task_id": "SMOKE-001",
+  "model": "qwen3.8-flash-next-coder-iq1_m",
+  "endpoint_available": true,
+  "readiness_tested_by_probe": false,
+  "status": "success",
+  "started_at": "2026-10-05T20:47:49.341880+00:00",
+  "finished_at": "2026-10-05T20:48:41.738997+00:00",
+  "total_duration_seconds": 52.39657480001915,
+  "attempts": 1,
+  "test_exit_code": 0,
+  "independent_tests_passed": 2,
+  "reviewed_input_cases": ["zero", "positive", "negative"],
+  "changed_files": ["calculator.py", "test_smoke.py"],
+  "additions": 10,
+  "deletions": 1,
+  "commit_hash": null,
+  "baseline_commit": "a648df7d7c402f61c41ce3a88eb46f6e0bd9693e",
+  "source_checkout_status_after_run": "clean",
+  "diff_hash": "34b9deb313018a70a9bbb14f5fbef47be9309fb8ca7450a149f93c9c6558dd39",
+  "strata_request_metrics": {
+    "time": 1791233273.8394692,
+    "duration_s": 46.6,
+    "prompt_tokens": 2302,
+    "reused": 0,
+    "output_tokens": 399,
+    "prompt_ms": 37483.0,
+    "decode_ms": 9094.5,
+    "decode_tok_s": 43.9
+  },
+  "runtime_observation": {
+    "previous_run": "run_1791231526_049a1603",
+    "recovery_action": "User restarted only the Strata container before retrying",
+    "user_reported_prior_idle_period": "almost 24 hours",
+    "hypothesis": "Long idle period may be associated with stalled prompt processing",
+    "cause_confirmed": false
+  },
+  "limitations": [
+    "Single synchronous smoke; async survival, displayed progress, and reactive wakeup remain unverified.",
+    "Success after restart does not prove idle duration caused the prior timeout or establish reliability after another long idle period.",
+    "Not a clean-machine installation test or native-versus-Docker performance comparison."
+  ]
+}

@@ -1,0 +1,40 @@
+{
+  "kind": "antigravity_mcp_sync_timeout",
+  "host_version": null,
+  "host_evidence": "User-reported in-IDE tool calls; current IDE version not supplied",
+  "run_id": "run_1791231526_049a1603",
+  "task_id": "SMOKE-001",
+  "model": "qwen3.8-flash-next-coder-iq1_m",
+  "endpoint_available": true,
+  "readiness_tested": false,
+  "started_at": "2026-10-05T20:18:46.733952+00:00",
+  "finished_at": "2026-10-05T20:21:17.920758+00:00",
+  "status": "failure",
+  "failure_code": "TASK_TIMEOUT",
+  "attempt_timeout_seconds": 150,
+  "total_duration_seconds": 151.18687249999493,
+  "baseline_commit": "a648df7d7c402f61c41ce3a88eb46f6e0bd9693e",
+  "checkout_status_after_run": "clean",
+  "patch_bytes": 0,
+  "tests_executed": false,
+  "strata_request_metrics": {
+    "time": 1791231532.8759677,
+    "duration_s": 160.3,
+    "prompt_tokens": 2297,
+    "reused": 0,
+    "output_tokens": 0,
+    "prompt_ms": 160283.6,
+    "decode_ms": 0.0
+  },
+  "server_log_summary": "Repeated reading-the-prompt messages, followed by zero output tokens and cancellation; log reports 2302 tokens whereas metrics reports 2297",
+  "settings_observed_after_run": {
+    "reasoning_effort": "low",
+    "max_tokens": 4096
+  },
+  "limitations": [
+    "Endpoint discovery is not an inference readiness check.",
+    "This verifies in-IDE invocation and structured failure delivery, not successful coding or asynchronous behavior.",
+    "The request stalled during prompt processing; the underlying runtime cause remains unconfirmed.",
+    "Post-run GPU and memory snapshots do not establish resource usage during the failed request."
+  ]
+}

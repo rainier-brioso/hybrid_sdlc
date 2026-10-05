@@ -644,13 +644,13 @@ A task is complete when:
     project registration/removal syntax, sync-call backgrounding from 2.1.212,
     and explicit async job polling without cross-session wakeup claims.
 
-- [ ] **HSDLC-060 — Add Antigravity integration**  
+- [x] **HSDLC-060 — Add Antigravity integration**
   Files: Antigravity manifest/configuration, `.agents/skills/local-delegate/SKILL.md`, `docs/hosts/antigravity.md`  
   Depends on: HSDLC-044, HSDLC-056  
   Acceptance:
   - Discovery paths and MCP registration are verified on a pinned supported version.
   - Reactive wakeup is promoted from experimental only after a recorded end-to-end test.
-  - In progress: Antigravity IDE `1.107.0` discovered the workspace skill, but
+  - Discovery evidence: Antigravity IDE `1.107.0` discovered the workspace skill, but
     did not list the checked-in `.agents/mcp_config.json` server after an IDE
     reload, even though its terminal resolved `hybrid-sdlc`. A workspace-plugin
     experiment also did not appear, so it was not retained. Explicit
@@ -659,20 +659,41 @@ A task is complete when:
     (2026-10-05), existing configurations receive a separate merged proposal
     for manual review/application with the IDE closed; setup never replaces
     them. New configurations use atomic publication without overwriting a
-    concurrent creator. An end-to-end tool call still needs an in-IDE check. Reactive
+    concurrent creator. The in-IDE smoke evidence is recorded below. Reactive
     wakeup remains experimental.
   - Race-fix validation (2026-10-05): 405 tests passed with 12 environment-limited
     skips; coverage 80.26%, Ruff lint/format and mypy passed. Regression tests
     preserve late config edits and concurrent creation, distinguish proposal
     output and dry-run, and tolerate temporary cleanup failure after publication.
     Independent review confirmed the original lost-update race is resolved.
+  - In-IDE evidence (2026-10-05): Antigravity called both the endpoint probe
+    and synchronous task tool. Run `run_1791231526_049a1603` returned a structured
+    150-second Aider timeout. Strata metrics show zero output tokens and about
+    160 seconds in prompt processing before cancellation. The isolated checkout
+    is clean; that run did not validate successful coding and the current IDE version
+    has not been supplied. See
+    `benchmarks/results/strata/antigravity-mcp-timeout-20261005.json`.
+  - Successful in-IDE retry (2026-10-05): after the user restarted Strata,
+    `run_1791233269_f701bc55` succeeded in 52.4 seconds on attempt one. Independent
+    review confirmed only the allowed files changed; both tests passed, covering
+    zero, positive, and negative inputs. The source fixture remains clean.
+    See `benchmarks/results/strata/antigravity-mcp-smoke-20261005.json`.
+    The user reports almost 24 hours idle before the previous stall; this is
+    an unconfirmed runtime hypothesis, not an MCP failure diagnosis. Reactive
+    wakeup and host async survival remain explicitly unverified.
 
-- [ ] **HSDLC-061 — Add host capability tests and compatibility table**  
+- [x] **HSDLC-061 — Add host capability tests and compatibility table**
   Files: `docs/host-compatibility.md`, `tests/host_contracts/`  
   Depends on: HSDLC-058, HSDLC-059, HSDLC-060  
   Acceptance:
   - Table records tested host version, install method, sync support, async support, progress behavior, and wakeup behavior.
   - Unsupported or unverified claims are labeled explicitly.
+  - Completed (2026-10-05): added a capability table and automated MCP tool
+    discovery/argument-schema contracts (two tests passed). The table distinguishes
+    historical host discovery versions, standalone SDK evidence, and Antigravity's
+    successful in-IDE task; the current IDE version is explicitly not supplied.
+    Async survival, displayed progress, and reactive wakeup require separate
+    evidence and remain labeled unverified.
 
 ---
 
