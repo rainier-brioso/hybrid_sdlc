@@ -16,6 +16,7 @@ from hybrid_sdlc.errors import HybridSDLCError
 from hybrid_sdlc.job_manager import JobManager, JobRecord, JobStatus
 from hybrid_sdlc.models import RunResult, RunStatus
 from hybrid_sdlc.processes import get_process_identity
+from hybrid_sdlc.runtime_strata import release_async_task
 from hybrid_sdlc.security import verify_repo_root
 from hybrid_sdlc.server_probe import select_active_endpoint
 
@@ -141,7 +142,9 @@ def run_worker(
         stop_heartbeat.set()
         heartbeat_thread.join()
         try:
-            return _terminalize_error(manager, job_id, exc)
+            terminal = _terminalize_error(manager, job_id, exc)
+            release_async_task(verified_root, job_id, claimed.host_url)
+            return terminal
         except Exception as persist_error:
             raise RuntimeError(
                 "Could not persist the worker's terminal failure state"
@@ -150,8 +153,16 @@ def run_worker(
     heartbeat_thread.join()
 
     if result.status is RunStatus.SUCCESS:
-        return manager.transition(job_id, JobStatus.COMPLETED, run_result=result)
+        terminal = manager.transition(job_id, JobStatus.COMPLETED, run_result=result)
+        release_async_task(verified_root, job_id, claimed.host_url)
+        return terminal
     if result.status is RunStatus.CANCELLED:
-        return manager.transition(job_id, JobStatus.CANCELLED, run_result=result)
+        terminal = manager.transition(job_id, JobStatus.CANCELLED, run_result=result)
+        release_async_task(verified_root, job_id, claimed.host_url)
+        return terminal
     reason = _failure_reason(result.failure.code if result.failure else "task_failure")
-    return manager.transition(job_id, JobStatus.FAILED, failure_reason=reason, run_result=result)
+    terminal = manager.transition(
+        job_id, JobStatus.FAILED, failure_reason=reason, run_result=result
+    )
+    release_async_task(verified_root, job_id, claimed.host_url)
+    return terminal

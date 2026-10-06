@@ -39,6 +39,10 @@ docker run --rm --gpus all nvidia/cuda:13.0.0-base-ubuntu24.04 nvidia-smi
 
 ## Start and use
 
+The commands below manage the manual evaluation deployment. For the optional
+installed CLI lifecycle commands, see [Managed Strata lifecycle](runtime-management.md).
+That service uses a separate ownership identity and never adopts this deployment.
+
 Run these commands from the repository root. No `.env` file is required:
 
 ```powershell

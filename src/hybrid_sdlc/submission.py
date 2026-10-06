@@ -23,6 +23,7 @@ from hybrid_sdlc.job_manager import (
     JobRecord,
     JobStatus,
 )
+from hybrid_sdlc.runtime_strata import release_async_task, reserve_async_task
 from hybrid_sdlc.security import (
     build_sanitized_environment,
     resolve_confined_path,
@@ -267,13 +268,18 @@ def submit_job(
     )
     _verify_windows_worker_breakaway()
     manager = JobManager(verified_root)
-    job = manager.create(
-        relative_spec,
-        task_id,
-        test_profile=test_profile,
-        host_url=endpoint_url,
-        model=target_model,
-        max_retries=retries,
+    job = reserve_async_task(
+        endpoint_url,
+        verified_root,
+        lambda reserved_job_id: manager.create(
+            relative_spec,
+            task_id,
+            test_profile=test_profile,
+            host_url=endpoint_url,
+            model=target_model,
+            max_retries=retries,
+            job_id=reserved_job_id,
+        ),
     )
     source_root = str(Path(__file__).resolve().parent.parent)
     env = build_sanitized_environment()
@@ -285,6 +291,7 @@ def submit_job(
     except (OSError, ValueError, subprocess.SubprocessError) as exc:
         final = _fail_if_queued(manager, job.job_id)
         if not _startup_succeeded(final):
+            release_async_task(verified_root, job.job_id, endpoint_url)
             raise JobSubmissionError(job.job_id, f"Worker launch failed: {exc}") from exc
         return final
 
@@ -302,6 +309,7 @@ def submit_job(
         if exit_code is not None:
             final = _fail_if_queued(manager, job.job_id)
             if not _startup_succeeded(final):
+                release_async_task(verified_root, job.job_id, endpoint_url)
                 raise JobSubmissionError(
                     job.job_id,
                     f"Worker exited with code {exit_code} before claiming the job",
@@ -311,6 +319,7 @@ def submit_job(
 
     final = _fail_if_queued(manager, job.job_id)
     if not _startup_succeeded(final):
+        release_async_task(verified_root, job.job_id, endpoint_url)
         if final.status is JobStatus.FAILED and final.worker_pid is None:
             if child.poll() is None:
                 _stop_unclaimed_worker(child)

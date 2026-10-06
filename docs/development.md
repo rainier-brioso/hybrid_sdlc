@@ -101,7 +101,7 @@ uv run pytest --cov=hybrid_sdlc.security tests/unit/test_security.py
 ## CI Pipeline
 
 Continuous integration runs on every pull request and push to `main`. The workflow is defined in
-`.github/workflows/ci.yml`. The repository contains 50 E2E tests, 13 integration tests, and 84 unit tests.
+`.github/workflows/ci.yml`. The test suite includes unit, integration, and end-to-end coverage.
 
 The Windows/Python 3.12 quality job executes:
 
@@ -115,6 +115,30 @@ Compatibility jobs run the full test suite without repeating static checks or co
 Ubuntu/Python 3.11, 3.12, and 3.13, and macOS/Python 3.12.
 Coverage is gated on Windows because the process-tree implementation contains Windows-only
 branches; the Linux test suite currently measures below the shared 80% threshold even when all tests pass.
+
+The required Ubuntu/Python 3.12 packaging job builds one wheel and one source distribution,
+checks that local settings, tests, caches, logs, and model weights are absent, then installs each
+artifact into a separate temporary environment. It exercises both CLI help entry points and the
+installed `init` command, rebuilds a wheel from the source distribution, and repeats the install
+check for that rebuilt wheel. It compares packaged template bytes with the source templates. The
+initializer smoke stubs only the external Spec Kit capability probe; the installed command and
+packaged template resources run normally. These checks need network access to resolve
+runtime/build dependencies.
+Ordinary pytest remains offline; the distribution smoke skips only when
+`HYBRID_SDLC_PACKAGING_DIST` is unset. When configured, it fails unless the directory contains
+exactly one wheel and one `.tar.gz` source distribution. Run it after
+`uv build --sdist --wheel --out-dir dist` with:
+
+```bash
+HYBRID_SDLC_PACKAGING_DIST=dist uv run pytest -q tests/packaging/test_distribution_smoke.py
+```
+
+In PowerShell, use `uv build --sdist --wheel --out-dir dist` followed by
+`$env:HYBRID_SDLC_PACKAGING_DIST = "dist"; uv run pytest -q tests/packaging/test_distribution_smoke.py`.
+Once configured, the smoke fails if the artifact directory, uv, or package dependencies are unavailable.
+
+The distributions currently contain the Python CLI/MCP package and Spec Kit templates only.
+They do not package or manage Docker services or local model runtimes.
 
 CI permissions are read-only by default and redundant runs are cancelled.
 Bind the stable aggregate check `CI / Required` to the protected-branch ruleset.

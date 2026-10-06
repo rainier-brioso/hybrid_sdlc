@@ -44,6 +44,7 @@ from hybrid_sdlc.models import (
     RunStatus,
 )
 from hybrid_sdlc.processes import SubprocessResult, run_bounded_subprocess
+from hybrid_sdlc.runtime_strata import reserve_managed_endpoint
 from hybrid_sdlc.security import build_sanitized_environment, resolve_confined_path
 from hybrid_sdlc.worktrees import (
     WorktreeRecord,
@@ -545,6 +546,7 @@ def _isolated_test_executable(
     )
 
 
+@reserve_managed_endpoint
 def run_bounded_loop(
     repo_root: Path,
     spec_path: Path | str,

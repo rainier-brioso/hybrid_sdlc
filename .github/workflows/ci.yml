@@ -85,12 +85,39 @@ jobs:
         env:
           PYTHONUNBUFFERED: "1"
 
+  packaging:
+    name: Packaging Smoke (Python 3.12, ubuntu-latest)
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v5.1.0
+
+      - name: Set up uv
+        uses: astral-sh/setup-uv@v10.2.0
+        with:
+          version: "0.5.28"
+          enable-cache: true
+          cache-dependency-glob: "uv.lock"
+          python-version: "3.12"
+
+      - name: Sync frozen development dependencies
+        run: uv sync --frozen --group dev
+
+      - name: Build wheel and source distribution
+        run: uv build --sdist --wheel --out-dir dist
+
+      - name: Install and exercise each distribution
+        run: uv run pytest -q tests/packaging/test_distribution_smoke.py
+        env:
+          HYBRID_SDLC_PACKAGING_DIST: dist
+
   required:
     name: CI / Required
     if: always()
     needs:
       - quality-gate
       - compatibility
+      - packaging
     runs-on: ubuntu-latest
     permissions:
       contents: read
@@ -99,10 +126,12 @@ jobs:
         env:
           QUALITY_GATE_RESULT: ${{ needs.quality-gate.result }}
           COMPATIBILITY_RESULT: ${{ needs.compatibility.result }}
+          PACKAGING_RESULT: ${{ needs.packaging.result }}
         run: |
-          if [ "$QUALITY_GATE_RESULT" != "success" ] || [ "$COMPATIBILITY_RESULT" != "success" ]; then
+          if [ "$QUALITY_GATE_RESULT" != "success" ] || [ "$COMPATIBILITY_RESULT" != "success" ] || [ "$PACKAGING_RESULT" != "success" ]; then
             echo "quality-gate result: $QUALITY_GATE_RESULT"
             echo "compatibility result: $COMPATIBILITY_RESULT"
+            echo "packaging result: $PACKAGING_RESULT"
             exit 1
           fi
           echo "All required jobs succeeded."

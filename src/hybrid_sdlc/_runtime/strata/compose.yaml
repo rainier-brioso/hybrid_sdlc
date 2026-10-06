@@ -1,0 +1,48 @@
+services:
+  strata-server:
+    image: hybrid-sdlc/strata:v0.1.39-cuda13-sm86
+    pull_policy: never
+    gpus: all
+    environment:
+      FAMILY: coder
+      MODEL: IQ1_M
+      CONTEXT: "16384"
+      VISION: "no"
+      KV: int8
+      LOW_RAM: "on"
+      GPU: "0"
+      HOST: 0.0.0.0
+      PORT: "8080"
+      REINSTALL: "0"
+    ports:
+      - "127.0.0.1:__PORT__:8080"
+    volumes:
+      - __MODEL_VOLUME__:/data
+      - ./worker-defaults.json:/opt/strata/strata-coder-iq1_m.shared-settings.json:ro
+    labels:
+      com.hybrid-sdlc.managed: "true"
+      com.hybrid-sdlc.owner: "__OWNER_TOKEN__"
+    healthcheck:
+      test:
+        - CMD
+        - /opt/strata/.venv/bin/python
+        - -c
+        - "import json,urllib.request; d=json.load(urllib.request.urlopen('http://127.0.0.1:8080/health',timeout=5)); raise SystemExit(0 if d.get('loaded') is True else 1)"
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 2h
+    init: true
+    restart: "no"
+    stop_grace_period: 30s
+    ulimits:
+      memlock:
+        soft: -1
+        hard: -1
+
+volumes:
+  __MODEL_VOLUME__:
+    name: __MODEL_VOLUME__
+    labels:
+      com.hybrid-sdlc.managed: "true"
+      com.hybrid-sdlc.owner: "__OWNER_TOKEN__"

@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 import sys
+from collections.abc import Callable
 from pathlib import Path
 from typing import NoReturn
 
@@ -24,6 +25,27 @@ from hybrid_sdlc.git_tools import validate_committed_path
 from hybrid_sdlc.host_setup import HostSetupError, setup_antigravity
 from hybrid_sdlc.job_manager import InvalidJobTransitionError, JobManager, JobRecord, JobStatus
 from hybrid_sdlc.models import ProbeResult, RunStatus
+from hybrid_sdlc.runtime_strata import (
+    RuntimeManagementError,
+)
+from hybrid_sdlc.runtime_strata import (
+    configure as configure_strata_runtime,
+)
+from hybrid_sdlc.runtime_strata import (
+    logs as strata_runtime_logs,
+)
+from hybrid_sdlc.runtime_strata import (
+    restart as restart_strata_runtime,
+)
+from hybrid_sdlc.runtime_strata import (
+    start as start_strata_runtime,
+)
+from hybrid_sdlc.runtime_strata import (
+    status as strata_runtime_status,
+)
+from hybrid_sdlc.runtime_strata import (
+    stop as stop_strata_runtime,
+)
 from hybrid_sdlc.security import resolve_confined_path, verify_repo_root
 from hybrid_sdlc.server_probe import probe_endpoint, select_active_endpoint
 from hybrid_sdlc.spec_initializer import (
@@ -108,6 +130,108 @@ def setup_antigravity_cmd(dry_run: bool) -> None:
         click.echo(f"Added hybrid-sdlc to {result.config_path}")
     click.echo(f"  command: {result.executable}")
     click.echo("  args: mcp")
+
+
+@cli.group("runtime")
+def runtime_group() -> None:
+    """Manage explicitly configured local inference runtimes."""
+
+
+@runtime_group.group("strata")
+def runtime_strata_group() -> None:
+    """Manage this user's opt-in Docker Strata service."""
+
+
+def _runtime_result(result: dict[str, object], *, json_mode: bool) -> None:
+    if json_mode:
+        click.echo(json.dumps(result, indent=2))
+        return
+    for key, value in result.items():
+        click.echo(f"{key}: {value}")
+
+
+def _runtime_error(exc: RuntimeManagementError, *, json_mode: bool) -> NoReturn:
+    if json_mode:
+        click.echo(
+            json.dumps(
+                {"error": {"code": exc.code, "message": exc.message, "details": exc.details}},
+                indent=2,
+            ),
+            err=True,
+        )
+        raise click.exceptions.Exit(int(exc.exit_code)) from exc
+    raise click.ClickException(exc.message) from exc
+
+
+@runtime_strata_group.command("configure")
+@click.option("--port", type=click.IntRange(1, 65535), default=8080, show_default=True)
+@click.option(
+    "--reuse-model-volume",
+    "model_volume",
+    help="Explicitly reuse an existing Docker volume by name for model files.",
+)
+@click.option("--json", "json_mode", is_flag=True, help="Output machine-readable JSON.")
+def runtime_strata_configure(port: int, model_volume: str | None, json_mode: bool) -> None:
+    """Write the managed runtime definition; this does not contact Docker or start it."""
+
+    try:
+        result = configure_strata_runtime(port=port, model_volume=model_volume)
+    except RuntimeManagementError as exc:
+        _runtime_error(exc, json_mode=json_mode)
+    _runtime_result(result, json_mode=json_mode)
+
+
+def _runtime_action(action: Callable[[], dict[str, object]], json_mode: bool) -> None:
+    try:
+        result = action()
+    except RuntimeManagementError as exc:
+        _runtime_error(exc, json_mode=json_mode)
+    _runtime_result(result, json_mode=json_mode)
+
+
+@runtime_strata_group.command("start")
+@click.option("--json", "json_mode", is_flag=True, help="Output machine-readable JSON.")
+def runtime_strata_start(json_mode: bool) -> None:
+    """Start the managed service without building or pulling its image."""
+
+    _runtime_action(start_strata_runtime, json_mode)
+
+
+@runtime_strata_group.command("stop")
+@click.option("--json", "json_mode", is_flag=True, help="Output machine-readable JSON.")
+def runtime_strata_stop(json_mode: bool) -> None:
+    """Stop the managed service after checking for queued or running tasks."""
+
+    _runtime_action(stop_strata_runtime, json_mode)
+
+
+@runtime_strata_group.command("restart")
+@click.option("--json", "json_mode", is_flag=True, help="Output machine-readable JSON.")
+def runtime_strata_restart(json_mode: bool) -> None:
+    """Restart the managed service after checking for queued or running tasks."""
+
+    _runtime_action(restart_strata_runtime, json_mode)
+
+
+@runtime_strata_group.command("status")
+@click.option("--json", "json_mode", is_flag=True, help="Output machine-readable JSON.")
+def runtime_strata_status_cmd(json_mode: bool) -> None:
+    """Report the managed Docker container state without probing model readiness."""
+
+    _runtime_action(strata_runtime_status, json_mode)
+
+
+@runtime_strata_group.command("logs")
+@click.option("--tail", type=click.IntRange(1, 10000), default=100, show_default=True)
+@click.option("--json", "json_mode", is_flag=True, help="Output machine-readable JSON.")
+def runtime_strata_logs_cmd(tail: int, json_mode: bool) -> None:
+    """Show bounded logs from the managed service."""
+
+    try:
+        result = strata_runtime_logs(tail=tail)
+    except RuntimeManagementError as exc:
+        _runtime_error(exc, json_mode=json_mode)
+    _runtime_result(result, json_mode=json_mode)
 
 
 @cli.command("init")

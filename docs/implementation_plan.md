@@ -396,6 +396,13 @@ closure are recorded in `docs/implementation_tasks.md`.
 
 ### Phase 7: Packaging, Runtime Deployment, Hardware Benchmarks & Release Validation
 - Extend the Phase 2 CI foundation with distribution packaging and clean-install smoke tests.
+- Add explicit lifecycle commands for an opt-in, app-managed Strata Docker
+  service after its runtime assets are packaged. Preserve model volumes and
+  refuse stop/restart while managed tasks are active (HSDLC-064D).
+- Extend read-only runtime diagnostics with bounded opt-in inference readiness,
+  retained redacted timeout evidence, and suspected-stall reporting. Do not
+  infer stalls from idle duration or automatically restart an external/shared
+  endpoint (HSDLC-064E).
 - Validate the Docker Compose deployment and document external/native server fallbacks.
 - Prioritize the optional Strata Docker setup and compatibility evaluation while the remaining llama.cpp live smoke rerun is paused. Record GPU/API validation separately from Aider smoke and native-versus-Docker performance evidence (HSDLC-064A/064B).
 - Benchmark Qwen 3.6 35B-A3B (`Q4_K_S`) on the RTX 3090 under the 16K worker profile.

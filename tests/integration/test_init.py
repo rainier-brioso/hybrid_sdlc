@@ -2,10 +2,7 @@
 
 from __future__ import annotations
 
-import os
 import subprocess
-import sys
-import zipfile
 from pathlib import Path
 
 import pytest
@@ -559,52 +556,6 @@ def test_dry_run_previews_interrupted_journal_without_recovery_writes(
     assert journal.read_bytes() == journal_bytes
     assert (tmp_path / _template_paths()[0]).read_bytes() == template_bytes
     assert not (tmp_path / MANIFEST_RELATIVE_PATH).exists()
-
-
-def test_canonical_assets_are_in_wheel(tmp_path: Path) -> None:
-    """Build the actual wheel and verify all initializer resources are present."""
-    root = Path(__file__).resolve().parents[2]
-    output = tmp_path / "dist"
-    subprocess.run(
-        ["uv", "build", "--wheel", "--out-dir", str(output)],
-        cwd=root,
-        check=True,
-        capture_output=True,
-        text=True,
-    )
-    wheels = list(output.glob("*.whl"))
-    assert len(wheels) == 1
-    with zipfile.ZipFile(wheels[0]) as wheel:
-        members = set(wheel.namelist())
-        installed = tmp_path / "installed"
-        wheel.extractall(installed)
-        canonical_assets = {
-            relative_path: (root / relative_path).read_bytes()
-            for relative_path in _template_paths()
-        }
-    for relative_path in _template_paths():
-        resource_path = "hybrid_sdlc/_specify/" + relative_path.removeprefix(".specify/")
-        assert resource_path in members
-        with zipfile.ZipFile(wheels[0]) as wheel:
-            assert wheel.read(resource_path) == canonical_assets[relative_path]
-    environment = os.environ.copy()
-    environment["PYTHONPATH"] = str(installed)
-    subprocess.run(
-        [
-            sys.executable,
-            "-c",
-            "import sys; from pathlib import Path; "
-            "import hybrid_sdlc.spec_initializer as module; "
-            "assert Path(module.__file__).resolve().is_relative_to(Path(sys.argv[1]).resolve()); "
-            "assert len(module._canonical_templates()) == 4",
-            str(installed),
-        ],
-        cwd=tmp_path,
-        env=environment,
-        check=True,
-        capture_output=True,
-        text=True,
-    )
 
 
 def _template_paths() -> tuple[str, ...]:
