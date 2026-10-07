@@ -500,6 +500,50 @@ def test_bounded_loop_aider_timeout(tmp_path: Path) -> None:
 
     assert result.failure is not None
     assert result.failure.code == "TASK_TIMEOUT"
+    metadata = result.failure.details["timeout_diagnostics"]
+    assert metadata["remote_request_cancellation"] == "unknown"
+    assert metadata["duration_seconds"] >= 0
+    assert len(json.dumps(metadata)) < 1024
+
+
+def test_aider_timeout_never_persists_output_text(tmp_path: Path) -> None:
+    _setup_git_repo(tmp_path)
+    spec = tmp_path / "spec.md"
+    spec.write_text("# Spec", encoding="utf-8")
+    _commit_file(tmp_path, "spec.md")
+    helper = tmp_path / "helpers" / "private_output.py"
+    helper.parent.mkdir()
+    helper.write_text(
+        "import sys,time\n"
+        "print('PRIVATE_PROMPT_SENTINEL secret=super-secret-123 ' * 1000, flush=True)\n"
+        "print('PRIVATE_SOURCE_SENTINEL', file=sys.stderr, flush=True)\n"
+        "time.sleep(30)\n",
+        encoding="utf-8",
+    )
+    result = run_bounded_loop(
+        repo_root=tmp_path,
+        spec_path=spec,
+        task_id="TASK-TIMEOUT",
+        profile=CommandProfile(name="passing", argv=[Path(sys.executable).name, "-c", "pass"]),
+        endpoint_url="http://user:private-password@127.0.0.1:8090/v1",
+        model_name="Qwen",
+        attempt_timeout_seconds=1,
+        buffer_cap_bytes=1024,
+        aider_cmd=[sys.executable, str(helper)],
+    )
+    assert result.failure is not None
+    assert result.failure.code == "TASK_TIMEOUT"
+    assert result.failure.details["timeout_diagnostics"]["output_truncated"] is True
+    assert result.failure.details["timeout_diagnostics"]["observed_stdout_bytes"] > 0
+    for path in (tmp_path / ".hybrid_sdlc").rglob("*.json"):
+        text = path.read_text(encoding="utf-8")
+        for sentinel in (
+            "PRIVATE_PROMPT_SENTINEL",
+            "PRIVATE_SOURCE_SENTINEL",
+            "super-secret-123",
+            "private-password",
+        ):
+            assert sentinel not in text
 
 
 def test_bounded_loop_baseline_cancellation(tmp_path: Path) -> None:

@@ -25,27 +25,14 @@ from hybrid_sdlc.git_tools import validate_committed_path
 from hybrid_sdlc.host_setup import HostSetupError, setup_antigravity
 from hybrid_sdlc.job_manager import InvalidJobTransitionError, JobManager, JobRecord, JobStatus
 from hybrid_sdlc.models import ProbeResult, RunStatus
-from hybrid_sdlc.runtime_strata import (
-    RuntimeManagementError,
-)
-from hybrid_sdlc.runtime_strata import (
-    configure as configure_strata_runtime,
-)
-from hybrid_sdlc.runtime_strata import (
-    logs as strata_runtime_logs,
-)
-from hybrid_sdlc.runtime_strata import (
-    restart as restart_strata_runtime,
-)
-from hybrid_sdlc.runtime_strata import (
-    start as start_strata_runtime,
-)
-from hybrid_sdlc.runtime_strata import (
-    status as strata_runtime_status,
-)
-from hybrid_sdlc.runtime_strata import (
-    stop as stop_strata_runtime,
-)
+from hybrid_sdlc.runtime_strata import RuntimeManagementError
+from hybrid_sdlc.runtime_strata import configure as configure_strata_runtime
+from hybrid_sdlc.runtime_strata import diagnose as diagnose_strata_runtime
+from hybrid_sdlc.runtime_strata import logs as strata_runtime_logs
+from hybrid_sdlc.runtime_strata import restart as restart_strata_runtime
+from hybrid_sdlc.runtime_strata import start as start_strata_runtime
+from hybrid_sdlc.runtime_strata import status as strata_runtime_status
+from hybrid_sdlc.runtime_strata import stop as stop_strata_runtime
 from hybrid_sdlc.security import resolve_confined_path, verify_repo_root
 from hybrid_sdlc.server_probe import probe_endpoint, select_active_endpoint
 from hybrid_sdlc.spec_initializer import (
@@ -221,6 +208,40 @@ def runtime_strata_status_cmd(json_mode: bool) -> None:
     _runtime_action(strata_runtime_status, json_mode)
 
 
+@runtime_strata_group.command("diagnose")
+@click.option(
+    "--repo-root",
+    type=click.Path(path_type=Path, exists=True, file_okay=False),
+    default=None,
+    help="Repository containing the explicit timeout run record (optional).",
+)
+@click.option("--run-id", default=None, help="Recent timeout run ID; requires --repo-root.")
+@click.option("--readiness", is_flag=True, help="Opt in to a bounded test inference request.")
+@click.option(
+    "--timeout", type=click.IntRange(1, 30), default=None, help="Per-request timeout in seconds."
+)
+@click.option("--json", "json_mode", is_flag=True, help="Output machine-readable JSON.")
+def runtime_strata_diagnose(
+    readiness: bool,
+    timeout: int | None,
+    json_mode: bool,
+    repo_root: Path | None,
+    run_id: str | None,
+) -> None:
+    """Diagnose the configured managed endpoint without starting the runtime."""
+
+    try:
+        result = diagnose_strata_runtime(
+            readiness=readiness,
+            timeout=float(timeout or (10 if readiness else 3)),
+            repo_root=repo_root,
+            run_id=run_id,
+        )
+    except RuntimeManagementError as exc:
+        _runtime_error(exc, json_mode=json_mode)
+    _runtime_result(result, json_mode=json_mode)
+
+
 @runtime_strata_group.command("logs")
 @click.option("--tail", type=click.IntRange(1, 10000), default=100, show_default=True)
 @click.option("--json", "json_mode", is_flag=True, help="Output machine-readable JSON.")
@@ -354,7 +375,7 @@ def check_cmd(
                 check_readiness=readiness,
             )
             results.append(res)
-            if res.available:
+            if res.available and (not readiness or res.readiness_passed):
                 any_healthy = True
     else:
         try:
@@ -388,6 +409,8 @@ def check_cmd(
                 click.echo(f"  Model: {r.matched_model or 'default'}")
                 if readiness:
                     click.echo(f"  Readiness: {'PASSED' if r.readiness_passed else 'FAILED'}")
+                    if r.error:
+                        click.echo(f"  Error [{r.error.code}]: {r.error.message}")
             elif r.error:
                 click.echo(f"  Error [{r.error.code}]: {r.error.message}")
 

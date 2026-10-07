@@ -17,7 +17,8 @@
   "changed_files": ["calculator.py", "test_smoke.py"],
   "diff_hash": "34b9deb313018a70a9bbb14f5fbef47be9309fb8ca7450a149f93c9c6558dd39",
   "commit_hash": null,
-  "worktree_path": "C:\\Users\\ray\\AppData\\Local\\Temp\\hsdlc-wt\\17c0fc4239de24363218\\5aadf689d5604306be84fed949d0b62f\\checkout",
+  "worktree_path": "<temp-dir>/hsdlc-wt/17c0fc4239de24363218/5aadf689d5604306be84fed949d0b62f/checkout",
+  "path_redaction": "Machine-specific temporary directory replaced; measurements unchanged.",
   "new_request_metrics": [
     {
       "time": 1791145131.736245,

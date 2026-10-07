@@ -484,3 +484,46 @@ time.sleep(60)
     if grand_pid_file.exists():
         grand_pid = int(grand_pid_file.read_text().strip())
         assert not _is_pid_alive(grand_pid), f"Grandchild PID {grand_pid} still alive after cleanup"
+
+
+def test_bounded_subprocess_writes_stdin_without_blocking(tmp_path: Path) -> None:
+    result = run_bounded_subprocess(
+        [sys.executable, "-c", "import sys; sys.stdout.buffer.write(sys.stdin.buffer.read())"],
+        tmp_path,
+        dict(os.environ),
+        timeout_seconds=3,
+        stdin_data=b"probe input",
+    )
+    assert result.exit_code == 0
+    assert result.stdout == "probe input"
+    assert not result.timed_out
+
+
+def test_bounded_subprocess_timeout_covers_blocked_stdin_writer(tmp_path: Path) -> None:
+    started = time.monotonic()
+    result = run_bounded_subprocess(
+        [sys.executable, "-c", "import time; time.sleep(30)"],
+        tmp_path,
+        dict(os.environ),
+        timeout_seconds=0.2,
+        stdin_data=b"x" * 1024 * 1024,
+    )
+    assert result.timed_out
+    assert time.monotonic() - started < 4
+
+
+def test_subprocess_deadline_uses_one_clock(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # On Windows Python 3.12 these clocks need not share an epoch. A
+    # different monotonic origin must not make a successful child time out.
+    monkeypatch.setattr(time, "monotonic", lambda: time.perf_counter() + 60)
+    result = run_bounded_subprocess(
+        [sys.executable, "-c", "print('done')"],
+        tmp_path,
+        dict(os.environ),
+        timeout_seconds=2,
+    )
+    assert not result.timed_out
+    assert result.exit_code == 0
+    assert result.stdout.strip() == "done"

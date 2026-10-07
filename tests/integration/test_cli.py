@@ -179,6 +179,44 @@ def test_cli_check_healthy(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> N
     assert data["matched_model"] == "Qwen/Qwen2.5-Coder-32B-Instruct"
 
 
+def test_cli_check_readiness_failure_keeps_availability_but_exits_nonzero(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    _init_git_repo(tmp_path)
+    monkeypatch.setattr(
+        "hybrid_sdlc.runtime_strata._state_root", lambda: tmp_path / "runtime-state"
+    )
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        if request.url.path.endswith("/models"):
+            return httpx.Response(200, json={"data": [{"id": "Qwen/Qwen2.5-Coder-32B-Instruct"}]})
+        return httpx.Response(503, text="private server detail")
+
+    transport = httpx.MockTransport(handler)
+    monkeypatch.setattr(
+        httpx, "Client", lambda **kwargs: _orig_client(transport=transport, **kwargs)
+    )
+    result = CliRunner().invoke(
+        cli,
+        [
+            "check",
+            "--repo-root",
+            str(tmp_path),
+            "--host-url",
+            "http://127.0.0.1:8090/v1",
+            "--readiness",
+            "--json",
+        ],
+    )
+    assert result.exit_code == ExitCode.SERVER_PROBE_ERROR
+    data = json.loads(result.output)
+    assert data["available"] is True
+    assert data["readiness_tested"] is True
+    assert data["readiness_passed"] is False
+    assert data["error"]["code"] == "READINESS_HTTP_ERROR"
+    assert "private server detail" not in result.output
+
+
 def test_cli_check_unavailable(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
     _init_git_repo(tmp_path)
 

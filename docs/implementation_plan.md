@@ -274,7 +274,7 @@ Rather than assuming all tools share a single installation marketplace, each hos
 
 ## 2. Proposed Project Structure
 
-Target Repository: `c:\Users\ray\Documents\workspace\hybrid_sdlc`
+Target Repository: your local checkout of `hybrid_sdlc` (no fixed machine path).
 
 ```
 hybrid_sdlc/

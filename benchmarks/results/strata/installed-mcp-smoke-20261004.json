@@ -1,6 +1,7 @@
 {
   "kind": "installed_mcp_stdio_smoke",
-  "server_command": "C:\\Users\\ray\\.local\\bin\\hybrid-sdlc.exe",
+  "server_command": "<installed-hybrid-sdlc-executable>",
+  "path_redaction": "Machine-specific executable/temporary directories replaced; measurements unchanged.",
   "server_args": ["mcp"],
   "connection": "fresh SDK stdio client; not this chat's closed transport",
   "discovered_tools": ["cancel_spec_job", "check_local_model", "get_job_status", "run_spec_task_sync", "submit_spec_job"],
@@ -16,6 +17,6 @@
   "changed_files": ["calculator.py", "test_smoke.py"],
   "commit_hash": null,
   "diff_hash": "34b9deb313018a70a9bbb14f5fbef47be9309fb8ca7450a149f93c9c6558dd39",
-  "worktree_path": "C:\\Users\\ray\\AppData\\Local\\Temp\\hsdlc-wt\\17c0fc4239de24363218\\28cc4ea3030b444598648ac16669d91a\\checkout",
+  "worktree_path": "<temp-dir>/hsdlc-wt/17c0fc4239de24363218/28cc4ea3030b444598648ac16669d91a/checkout",
   "limitations": ["Current Codex chat tool call returned Transport closed; fresh-client success does not validate that chat connection.", "Single synchronous smoke; no async survival or runtime parity claim.", "Test interpreter supplied on PATH from development venv; not a clean-machine installation rehearsal."]
 }

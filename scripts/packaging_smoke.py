@@ -248,9 +248,9 @@ def smoke_install(
         path.extend(["/usr/bin", "/bin"])
     command_env["PATH"] = os.pathsep.join(path)
     check_origin = (
-        "import pathlib,sys,hybrid_sdlc,hybrid_sdlc.mcp_server; "
+        "import pathlib,sys,hybrid_sdlc,hybrid_sdlc.mcp_server,hybrid_sdlc.probe_worker,hybrid_sdlc.timeout_diagnostics; "
         "v=pathlib.Path(sys.argv[1]).resolve(); "
-        "modules=(hybrid_sdlc,hybrid_sdlc.mcp_server); "
+        "modules=(hybrid_sdlc,hybrid_sdlc.mcp_server,hybrid_sdlc.probe_worker,hybrid_sdlc.timeout_diagnostics); "
         "paths=[pathlib.Path(m.__file__).resolve() for m in modules]; "
         "assert all(p.is_relative_to(v) for p in paths), paths; print(paths)"
     )
