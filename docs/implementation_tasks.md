@@ -1009,6 +1009,72 @@ A task is complete when:
   claims. The operator authorized a preparation commit and local delegation;
   native measurement and HSDLC-065 completion remain deferred.
 
+  Delegation evidence (2026-10-07): preparation commits `2fe85fc` and
+  `d589487` remain local. The disposable clone's first baseline rejected zero
+  discovered tests under Python 3.13; adding the four existing offline probe
+  tests to its local profile established a real baseline. Two subsequent MCP
+  runs (`run_1791402120_f5c89fb3`, `run_1791402346_70c4ca83`) returned
+  `LOOP_ZERO_DIFF` after 98.58 s and 94.71 s, with empty patches. The retry
+  preloaded both target files. Strata's latest generation log explicitly
+  reported reaching all 4096 output tokens while still thinking, with
+  `finish_reason=length` and no answer. This is output-budget exhaustion, not
+  proof of idle/stall or Docker overhead. Validator implementation is still
+  pending; the committed target module is only a placeholder. No returned
+  implementation was applied, no remote push occurred, and the user's local
+  `hybrid_sdlc.toml` remains unchanged. A bounded reasoning budget should be
+  verified and operator-approved before another run.
+
+  Budget verification (2026-10-07): operator approved explicit per-request
+  thinking/output limits. Installed Aider/LiteLLM synthetic loopback capture
+  confirmed `max_tokens=8192` and `reasoning_budget_tokens=1024`; the model's
+  previous `extra_params` were unset. Clone-only `.aider.model.settings.yml`
+  was committed as `e1b93bf` in the disposable fixture, not this source branch.
+  Live run `run_1791404090_fba89bcc` verified the server log transition:
+  `thinking budget reached (1024 tokens)` followed by answering. This is a
+  wrap-up threshold, not a guarantee of exactly 1024 total reasoning tokens.
+  Prompt processing took about 51 s. The unchanged 180 s Aider attempt deadline
+  then cancelled generation at 7350 total output tokens; the runner returned
+  `TASK_TIMEOUT` after 180.86 s. Implementation remains incomplete and no patch
+  was applied. Shared Strata settings, service lifecycle, repository-local user
+  configuration and remote branches were not changed. A longer bounded
+  attempt deadline or smaller delegation is required before retrying.
+
+  Bounded real-task follow-up (2026-10-07): operator approved clone-only
+  300 s attempt / 900 s overall deadlines, retaining 1024 thinking / 8192
+  output tokens. Combined task `run_1791404665_a2964dbc` exhausted output and
+  returned an empty patch after 117.43 s, without a timeout. Splitting the same
+  scope produced a module-only patch in `run_1791404935_b7619538` (120.20 s)
+  and a test-only patch in `run_1791405133_c3ade3af` (200.71 s), both reporting
+  passing configured tests. The module run used baseline checks, not new
+  acceptance coverage. Independent review found blank-string acceptance,
+  huge-integer overflow, nondeterministic diagnostic ordering, three strict
+  mypy errors, and missing test expectations. The single targeted review-repair
+  run `run_1791405455_51b94267` returned an empty patch after 5.95 s; its cause
+  is not established by the structured result. Candidate commits/specs/config
+  remain in the disposable clone only. No candidate code was integrated into
+  this branch, and no remote changes occurred. The timeout profile supported
+  these split runs but is provisional, not quality acceptance or benchmark
+  evidence. Validator task remains incomplete pending review repairs and
+  independent verification.
+
+  BENCH-VALIDATOR-001 completed by operator-approved direct repair (2026-10-07):
+  the local candidate was used as a starting point, not accepted as-is. The
+  source branch now contains the pure offline preflight API and 19 focused
+  tests. Repairs reject blank strings, avoid huge-integer overflow, preserve
+  deterministic diagnostic order, enforce typed additional-setting equality,
+  and compare deeply nested JSON iteratively. Independent review found a
+  recursive-comparison failure; its fix and 500-level matching/mismatching
+  regressions passed follow-up review with no remaining material findings.
+  Final full suite: 677 passed / 14 skipped in 181.56 s, 82.71% total coverage
+  (validator module 99%). The skips retain Windows Job Object/symlink/POSIX
+  limits and the optional distribution-artifact prerequisite, not passes.
+  Ruff formatting/lint and strict mypy (24 source files) pass; standalone
+  Python 3.13 unittest discovery passes all 19 validator tests. The benchmark
+  README documents the API and its structural-only limitations. No fix commit
+  or push was performed, and the user's local configuration is unchanged.
+  HSDLC-065 remains open for verified immutable benchmark inputs; this
+  validator does not supply measurements or authorize comparative claims.
+
 - [ ] **HSDLC-066 — Benchmark Qwen 3.6 35B-A3B native versus Docker**  
   Files: `benchmarks/results/rtx-3090-qwen36-35b-a3b-native.json`, `benchmarks/results/rtx-3090-qwen36-35b-a3b-docker.json`, `docs/model-profiles.md`  
   Depends on: HSDLC-065  

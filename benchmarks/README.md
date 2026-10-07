@@ -6,6 +6,31 @@ manifest at [`benchmark_task.json`](benchmark_task.json) is an unready template;
 fill required pins from the actual artifacts and environment before execution.
 Do not invent a fixture, hashes, prompt, or result.
 
+## Offline preflight
+
+The Python API `hybrid_sdlc.benchmark_manifest.validate_manifest(manifest)`
+accepts a parsed JSON value and returns a deterministic list of field-path
+errors. An empty list means the required preflight pins and comparison settings
+pass structural checks. The shipped unready template must return errors.
+
+```python
+import json
+from pathlib import Path
+
+from hybrid_sdlc.benchmark_manifest import validate_manifest
+
+manifest = json.loads(Path("benchmarks/benchmark_task.json").read_text(encoding="utf-8"))
+errors = validate_manifest(manifest)
+```
+
+This function is offline and does not mutate its input. It does not access
+files, start services, run benchmarks, or verify that a recorded digest matches
+an actual artifact. Tokenizer/configuration provenance still needs independent
+pinning and verification. It does not check ambient conditions, repetitions,
+measurements, acceptance evidence, privacy of the manifest, or eligibility for
+comparative claims. Those protocol gates remain the operator's responsibility;
+successful preflight does not mean a benchmark is complete or authorized.
+
 ## Comparison boundaries
 
 Measure container overhead within one engine and one exact model profile:
