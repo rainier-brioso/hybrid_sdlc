@@ -527,3 +527,98 @@ def test_subprocess_deadline_uses_one_clock(
     assert not result.timed_out
     assert result.exit_code == 0
     assert result.stdout.strip() == "done"
+
+
+@pytest.mark.parametrize(
+    "termination_succeeds,counts,expected",
+    [
+        (False, [0], False),
+        (True, [2, 1, 0], True),
+        (True, [None], False),
+        (True, [1, None], False),
+        (True, [1], False),
+    ],
+)
+def test_windows_job_termination_requires_bounded_confirmed_empty_job(
+    monkeypatch: pytest.MonkeyPatch,
+    termination_succeeds: bool,
+    counts: list[int | None],
+    expected: bool,
+) -> None:
+    import ctypes
+
+    elapsed = 0.0
+    queried: list[int | None] = []
+    terminated: list[tuple[object, ...]] = []
+
+    def sleep(seconds: float) -> None:
+        nonlocal elapsed
+        elapsed += seconds
+
+    def terminate(*args: object) -> bool:
+        terminated.append(args)
+        return termination_succeeds
+
+    def query(*args: object) -> bool:
+        count = counts[min(len(queried), len(counts) - 1)]
+        queried.append(count)
+        assert args[0] == 123
+        assert args[1] == 1  # JobObjectBasicAccountingInformation
+        if count is None:
+            return False
+        args[2]._obj.ActiveProcesses = count
+        return True
+
+    monkeypatch.setattr(process_api, "os", SimpleNamespace(name="nt"))
+    monkeypatch.setattr(
+        process_api, "time", SimpleNamespace(perf_counter=lambda: elapsed, sleep=sleep)
+    )
+    monkeypatch.setattr(
+        ctypes,
+        "windll",
+        SimpleNamespace(
+            kernel32=SimpleNamespace(TerminateJobObject=terminate, QueryInformationJobObject=query)
+        ),
+        raising=False,
+    )
+    job = process_api._WindowsJobObject.__new__(process_api._WindowsJobObject)
+    job.handle = 123
+    assert job.terminate() is expected
+    assert terminated == [(123, 1)]
+    if termination_succeeds:
+        assert queried
+        assert queried[-1] == (0 if expected else counts[-1])
+    else:
+        assert not queried
+    assert elapsed <= 2.0
+    if counts == [1]:
+        assert elapsed == 2.0
+
+
+@pytest.mark.parametrize("confirmed", [False, True, None])
+def test_tree_cleanup_falls_back_unless_job_exit_is_confirmed(
+    monkeypatch: pytest.MonkeyPatch, confirmed: bool | None
+) -> None:
+    proc = SimpleNamespace(pid=123)
+    fallback: list[object] = []
+    job = SimpleNamespace(terminate=lambda: confirmed) if confirmed is not None else None
+    monkeypatch.setattr(process_api, "kill_process_tree", lambda child: fallback.append(child))
+    assert process_api._terminate_owned_tree(proc, job) is (confirmed is True)
+    assert fallback == ([] if confirmed else [proc])
+
+
+def test_windows_taskkill_fallback_has_deadline_and_still_kills_root(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    killed: list[bool] = []
+    proc = SimpleNamespace(pid=123, kill=lambda: killed.append(True))
+
+    def timeout(argv: list[str], **kwargs: object) -> None:
+        assert argv == ["taskkill", "/F", "/T", "/PID", "123"]
+        assert kwargs["timeout"] == 2.0
+        raise subprocess.TimeoutExpired(argv, 2.0)
+
+    monkeypatch.setattr(process_api, "os", SimpleNamespace(name="nt"))
+    monkeypatch.setattr(process_api.subprocess, "run", timeout)
+    process_api.kill_process_tree(proc)
+    assert killed == [True]

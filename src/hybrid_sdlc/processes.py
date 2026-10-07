@@ -282,6 +282,7 @@ class _WindowsJobObject:
         return bool(kernel32.AssignProcessToJobObject(self.handle, process_handle))
 
     def terminate(self) -> bool:
+        """Request termination and confirm the entire job drained within two seconds."""
         if not self.handle or os.name != "nt":
             return False
         import ctypes
@@ -290,7 +291,59 @@ class _WindowsJobObject:
         kernel32 = ctypes.windll.kernel32  # type: ignore[attr-defined]
         kernel32.TerminateJobObject.restype = wintypes.BOOL
         kernel32.TerminateJobObject.argtypes = [wintypes.HANDLE, wintypes.UINT]
-        return bool(kernel32.TerminateJobObject(self.handle, 1))
+        if not kernel32.TerminateJobObject(self.handle, 1):
+            return False
+        # TerminateJobObject initiates asynchronous process termination. Waiting
+        # for the root Popen handle alone does not establish descendant exit.
+        return self._wait_until_empty(timeout_seconds=2.0)
+
+    def _active_process_count(self) -> int | None:
+        """Query owned-job accounting, never infer emptiness from API failure."""
+        if not self.handle or os.name != "nt":
+            return None
+        import ctypes
+        from ctypes import wintypes
+
+        class JOBOBJECT_BASIC_ACCOUNTING_INFORMATION(ctypes.Structure):
+            _fields_ = [
+                ("TotalUserTime", ctypes.c_int64),
+                ("TotalKernelTime", ctypes.c_int64),
+                ("ThisPeriodTotalUserTime", ctypes.c_int64),
+                ("ThisPeriodTotalKernelTime", ctypes.c_int64),
+                ("TotalPageFaultCount", wintypes.DWORD),
+                ("TotalProcesses", wintypes.DWORD),
+                ("ActiveProcesses", wintypes.DWORD),
+                ("TotalTerminatedProcesses", wintypes.DWORD),
+            ]
+
+        kernel32 = ctypes.windll.kernel32  # type: ignore[attr-defined]
+        kernel32.QueryInformationJobObject.restype = wintypes.BOOL
+        kernel32.QueryInformationJobObject.argtypes = [
+            wintypes.HANDLE,
+            wintypes.INT,
+            wintypes.LPVOID,
+            wintypes.DWORD,
+            wintypes.LPVOID,
+        ]
+        info = JOBOBJECT_BASIC_ACCOUNTING_INFORMATION()
+        if not kernel32.QueryInformationJobObject(
+            self.handle, 1, ctypes.byref(info), ctypes.sizeof(info), None
+        ):  # JobObjectBasicAccountingInformation
+            return None
+        return int(info.ActiveProcesses)
+
+    def _wait_until_empty(self, *, timeout_seconds: float) -> bool:
+        deadline = time.perf_counter() + timeout_seconds
+        while True:
+            active = self._active_process_count()
+            if active is None:
+                return False
+            if active == 0:
+                return True
+            remaining = deadline - time.perf_counter()
+            if remaining <= 0:
+                return False
+            time.sleep(min(0.01, remaining))
 
     def close(self) -> None:
         if not self.handle or os.name != "nt":
@@ -395,6 +448,7 @@ def kill_process_tree(proc: subprocess.Popen[bytes]) -> None:
                 stdout=subprocess.DEVNULL,
                 stderr=subprocess.DEVNULL,
                 check=False,
+                timeout=2.0,
             )
         except Exception:
             pass

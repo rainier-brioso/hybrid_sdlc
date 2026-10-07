@@ -955,6 +955,21 @@ A task is complete when:
   JSON records parse. Local configuration remains unchanged and excluded from
   the PR; controlled live long-idle/retry evidence remains pending.
 
+  PR #8 CI follow-up (2026-10-07): Windows Python 3.12 exposed a cleanup race
+  after a successful asynchronous `TerminateJobObject` call: the root had
+  exited while its grandchild was still alive. Cleanup now confirms zero
+  active processes in the owned job within a two-second deadline before
+  treating termination as complete. Failed termination/query or an expired
+  drain deadline keeps the existing fallback; `taskkill` is also time-bounded.
+  The original containment/liveness assertion is unchanged. Nine deterministic
+  regressions cover asynchronous drain, failure and fallback paths. Independent
+  review found no actionable issue. The original failing test passed ten
+  consecutive local Windows runs; process/cleanup regressions passed 36 tests
+  on both Python 3.11 and isolated Python 3.12. Full local revalidation:
+  658 passed / 14 environment/opt-in skips, 81.85% coverage; lint, formatting,
+  mypy and seven fresh packaging checks passed. Remote CI must be rerun before
+  merge; the initial failing run is not reported as successful.
+
 - [ ] **HSDLC-065 — Define the hardware benchmark protocol**  
   Files: `benchmarks/README.md`, `benchmarks/benchmark_task.json`  
   Depends on: HSDLC-064  
