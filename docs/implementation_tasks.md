@@ -970,12 +970,44 @@ A task is complete when:
   mypy and seven fresh packaging checks passed. Remote CI must be rerun before
   merge; the initial failing run is not reported as successful.
 
+  Remote rerun 37666369778 passed all seven jobs, including `CI / Required`,
+  for commit `1ad6ac4`: Windows Python 3.12 reported 668 passed / 4 skipped and
+  82.24% coverage. PR #8 was merged on 2026-10-07 as `06038e3`. This verifies
+  the CI cleanup correction, not live long-idle behavior; HSDLC-064E remains
+  open for its separate controlled evidence.
+
 - [ ] **HSDLC-065 — Define the hardware benchmark protocol**  
   Files: `benchmarks/README.md`, `benchmarks/benchmark_task.json`  
   Depends on: HSDLC-064  
   Acceptance:
-  - Protocol pins model repository/revision, GGUF file checksum, llama.cpp image/build, launch arguments, context, prompt, repository fixture, and ambient assumptions.
+  - Protocol pins model repository/revision, all GGUF shard checksums, inference-engine image/build (Strata or llama.cpp), effective launch/request settings, context, prompt, repository fixture, and ambient assumptions.
   - Metrics include startup time, host committed memory, load/peak VRAM, prompt tokens/second, generation tokens/second, time-to-green, patch success rate, and total duration.
+
+  Protocol preparation follows merged PR #8. The real representative fixture,
+  immutable weight/runtime pins and completed comparison manifests must be
+  selected and verified before benchmark execution. Native measurement remains
+  deferred as requested; existing small Strata smokes and cached prompt probes
+  do not satisfy this task's representative benchmark acceptance.
+
+  Preparation implemented (2026-10-07): `benchmarks/README.md` defines separate
+  same-engine/same-artifact native versus Docker comparisons and distinct
+  model-quality comparisons. `benchmarks/benchmark_task.json` is explicitly
+  `template_unready`, with missing fixture, weight, build and effective-settings
+  pins left null. It separates startup, task latency, prefill/reuse, generation,
+  quality acceptance, failure denominators, and scoped resource samples/peaks.
+  Independent testing preserves the generated patch and shared services require
+  operator-authorized lifecycle actions. JSON, template readiness gates, local
+  links and historical references validate; three repository-layout tests and
+  whitespace checks pass. No benchmark, inference, service change, installation,
+  commit or push was performed. HSDLC-065 remains open until a representative
+  fixture and the required immutable comparison inputs are pinned.
+
+  Next bounded delegation: `benchmarks/validator-task.md` defines
+  BENCH-VALIDATOR-001, a standard-library offline preflight validator with unit
+  tests. Preflight checks missing immutable pins and mismatched settings only;
+  it does not validate completed benchmark evidence or authorize comparative
+  claims. The operator authorized a preparation commit and local delegation;
+  native measurement and HSDLC-065 completion remain deferred.
 
 - [ ] **HSDLC-066 — Benchmark Qwen 3.6 35B-A3B native versus Docker**  
   Files: `benchmarks/results/rtx-3090-qwen36-35b-a3b-native.json`, `benchmarks/results/rtx-3090-qwen36-35b-a3b-docker.json`, `docs/model-profiles.md`  

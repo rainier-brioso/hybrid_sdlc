@@ -405,6 +405,11 @@ closure are recorded in `docs/implementation_tasks.md`.
   endpoint (HSDLC-064E).
 - Validate the Docker Compose deployment and document external/native server fallbacks.
 - Prioritize the optional Strata Docker setup and compatibility evaluation while the remaining llama.cpp live smoke rerun is paused. Record GPU/API validation separately from Aider smoke and native-versus-Docker performance evidence (HSDLC-064A/064B).
+- Define a shared hardware benchmark protocol for Strata and the retained
+  llama.cpp candidates before collecting comparison evidence (HSDLC-065).
+  Require immutable model/runtime pins, a representative committed task, and
+  matching effective settings. Keep actual native-versus-Docker runs deferred
+  until a real task supplies that fixture; incomplete manifests are not results.
 - Benchmark Qwen 3.6 35B-A3B (`Q4_K_S`) on the RTX 3090 under the 16K worker profile.
 - Compare native Windows and Docker/WSL2 using identical weights, prompts, contexts, and task fixtures.
 - Evaluate Qwen 3.6 27B only as a measured quality profile, not as an assumed speed improvement.

@@ -119,6 +119,9 @@ One earlier Antigravity attempt timed out after 150 seconds. The successful
 retry followed a user restart; neither the reported long idle period nor the
 restart proves the timeout's cause. Controlled long-idle and native-versus-Docker
 tests remain open in the [implementation tasks](docs/implementation_tasks.md).
+The [hardware benchmark protocol](benchmarks/README.md) defines the inputs and
+measurements required before making runtime comparisons; its manifest template
+is not a completed benchmark or a claim of native/Docker parity.
 
 ## Safety and project status
 
@@ -127,8 +130,8 @@ permissions. Worktrees, path checks, redaction, and advisory locks are not an OS
 sandbox. Keep secrets, model weights, and machine-local configuration out of Git.
 Managed activity coordination cannot see unrelated API clients.
 
-Packaging and managed lifecycle are implemented; runtime diagnostics are being
-extended on the current development branch. Windows background survival requires
+Packaging, managed lifecycle, and guarded runtime diagnostics are implemented;
+controlled long-idle validation remains pending. Windows background survival requires
 a host allowing Job Object breakaway and is not proven on restrictive runners.
 See the [plan](docs/implementation_plan.md) and [tasks](docs/implementation_tasks.md)
 for completed work, validation limits, and remaining milestones.
