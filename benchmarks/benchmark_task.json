@@ -1,0 +1,203 @@
+{
+  "schema_version": 2,
+  "status": "template_unready",
+  "readiness": {
+    "comparative_claim_allowed": false,
+    "blocked_reason": "Representative task fixture and current runtime/model pins are not available; no benchmark has been run.",
+    "unresolved_required_fields": [
+      "shared.fixture.id, baseline_revision, baseline_sha256, spec_sha256, test_profile, acceptance, allowed_patch_paths, independent_review",
+      "shared.toolkit_version, aider_version, python_version, test_environment, timeout_seconds, retry_limit, prompt_sha256",
+      "shared.ambient.cpu, gpu, host_ram, driver, vm_memory_limit, disk_activity, concurrent_model_clients",
+      "comparison.engine, profile_id, shared_model_pin.repo, revision, shards, tokenizer_source, config_source",
+      "comparison.variants.native.runtime.revision, binary_sha256, build_args, launch_args, effective_settings",
+      "comparison.variants.docker.runtime.image_digest, revision, build_args, launch_args, effective_settings",
+      "comparison.variants.native.repetitions, comparison.variants.docker.repetitions and resource scopes"
+    ]
+  },
+  "protocol": {
+    "comparison_unit": "One engine and one exact model profile, native versus Docker; identical model artifacts and configuration are required.",
+    "cross_engine_or_profile_results": "Separate quality/throughput tradeoff; never container overhead or runtime parity.",
+    "minimum_repetitions_per_variant": 3,
+    "cold_start": "Each cold repetition starts a fresh process/model; already-loaded models do not qualify.",
+    "warm_cache": "Optional separate series with at least 3 repetitions; report actual cached/reused tokens.",
+    "same_timeout_and_retry_limit": true,
+    "run_success_rate": "accepted runs / all started runs; failures and timeouts count in the denominator.",
+    "attempt_acceptance_rate": "accepted attempts / all started attempts; retries and failed attempts count in the denominator.",
+    "independent_acceptance": "Preserve patch; test a copy of baseline with exact patch applied; inspect paths and obtain independent review.",
+    "privacy": "Hashes and privacy-safe metadata only; exclude raw private prompts, private paths, secrets, tokens, credential-bearing URLs, and environment dumps.",
+    "launch_settings": "Record full non-secret launch/request settings; omit credentials and reference credential sources privately.",
+    "service_lifecycle": "Do not stop, restart, unload, or alter a shared service without explicit operator authorization.",
+    "resource_reporting": "Timestamp samples and interval; separate snapshots and sampled peaks; label host, process/container, VM, and VRAM scopes. Unsupported values are null with reason.",
+    "claim_gate": "No comparative claim with missing pins, unmatched artifacts/settings, insufficient repetitions, or missing acceptance evidence."
+  },
+  "candidate_registry_defaults": {
+    "strata_coder_iq1m": {
+      "engine": "Strata",
+      "profile_id": "coder-iq1m-16k",
+      "source_repository": "https://github.com/Niko1221/Strata",
+      "source_revision": "6f32ec070f23ced9f50e704d854d775da52591ab",
+      "source_version": "v0.1.39",
+      "configured_settings": {
+        "context_tokens": 16384,
+        "kv": "int8",
+        "reasoning_effort": "low",
+        "output_tokens": 4096,
+        "low_ram": true,
+        "parallel_requests": 1
+      },
+      "historical_image_digest_reference_not_current_pin": null,
+      "historical_image_digest_note": "A digest was recorded in 2026-10-04 setup notes but is not verified as the current image pin."
+    },
+    "llama_cpp_qwen36_35b_q4ks_16k": {
+      "engine": "llama.cpp",
+      "profile_id": "qwen36-35b-a3b-q4ks-16k",
+      "source": "retained Qwen3.6 35B-A3B Q4_K_S 16K profile; resolve exact artifact and runtime pins"
+    },
+    "llama_cpp_qwen36_27b_quality": {
+      "engine": "llama.cpp",
+      "profile_id": "qwen36-27b-quality-comparison",
+      "source": "separate model-quality profile; not a runtime variant of the 35B profile"
+    }
+  },
+  "shared": {
+    "toolkit_version": null,
+    "aider_version": null,
+    "python_version": null,
+    "test_environment": null,
+    "timeout_seconds": null,
+    "retry_limit": null,
+    "prompt_sha256": null,
+    "ambient": {
+      "cpu": null,
+      "gpu": null,
+      "host_ram": null,
+      "driver": null,
+      "vm_memory_limit": null,
+      "disk_activity": null,
+      "concurrent_model_clients": null
+    },
+    "fixture": {
+      "id": null,
+      "baseline_revision": null,
+      "baseline_sha256": null,
+      "spec_sha256": null,
+      "test_profile": null,
+      "acceptance": null,
+      "allowed_patch_paths": null,
+      "independent_review": null
+    }
+  },
+  "comparison": {
+    "engine": null,
+    "profile_id": null,
+    "shared_model_pin": {
+      "repo": null,
+      "revision": null,
+      "quantization": null,
+      "shards": [
+        {
+          "filename": null,
+          "bytes": null,
+          "sha256": null
+        }
+      ],
+      "tokenizer_source": null,
+      "config_source": null
+    },
+    "variants": {
+      "native": {
+        "runtime": {
+          "revision": null,
+          "binary_sha256": null,
+          "build_args": null,
+          "launch_args": null,
+          "request_settings": {
+            "context_tokens": null,
+            "kv": null,
+            "reasoning_effort": null,
+            "output_limit": null,
+            "parallelism": null
+          },
+          "effective_settings": null
+        },
+        "repetitions": []
+      },
+      "docker": {
+        "runtime": {
+          "image": null,
+          "image_digest": null,
+          "revision": null,
+          "build_args": null,
+          "launch_args": null,
+          "request_settings": {
+            "context_tokens": null,
+            "kv": null,
+            "reasoning_effort": null,
+            "output_limit": null,
+            "parallelism": null
+          },
+          "effective_settings": null
+        },
+        "repetitions": []
+      }
+    }
+  },
+  "measurements": {
+    "per_repetition_fields": {
+      "status_and_failure_reason": null,
+      "started_runs": null,
+      "attempts": null,
+      "accepted_attempts": null,
+      "accepted_run": null,
+      "process_start_ms": null,
+      "ready_ms_from_process_start": null,
+      "total_startup_ms": null,
+      "first_event_ms_from_request": null,
+      "first_nonempty_content_ms_from_request": null,
+      "completion_ms_from_request": null,
+      "task_wall_ms": null,
+      "total_wall_ms": null,
+      "human_review_ms": null,
+      "time_to_green_ms": null,
+      "prompt_processing_ms": null,
+      "uncached_prompt_tokens": null,
+      "cache_reused_tokens": null,
+      "prompt_tokens_per_second": null,
+      "prompt_rate_basis": "non-reused prompt tokens / actual prefill duration",
+      "decode_ms": null,
+      "completion_tokens": null,
+      "reasoning_tokens": null,
+      "generation_tokens_per_second": null,
+      "generation_rate_basis_or_unsupported_reason": null,
+      "resource_sample_interval_ms": null,
+      "resource_samples_with_scope_and_timestamp": null,
+      "host_committed_memory_load_and_peak": null,
+      "vram_load_and_peak": null,
+      "weight_memory_load_and_peak": null,
+      "kv_memory_load_and_peak": null,
+      "compute_buffer_memory_load_and_peak": null,
+      "unsupported_resource_metrics_and_reasons": null,
+      "patch_sha256": null,
+      "test_result": null,
+      "review_result": null
+    },
+    "aggregate_fields": {
+      "accepted_runs": null,
+      "all_started_runs_including_failures": null,
+      "run_success_rate": null,
+      "accepted_attempts": null,
+      "all_started_attempts_including_failures": null,
+      "attempt_acceptance_rate": null,
+      "time_to_green_definition": "Elapsed from task start to first independently accepted patch, under shared timeout and retry policy.",
+      "latency_startup_quality_resource_distributions": null
+    }
+  },
+  "historical_context_only": [
+    "benchmarks/results/strata/prompt-probe-20261004.json",
+    "benchmarks/results/strata/prompt-processing-20261004.md",
+    "benchmarks/results/strata/installed-mcp-smoke-20261004.json",
+    "docs/strata-server-docker.md",
+    "docs/llama-server-docker.md",
+    "docs/strata-long-idle-validation.md"
+  ]
+}
