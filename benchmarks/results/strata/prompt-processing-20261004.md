@@ -172,7 +172,7 @@ running client was killed and no project commit or push was performed.
 
 The operator subsequently stopped the old clients and reported a successful
 tool installation. The installed CLI model check passed. A fresh SDK stdio
-connection launching `C:\Users\ray\.local\bin\hybrid-sdlc.exe mcp` discovered
+connection launching the installed `hybrid-sdlc mcp` entrypoint discovered
 all five tools, passed `check_local_model`, and ran `run_spec_task_sync`.
 Run `run_1791148535_3b03da02` succeeded in one attempt (19.707 s), with only
 `calculator.py` and `test_smoke.py` changed and no commit. Independent patch

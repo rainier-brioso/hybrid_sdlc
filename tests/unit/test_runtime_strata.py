@@ -24,6 +24,7 @@ from hybrid_sdlc.runtime_strata import (
     _verify_model_volume,
     configure,
     logs,
+    managed_readiness_guard,
     normalize_managed_loopback,
     release_async_task,
     reserve_async_task,
@@ -98,12 +99,18 @@ def test_configure_rejects_invalid_volume_name(runtime_root: Path) -> None:
         ("https://127.0.0.1:8080/v1", False),
         ("http://192.168.1.20:8080/v1", False),
         ("http://localhost:8081/v1", False),
-        ("http://user@localhost:8080/v1", False),
+        ("http://user@localhost:8080/v1", True),
         ("http://localhost:8080/v1?query=1", False),
     ],
 )
 def test_loopback_endpoint_normalization(url: str, expected: bool) -> None:
     assert normalize_managed_loopback(url, 8080) is expected
+
+
+@pytest.mark.parametrize("url", ["http://localhost/v1", "http://127.0.0.1/v1"])
+def test_loopback_endpoint_normalization_uses_implicit_http_port(url: str) -> None:
+    assert normalize_managed_loopback(url, 80)
+    assert not normalize_managed_loopback(url, 8080)
 
 
 def test_missing_runtime_is_inert_for_sync_tasks(
@@ -131,6 +138,58 @@ def test_sync_reservation_blocks_lifecycle_for_full_task_and_releases_on_error(
     assert activity["leases"] == []
 
 
+def test_readiness_guard_refuses_active_async_job_before_post(
+    runtime_root: Path, tmp_path: Path
+) -> None:
+    configure()
+    repo = tmp_path / "repo"
+    manager = JobManager(repo)
+    reserve_async_task(
+        "http://127.0.0.1:8080/v1",
+        repo,
+        lambda job_id: manager.create("spec.md", "T001", job_id=job_id),
+    )
+    with pytest.raises(RuntimeManagementError, match="activity is unresolved") as error:
+        with managed_readiness_guard("http://localhost:8080/v1"):
+            pytest.fail("active async work must block diagnostic inference")
+    assert error.value.code == "READINESS_BUSY"
+
+
+def test_readiness_holds_atomic_gate_until_post_finishes(runtime_root: Path) -> None:
+    configure()
+    entered, release, task_entered = threading.Event(), threading.Event(), threading.Event()
+
+    def diagnostic() -> None:
+        with managed_readiness_guard("http://127.0.0.1:8080/v1"):
+            entered.set()
+            assert release.wait(5)
+
+    def task() -> None:
+        with sync_task_lease("http://localhost:8080/v1"):
+            task_entered.set()
+
+    diagnostic_thread = threading.Thread(target=diagnostic)
+    task_thread = threading.Thread(target=task)
+    diagnostic_thread.start()
+    assert entered.wait(2)
+    task_thread.start()
+    assert not task_entered.wait(0.1)
+    release.set()
+    diagnostic_thread.join(2)
+    task_thread.join(2)
+    assert not diagnostic_thread.is_alive()
+    assert not task_thread.is_alive()
+    assert task_entered.is_set()
+
+
+@pytest.mark.parametrize("endpoint", ["http://127.0.0.1/v1", "http://localhost/v1"])
+def test_implicit_http_port_sync_lease_blocks_lifecycle(runtime_root: Path, endpoint: str) -> None:
+    configure(port=80)
+    with sync_task_lease(endpoint):
+        with pytest.raises(RuntimeManagementError, match="queued or running"):
+            _lifecycle_guard(runtime_root)
+
+
 def test_async_reservation_blocks_lifecycle_across_repositories_until_terminal(
     runtime_root: Path, tmp_path: Path
 ) -> None:
@@ -154,6 +213,24 @@ def test_async_reservation_blocks_lifecycle_across_repositories_until_terminal(
     config, compose = _lifecycle_guard(runtime_root)
     assert compose.is_file()
     assert config["project"].startswith("hsdlc-strata-")
+
+
+@pytest.mark.parametrize("endpoint", ["http://127.0.0.1/v1", "http://localhost/v1"])
+def test_implicit_http_port_async_lease_blocks_lifecycle(
+    runtime_root: Path, tmp_path: Path, endpoint: str
+) -> None:
+    configure(port=80)
+    repo = tmp_path / "repo"
+    manager = JobManager(repo)
+    job = reserve_async_task(
+        endpoint,
+        repo,
+        lambda job_id: manager.create("spec.md", "T001", job_id=job_id, host_url=endpoint),
+    )
+    with pytest.raises(RuntimeManagementError, match="queued or running"):
+        _lifecycle_guard(runtime_root)
+    manager.transition(job.job_id, JobStatus.FAILED, failure_reason="launch_failure")
+    release_async_task(repo, job.job_id, job.host_url)
 
 
 def test_async_release_refuses_nonterminal_record(runtime_root: Path, tmp_path: Path) -> None:
@@ -325,6 +402,96 @@ def test_compose_renderer_uses_fixed_assets_and_validated_values() -> None:
     assert "127.0.0.1:8088:8080" in composed
     assert 'com.hybrid-sdlc.owner: "' + "a" * 32 in composed
     assert "com.docker.compose.project" not in composed
+
+
+@pytest.mark.parametrize(
+    "volume",
+    [
+        "123",
+        "1.25",
+        "1e3",
+        "0xFF",
+        "0o77",
+        "0b11",
+        "1_000",
+        "0123",
+        "08",
+        "00",
+        "1__2",
+        "1_",
+        "2026-10-01",
+        "null",
+        "true",
+        "false",
+        "y",
+        "n",
+        "yes",
+        "no",
+        "on",
+        "off",
+        "usual-volume",
+    ],
+)
+@pytest.mark.parametrize("reuse", [False, True])
+def test_compose_renderer_quotes_sensitive_volume_names(volume: str, reuse: bool) -> None:
+    composed = _render_compose("a" * 32, "hsdlc-strata-aaaaaaaaaaaa", 8080, volume, reuse)
+    quoted = volume in {
+        "123",
+        "1.25",
+        "1e3",
+        "0xFF",
+        "0o77",
+        "0b11",
+        "1_000",
+        "0123",
+        "08",
+        "00",
+        "1__2",
+        "1_",
+        "2026-10-01",
+    } or volume.lower() in {"null", "true", "false"}
+    scalar = f'"{volume}"' if quoted else volume
+    mount = f'"{volume}:/data"' if quoted else f"{volume}:/data"
+    assert f"      - {mount}" in composed
+    if reuse:
+        assert f"  {scalar}:\n    name: {scalar}\n    external: true" in composed
+
+
+@pytest.mark.parametrize(
+    "volume",
+    [
+        "hsdlc-strata-data-aaaaaaaaaaaa",
+        "usual-volume",
+        "123abc",
+        "1-foo",
+        "2026-99-01",
+        "y",
+        "n",
+        "yes",
+        "no",
+        "on",
+        "off",
+    ],
+)
+@pytest.mark.parametrize("reuse", [False, True])
+def test_compose_renderer_preserves_ordinary_volume_rendering(volume: str, reuse: bool) -> None:
+    from hybrid_sdlc.runtime_strata import _ASSET_DIR
+
+    token = "a" * 32
+    expected = (
+        (_ASSET_DIR / "compose.yaml")
+        .read_text(encoding="utf-8")
+        .replace("__OWNER_TOKEN__", token)
+        .replace("__PROJECT__", "hsdlc-strata-aaaaaaaaaaaa")
+        .replace("__PORT__", "8080")
+        .replace("__MODEL_VOLUME__", volume)
+    )
+    if reuse:
+        expected = expected.replace(
+            f'  {volume}:\n    name: {volume}\n    labels:\n      com.hybrid-sdlc.managed: "true"\n      com.hybrid-sdlc.owner: "{token}"',
+            f"  {volume}:\n    name: {volume}\n    external: true",
+        )
+    assert _render_compose(token, "hsdlc-strata-aaaaaaaaaaaa", 8080, volume, reuse) == expected
 
 
 def test_docker_runner_bounds_process_and_filters_context_override_environment(

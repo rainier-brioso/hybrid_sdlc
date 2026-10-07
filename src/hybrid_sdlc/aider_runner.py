@@ -384,9 +384,17 @@ def _run_bounded_loop_in_checkout(
                 run_status = RunStatus.CANCELLED
                 break
             if aider_result.timed_out:
+                from hybrid_sdlc.timeout_diagnostics import timeout_metadata
+
                 err = TaskTimeoutError(
                     f"Aider attempt {attempt_idx} exceeded its timeout",
-                    details={"attempt": attempt_idx, "timeout": attempt_timeout_seconds},
+                    details={
+                        "attempt": attempt_idx,
+                        "timeout": attempt_timeout_seconds,
+                        "timeout_diagnostics": timeout_metadata(
+                            aider_result, endpoint_url, model_name
+                        ),
+                    },
                 )
                 failure_record = err.to_failure_record()
                 break

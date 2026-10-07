@@ -6,6 +6,7 @@ import contextlib
 import functools
 import inspect
 import json
+import math
 import os
 import re
 import secrets
@@ -13,6 +14,7 @@ import shutil
 import stat
 import time
 from collections.abc import Callable, Iterator
+from datetime import date
 from pathlib import Path
 from typing import Any, ParamSpec, TypeVar
 from urllib.parse import urlparse
@@ -26,8 +28,14 @@ _ASSET_DIR = Path(__file__).with_name("_runtime") / "strata"
 _SCHEMA = 1
 _PROJECT_PATTERN = re.compile(r"^[a-z][a-z0-9_-]{0,62}$")
 _VOLUME_PATTERN = re.compile(r"^[a-zA-Z0-9][a-zA-Z0-9_.-]{0,62}$")
+_YAML_NUMERIC_VOLUME = re.compile(
+    r"(?:[0-9][0-9_]*(?:\.[0-9_]*)?(?:[eE][+-]?[0-9_]+)?|"
+    r"0[xX][0-9a-fA-F_]+|0[oO][0-7_]+|0[bB][01_]+)"
+)
+_YAML_DATE_VOLUME = re.compile(r"[0-9]{4}-[0-9]{2}-[0-9]{2}")
 _MAX_OUTPUT = 64 * 1024
 _TIMEOUT = 60.0
+_PACKAGED_MODEL_ID = "qwen3.8-flash-next-coder-iq1_m"
 _IMAGE_BUILD_COMMAND = (
     "docker build --build-arg CUDA_ARCHITECTURES=86 --build-arg BUILD_VISION=0 "
     "--tag hybrid-sdlc/strata:v0.1.39-cuda13-sm86 "
@@ -209,16 +217,39 @@ def _render_compose(
         template = (_ASSET_DIR / "compose.yaml").read_text(encoding="utf-8")
     except (OSError, UnicodeError) as exc:
         raise RuntimeManagementError("Packaged Strata Compose asset is unavailable") from exc
+    # Keep ordinary names in their historical plain-scalar form so existing
+    # runtime markers continue to validate against their canonical Compose file.
+    # Quote YAML numeric, date, null, and boolean scalars to keep them strings.
+    yaml_volume = volume
+    is_yaml_date = _YAML_DATE_VOLUME.fullmatch(volume) is not None
+    if is_yaml_date:
+        try:
+            date.fromisoformat(volume)
+        except ValueError:
+            is_yaml_date = False
+    if (
+        _YAML_NUMERIC_VOLUME.fullmatch(volume)
+        or is_yaml_date
+        or volume.lower()
+        in {
+            "null",
+            "true",
+            "false",
+        }
+    ):
+        yaml_volume = json.dumps(volume)
     rendered = (
         template.replace("__OWNER_TOKEN__", token)
         .replace("__PROJECT__", project)
         .replace("__PORT__", str(port))
-        .replace("__MODEL_VOLUME__", volume)
+        .replace("__MODEL_VOLUME__", yaml_volume)
     )
+    if yaml_volume != volume:
+        rendered = rendered.replace(f"- {yaml_volume}:/data", f'- "{volume}:/data"')
     if reuse_model_volume:
         rendered = rendered.replace(
-            f'  {volume}:\n    name: {volume}\n    labels:\n      com.hybrid-sdlc.managed: "true"\n      com.hybrid-sdlc.owner: "{token}"',
-            f"  {volume}:\n    name: {volume}\n    external: true",
+            f'  {yaml_volume}:\n    name: {yaml_volume}\n    labels:\n      com.hybrid-sdlc.managed: "true"\n      com.hybrid-sdlc.owner: "{token}"',
+            f"  {yaml_volume}:\n    name: {yaml_volume}\n    external: true",
         )
     return rendered
 
@@ -285,17 +316,13 @@ def normalize_managed_loopback(url: str, configured_port: int) -> bool:
 
     try:
         parsed = urlparse(url)
-        if parsed.scheme != "http" or parsed.port != configured_port:
+        effective_port = parsed.port if parsed.port is not None else 80
+        if parsed.scheme != "http" or effective_port != configured_port:
             return False
         host = (parsed.hostname or "").lower().rstrip(".")
         if host not in {"localhost", "127.0.0.1", "::1"}:
             return False
-        return (
-            parsed.path.rstrip("/") in {"", "/v1"}
-            and not parsed.username
-            and not parsed.query
-            and not parsed.fragment
-        )
+        return parsed.path.rstrip("/") in {"", "/v1"} and not parsed.query and not parsed.fragment
     except ValueError:
         return False
 
@@ -362,6 +389,33 @@ def sync_task_lease(url: str) -> Iterator[None]:
             _, _, activity, _ = _load_config()
             leases = [entry for entry in activity["leases"] if entry.get("lease_id") != lease_id]
             _atomic_json(root / "activity.json", {"schema_version": _SCHEMA, "leases": leases})
+
+
+@contextlib.contextmanager
+def managed_readiness_guard(url: str) -> Iterator[bool]:
+    """Serialize a readiness inference with managed task reservations and lifecycle work."""
+
+    candidate = _potential_managed_endpoint(url)
+    if candidate is None:
+        yield False
+        return
+    root, config, _ = candidate
+    with _locked(root):
+        _, current, activity, _ = _load_config()
+        if current["owner_token"] != config["owner_token"]:
+            raise RuntimeManagementError("Managed Strata identity changed during readiness check")
+        activity = _reconcile_and_guard_activity(root, activity)
+        if activity["leases"]:
+            raise RuntimeManagementError(
+                "Managed readiness was skipped because endpoint activity is unresolved.",
+                code="READINESS_BUSY",
+                details={
+                    "active_kinds": sorted({str(item.get("kind")) for item in activity["leases"]})
+                },
+            )
+        # Keep the shared lock through the bounded POST. Reservations and lifecycle
+        # operations cannot enter until the inference request has returned.
+        yield True
 
 
 def reserve_async_task(url: str, repo_root: Path, create_job: Callable[[str], Any]) -> Any:
@@ -826,6 +880,170 @@ def status() -> dict[str, Any]:
             lease for lease in activity["leases"] if lease.get("kind") == "lifecycle_unknown"
         ],
     }
+
+
+def diagnose(
+    *,
+    readiness: bool = False,
+    timeout: float = 3.0,
+    repo_root: Path | None = None,
+    run_id: str | None = None,
+) -> dict[str, Any]:
+    """Read-only diagnostics for the configured managed endpoint."""
+
+    if (
+        isinstance(timeout, bool)
+        or not isinstance(timeout, (int, float))
+        or not math.isfinite(timeout)
+        or not 1 <= timeout <= 30
+    ):
+        raise RuntimeManagementError("Diagnostic timeout must be from 1 through 30 seconds")
+    from hybrid_sdlc.server_probe import (
+        _bounded_health_probe,
+        _bounded_model_probe,
+        probe_readiness,
+    )
+    from hybrid_sdlc.timeout_diagnostics import read_timeout_evidence, suspected_stall
+
+    if (repo_root is None) != (run_id is None):
+        raise RuntimeManagementError("Timeout evidence requires both repository root and run ID")
+
+    _, config, _, _ = _load_config()
+    endpoint = str(config["endpoint"])
+    health_result = _bounded_health_probe(endpoint, float(timeout))
+    health_available = bool(health_result.get("available"))
+    loaded = health_result.get("loaded")
+
+    # Health can establish startup/loading without generating inference. Avoid
+    # probing the model list or issuing readiness while the managed server loads.
+    if loaded is False:
+        result = None
+    else:
+        result = _bounded_model_probe(endpoint, _PACKAGED_MODEL_ID, float(timeout))
+        if readiness and result.available:
+            result = probe_readiness(endpoint, _PACKAGED_MODEL_ID, float(timeout), result)
+
+    managed_activity = "unknown"
+    try:
+        _, _, latest_activity, _ = _load_config()
+        managed_activity = _diagnostic_activity_status(latest_activity)
+    except RuntimeManagementError:
+        pass
+    busy = managed_activity == "busy"
+    endpoint_available = bool(
+        (result is not None and result.available)
+        or (
+            result is not None
+            and result.error
+            and result.error.code in {"MODEL_NOT_FOUND", "EMPTY_MODELS"}
+        )
+        or health_available
+    )
+    model_available = bool(result is not None and result.matched_model is not None)
+    if busy or (result is not None and result.error and result.error.code == "READINESS_BUSY"):
+        state = "busy"
+    elif managed_activity == "unknown":
+        state = "unknown"
+    elif loaded is False:
+        state = "loading"
+    elif readiness and result is not None and result.readiness_passed:
+        state = "ready"
+    elif readiness and result is not None and (result.readiness_tested or result.error is not None):
+        state = "unknown"
+    elif endpoint_available and model_available and loaded is True:
+        state = "available-unverified"
+    elif not endpoint_available:
+        state = "unavailable"
+    else:
+        state = "unknown"
+    timeout_evidence = None
+    if repo_root is not None and run_id is not None:
+        timeout_evidence = read_timeout_evidence(repo_root, run_id, endpoint, _PACKAGED_MODEL_ID)
+    if suspected_stall(
+        evidence=timeout_evidence,
+        loaded=loaded,
+        model_available=model_available,
+        managed_activity=managed_activity,
+        readiness_tested=result.readiness_tested if result is not None else False,
+        error_code=result.error.code if result is not None and result.error else None,
+    ):
+        state = "suspected-stalled"
+    readiness_info = None
+    if readiness:
+        readiness_info = {
+            "tested": result.readiness_tested if result is not None else False,
+            "passed": result.readiness_passed if result is not None else False,
+            "status": "ready"
+            if result is not None and result.readiness_passed
+            else "busy"
+            if result is not None and result.error and result.error.code == "READINESS_BUSY"
+            else "skipped-loading"
+            if result is None
+            else "uncertain",
+            "error_code": result.error.code
+            if result is not None and result.error
+            else "LOADING"
+            if result is None
+            else None,
+            "remote_request_cancellation": "unknown"
+            if result is not None and result.error and result.error.code == "READINESS_TIMEOUT"
+            else None,
+        }
+    return {
+        "status": state,
+        "endpoint": endpoint,
+        "endpoint_available": endpoint_available,
+        "model_available": model_available,
+        "model": (result.matched_model or (result.models[0] if result.models else None))
+        if result is not None
+        else None,
+        "model_profile": _PACKAGED_MODEL_ID,
+        "health": "available" if health_available else "unknown",
+        "loaded": loaded if isinstance(loaded, bool) else None,
+        "health_error_code": health_result.get("error_code"),
+        "managed_activity": managed_activity,
+        "external_client_activity": "unsupported",
+        "readiness": readiness_info,
+        "timeout_evidence": timeout_evidence,
+        "error_code": result.error.code if result is not None and result.error else None,
+        "observations": [
+            "Endpoint availability and inference readiness are separate observations.",
+            "External-client activity telemetry is unsupported.",
+            "A readiness timeout does not establish that the remote request was cancelled.",
+            "Suspected stall is advisory; overload, client failures, and external activity remain possible.",
+        ],
+    }
+
+
+def _diagnostic_activity_status(activity: dict[str, Any]) -> str:
+    """Observe leases without mutating the runtime registry."""
+    from hybrid_sdlc.job_manager import JobManager, JobStatus
+
+    active = False
+    for entry in activity.get("leases", []):
+        if not isinstance(entry, dict):
+            return "unknown"
+        kind = entry.get("kind")
+        if kind in {"sync", "submitting", "lifecycle_unknown"}:
+            active = True
+            continue
+        if (
+            kind != "job"
+            or not isinstance(entry.get("repo_root"), str)
+            or not isinstance(entry.get("job_id"), str)
+        ):
+            return "unknown"
+        try:
+            job = JobManager(Path(entry["repo_root"])).get(entry["job_id"])
+        except Exception:
+            return "unknown"
+        if job.status in {JobStatus.COMPLETED, JobStatus.FAILED, JobStatus.CANCELLED}:
+            continue
+        if job.status in {JobStatus.QUEUED, JobStatus.RUNNING}:
+            active = True
+        else:
+            return "unknown"
+    return "busy" if active else "idle"
 
 
 def logs(*, tail: int = 100) -> dict[str, Any]:

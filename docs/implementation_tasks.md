@@ -860,8 +860,21 @@ A task is complete when:
   repository configuration and installed user CLI were not changed. Windows
   Job Object survival, symlink privileges, and POSIX-mode tests remain
   environment-limited; the opt-in packaging test was verified separately.
-  No live managed-service migration/start/stop/restart is claimed, and remote
-  CI for this branch has not yet run. See [runtime guide](runtime-management.md).
+  No live managed-service migration/start/stop/restart is claimed. PR #7's
+  seven remote CI checks passed, including packaging and `CI / Required`,
+  before it was merged. See [runtime guide](runtime-management.md).
+
+  Post-merge review follow-up (2026-10-06): on the next runtime-diagnostics
+  branch, implicit HTTP port 80 now matches both synchronous and async task
+  reservations. YAML numeric/date/null/boolean volume names are quoted in
+  rendered Compose, while previously valid string names retain their existing
+  configuration bytes. Regression coverage and read-only Compose validation
+  cover the fixes; this follow-up does not implement HSDLC-064E or
+  migrate/start/stop the live service. Final validation: 546 passed / 14
+  environment/opt-in skips, 81.19% coverage, Ruff lint/format and mypy passed.
+  All 52 rendered Compose variants passed read-only parser validation;
+  independent review found no remaining confirmed blocker. These fixes remain
+  local to the next branch; no new commit, push, or PR merge is claimed.
 
 - [ ] **HSDLC-064E - Add runtime readiness and suspected-stall diagnostics**
   Depends on: HSDLC-064D, HSDLC-020
@@ -878,6 +891,84 @@ A task is complete when:
     secret persistence; cover diagnostic retention and cleanup in tests.
   - Record controlled long-idle/retry evidence separately from the successful
     smoke; do not claim the 2026-10-05 restart proved the prior stall's cause.
+
+  First increment implemented locally (2026-10-06): add managed-endpoint
+  `runtime strata diagnose`, with GET-only availability/health checks by
+  default and an explicit bounded `--readiness` request. Coordinate readiness
+  through the shared managed activity gate, including the existing CLI
+  `check --readiness` path, without changing the five-tool MCP interface.
+  Distinguish loading, managed activity, confirmed readiness, and uncertainty;
+  do not infer a stall or restart automatically. Keep HSDLC-064E open until
+  privacy-safe timeout evidence, suspected-stall classification, and controlled
+  long-idle/retry evidence satisfy the remaining acceptance criteria.
+
+  Validation: 602 passed / 14 environment/opt-in skips, 81.45% coverage;
+  Ruff lint/format and mypy (22 source files) passed. Seven opt-in packaging
+  checks passed, including isolated wheel/sdist/rebuilt-wheel installs and
+  installed origin checks for the private probe worker. Independent review
+  findings were addressed: diagnostic GETs and managed readiness use wall-clock
+  process budgets (including slow-drip response tests), and default diagnostics
+  exclude verified terminal jobs without rewriting activity records. A Windows
+  clock-origin mismatch and redundant post-Job-Object taskkill were corrected;
+  blocked-stdin and clock-origin regressions pass. The five MCP tools remain
+  unchanged. Windows background survival, symlink privileges, and POSIX-mode
+  checks remain environment-limited; packaging was verified separately.
+  No live model request, managed-service migration/start/stop/restart, installed
+  user CLI update, commit, push, or remote CI result is claimed for this increment.
+  The existing local repository configuration is preserved unchanged.
+
+  Second increment implemented locally (2026-10-07): Aider attempt timeouts
+  retain a fixed metadata allowlist under `failure.details.timeout_diagnostics`
+  (under 1 KiB, no raw output/prompt/source/command/environment). Existing
+  artifact cleanup and active-writer locks apply. Explicit `diagnose --repo-root
+  ... --run-id ...` reads only one confined, size-capped record and requires
+  matching endpoint/model metadata from the previous 30 minutes. Account/query
+  distinctions participate in the opaque fingerprint; no raw credentials are
+  persisted. Only matching timeout evidence plus a loaded/available model,
+  known-idle managed activity, and a distinct opt-in readiness timeout can
+  produce advisory `suspected-stalled`; no automatic recovery is triggered.
+  Default GETs and the five MCP tools are unchanged. Independent privacy review
+  identified an endpoint correlation issue, now fixed with route/account tests.
+  Fingerprints are not encryption; artifacts remain private trusted state.
+  README now summarizes installation, host/runtime choices and dated Strata
+  observations with their limits; personal machine paths were removed from
+  tracked examples/evidence without changing metrics. Controlled live evidence
+  remains pending; use the [long-idle protocol](strata-long-idle-validation.md).
+  Final validation: 641 passed / 14 environment/opt-in skips, 81.75% coverage;
+  Ruff lint/format (92 files), mypy (23 source files), and seven isolated
+  packaging checks passed. Six benchmark JSON records parse correctly and all
+  16 README local links resolve. No tracked personal user-directory references
+  remain. The existing local config is unchanged; no real model inference,
+  service mutation, user-tool installation, commit, push, or remote CI run was
+  performed. HSDLC-064E stays open solely for controlled live long-idle/retry
+  evidence, not because a model stall has been established.
+
+  Final review follow-up (2026-10-07): artifact-boundary resolution now runs
+  inside the guarded evidence reader. Filesystem errors and Python 3.11
+  symlink-loop errors return static invalid evidence instead of escaping as a
+  traceback. Eight regression cases cover the repository, artifact directory,
+  runs directory, and record path, without opening an unresolvable boundary.
+  Independent fix review found no remaining actionable defect. Revalidation:
+  649 passed / 14 environment/opt-in skips, 81.75% coverage; 109 targeted tests,
+  Ruff lint/format (93 files), mypy (23 source files), and seven fresh isolated
+  packaging checks passed. All 16 README local links resolve and six benchmark
+  JSON records parse. Local configuration remains unchanged and excluded from
+  the PR; controlled live long-idle/retry evidence remains pending.
+
+  PR #8 CI follow-up (2026-10-07): Windows Python 3.12 exposed a cleanup race
+  after a successful asynchronous `TerminateJobObject` call: the root had
+  exited while its grandchild was still alive. Cleanup now confirms zero
+  active processes in the owned job within a two-second deadline before
+  treating termination as complete. Failed termination/query or an expired
+  drain deadline keeps the existing fallback; `taskkill` is also time-bounded.
+  The original containment/liveness assertion is unchanged. Nine deterministic
+  regressions cover asynchronous drain, failure and fallback paths. Independent
+  review found no actionable issue. The original failing test passed ten
+  consecutive local Windows runs; process/cleanup regressions passed 36 tests
+  on both Python 3.11 and isolated Python 3.12. Full local revalidation:
+  658 passed / 14 environment/opt-in skips, 81.85% coverage; lint, formatting,
+  mypy and seven fresh packaging checks passed. Remote CI must be rerun before
+  merge; the initial failing run is not reported as successful.
 
 - [ ] **HSDLC-065 — Define the hardware benchmark protocol**  
   Files: `benchmarks/README.md`, `benchmarks/benchmark_task.json`  

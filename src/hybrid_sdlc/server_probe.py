@@ -2,15 +2,22 @@
 
 from __future__ import annotations
 
+import json
+import math
+import sys
 import time
+from collections.abc import Callable
+from pathlib import Path
 from typing import Any
 
 import httpx
 
 from hybrid_sdlc.artifacts import redact_secrets
 from hybrid_sdlc.config import ServerCandidateConfig
-from hybrid_sdlc.errors import ModelNotFoundError, ServerProbeError
+from hybrid_sdlc.errors import ModelNotFoundError, ProcessExecutionError, ServerProbeError
 from hybrid_sdlc.models import FailureRecord, ProbeResult
+from hybrid_sdlc.processes import SubprocessResult, run_bounded_subprocess
+from hybrid_sdlc.security import build_sanitized_environment
 
 DEFAULT_PROBE_TIMEOUT_SECONDS = 3.0
 READINESS_PROMPT = "ping"
@@ -37,7 +44,248 @@ def probe_endpoint(
     check_readiness: bool = False,
     timeout_seconds: float = DEFAULT_PROBE_TIMEOUT_SECONDS,
 ) -> ProbeResult:
+    """Probe endpoint availability and optionally perform readiness inference."""
+    if not check_readiness:
+        return _probe_endpoint_direct(
+            url, required_model=required_model, timeout_seconds=timeout_seconds
+        )
+    from hybrid_sdlc.runtime_strata import (
+        RuntimeManagementError,
+        _potential_managed_endpoint,
+    )
+
+    display_url = redact_secrets(url)
+    state_uncertain = False
+    try:
+        managed_candidate = _potential_managed_endpoint(url)
+    except RuntimeManagementError:
+        managed_candidate = None
+        state_uncertain = True
+    if managed_candidate is None and not state_uncertain:
+        return _probe_endpoint_direct(
+            url,
+            required_model=required_model,
+            check_readiness=True,
+            timeout_seconds=timeout_seconds,
+        )
+    availability = _probe_endpoint_direct(
+        url, required_model=required_model, timeout_seconds=timeout_seconds
+    )
+    if not availability.available:
+        return availability
+    if state_uncertain:
+        return ProbeResult(
+            url=display_url,
+            available=True,
+            models=availability.models,
+            matched_model=availability.matched_model,
+            error=FailureRecord(
+                code="READINESS_GUARD_ERROR", message="Managed readiness guard failed"
+            ),
+        )
+    return probe_readiness(url, required_model, timeout_seconds, availability)
+
+
+def probe_readiness(
+    url: str, required_model: str | None, timeout_seconds: float, availability: ProbeResult
+) -> ProbeResult:
+    """Run readiness under managed coordination after endpoint availability is known."""
+    from hybrid_sdlc.runtime_strata import RuntimeManagementError, managed_readiness_guard
+
+    display_url = redact_secrets(url)
+    try:
+        with managed_readiness_guard(url):
+            readiness = _bounded_readiness_probe(
+                url, required_model or availability.matched_model, timeout_seconds, availability
+            )
+    except RuntimeManagementError as exc:
+        return ProbeResult(
+            url=display_url,
+            available=True,
+            models=availability.models,
+            matched_model=availability.matched_model,
+            error=FailureRecord(
+                code=exc.code if exc.code == "READINESS_BUSY" else "READINESS_GUARD_ERROR",
+                message=exc.message
+                if exc.code == "READINESS_BUSY"
+                else "Managed readiness guard failed",
+            ),
+        )
+    return ProbeResult(
+        url=display_url,
+        available=True,
+        models=availability.models,
+        matched_model=availability.matched_model,
+        readiness_tested=readiness.readiness_tested,
+        readiness_passed=readiness.readiness_passed,
+        latency_ms=availability.latency_ms,
+        error=readiness.error,
+    )
+
+
+def _bounded_readiness_probe(
+    url: str,
+    required_model: str | None,
+    timeout_seconds: float,
+    availability: ProbeResult,
+) -> ProbeResult:
+    """Run managed readiness in a process with a hard wall-clock deadline."""
+    started = time.perf_counter()
+    child = _run_probe_worker("readiness", url, required_model, timeout_seconds)
+    if child is None:
+        return ProbeResult(
+            url=availability.url,
+            available=True,
+            models=availability.models,
+            matched_model=availability.matched_model,
+            readiness_tested=False,
+            latency_ms=(time.perf_counter() - started) * 1000,
+            error=FailureRecord(
+                code="READINESS_WORKER_ERROR", message="Bounded readiness worker failed"
+            ),
+        )
+
+    readiness_started = any(
+        line.strip() == "READINESS_STARTED" for line in child.stdout.splitlines()
+    )
+    if child.timed_out:
+        return ProbeResult(
+            url=availability.url,
+            available=True,
+            models=availability.models,
+            matched_model=availability.matched_model,
+            readiness_tested=readiness_started,
+            latency_ms=child.duration_seconds * 1000,
+            error=FailureRecord(
+                code="READINESS_TIMEOUT",
+                message="Readiness wall-clock deadline expired; remote request cancellation is unknown",
+            ),
+        )
+    result_line = next(
+        (
+            line.removeprefix("RESULT:")
+            for line in child.stdout.splitlines()
+            if line.startswith("RESULT:")
+        ),
+        None,
+    )
+    if child.exit_code != 0 or child.is_truncated or result_line is None:
+        return ProbeResult(
+            url=availability.url,
+            available=True,
+            models=availability.models,
+            matched_model=availability.matched_model,
+            readiness_tested=readiness_started,
+            latency_ms=child.duration_seconds * 1000,
+            error=FailureRecord(
+                code="READINESS_WORKER_ERROR", message="Bounded readiness worker failed"
+            ),
+        )
+    try:
+        child_result = ProbeResult.model_validate_json(result_line)
+    except Exception:
+        return ProbeResult(
+            url=availability.url,
+            available=True,
+            models=availability.models,
+            matched_model=availability.matched_model,
+            readiness_tested=readiness_started,
+            latency_ms=child.duration_seconds * 1000,
+            error=FailureRecord(
+                code="READINESS_WORKER_ERROR",
+                message="Bounded readiness worker returned invalid data",
+            ),
+        )
+    return child_result
+
+
+def _run_probe_worker(
+    action: str, url: str, model: str | None, timeout_seconds: float
+) -> SubprocessResult | None:
+    source_root = Path(__file__).resolve().parents[1]
+    payload = json.dumps(
+        {"action": action, "url": url, "model": model, "timeout": timeout_seconds}
+    ).encode("utf-8")
+    try:
+        return run_bounded_subprocess(
+            [sys.executable, "-m", "hybrid_sdlc.probe_worker"],
+            source_root,
+            build_sanitized_environment(extra_env={"PYTHONPATH": str(source_root)}),
+            timeout_seconds=timeout_seconds,
+            buffer_cap_bytes=64 * 1024,
+            stdin_data=payload,
+        )
+    except ProcessExecutionError:
+        return None
+
+
+def _worker_result_line(child: SubprocessResult) -> str | None:
+    return next(
+        (
+            line.removeprefix("RESULT:")
+            for line in child.stdout.splitlines()
+            if line.startswith("RESULT:")
+        ),
+        None,
+    )
+
+
+def _bounded_model_probe(url: str, required_model: str, timeout_seconds: float) -> ProbeResult:
+    """Read model availability with a process-level wall-clock deadline."""
+    display_url = redact_secrets(url)
+    child = _run_probe_worker("models", url, required_model, timeout_seconds)
+    if child is None:
+        code, message = "PROBE_WORKER_ERROR", "Bounded endpoint worker failed"
+    elif child.timed_out:
+        code, message = "PROBE_TIMEOUT", "Endpoint wall-clock deadline expired"
+    else:
+        result_line = _worker_result_line(child)
+        if child.exit_code == 0 and not child.is_truncated and result_line is not None:
+            try:
+                return ProbeResult.model_validate_json(result_line)
+            except Exception:
+                pass
+        code, message = "PROBE_WORKER_ERROR", "Bounded endpoint worker returned invalid data"
+    return ProbeResult(
+        url=display_url, available=False, error=FailureRecord(code=code, message=message)
+    )
+
+
+def _bounded_health_probe(url: str, timeout_seconds: float) -> dict[str, Any]:
+    """Read only health metadata with a process-level wall-clock deadline."""
+    child = _run_probe_worker("health", url, None, timeout_seconds)
+    if child is None:
+        return {"available": False, "loaded": None, "error_code": "HEALTH_WORKER_ERROR"}
+    if child.timed_out:
+        return {"available": False, "loaded": None, "error_code": "HEALTH_TIMEOUT"}
+    result_line = _worker_result_line(child)
+    if child.exit_code != 0 or child.is_truncated or result_line is None:
+        return {"available": False, "loaded": None, "error_code": "HEALTH_WORKER_ERROR"}
+    try:
+        result = json.loads(result_line)
+    except (TypeError, ValueError):
+        return {"available": False, "loaded": None, "error_code": "HEALTH_WORKER_ERROR"}
+    if not isinstance(result, dict):
+        return {"available": False, "loaded": None, "error_code": "HEALTH_WORKER_ERROR"}
+    return result
+
+
+def _probe_endpoint_direct(
+    url: str,
+    required_model: str | None = None,
+    check_readiness: bool = False,
+    timeout_seconds: float = DEFAULT_PROBE_TIMEOUT_SECONDS,
+    readiness_started: Callable[[], None] | None = None,
+) -> ProbeResult:
     """Probe an OpenAI-compatible /v1/models endpoint and test readiness if requested."""
+    if not math.isfinite(timeout_seconds) or timeout_seconds <= 0:
+        return ProbeResult(
+            url=redact_secrets(url),
+            available=False,
+            error=FailureRecord(
+                code="INVALID_TIMEOUT", message="Probe timeout must be finite and positive"
+            ),
+        )
     display_url = redact_secrets(url)
     models_url = _get_models_url(url)
     start_time = time.perf_counter()
@@ -63,14 +311,14 @@ def probe_endpoint(
 
             try:
                 data = resp.json()
-            except Exception as e:
+            except Exception:
                 return ProbeResult(
                     url=display_url,
                     available=False,
                     latency_ms=elapsed_ms,
                     error=FailureRecord(
                         code="MALFORMED_JSON",
-                        message=f"Endpoint returned malformed JSON: {e}",
+                        message="Endpoint returned malformed JSON",
                     ),
                 )
 
@@ -147,15 +395,25 @@ def probe_endpoint(
                     "temperature": 0.0,
                 }
                 try:
+                    if readiness_started is not None:
+                        readiness_started()
                     chat_resp = client.post(chat_url, json=payload, timeout=timeout_seconds)
                     if chat_resp.status_code == 200:
                         chat_data = chat_resp.json()
-                        if "choices" in chat_data and len(chat_data["choices"]) > 0:
+                        choices = chat_data.get("choices") if isinstance(chat_data, dict) else None
+                        if (
+                            isinstance(choices, list)
+                            and choices
+                            and isinstance(choices[0], dict)
+                            and isinstance(choices[0].get("message"), dict)
+                            and isinstance(choices[0]["message"].get("content"), str)
+                            and bool(choices[0]["message"]["content"].strip())
+                        ):
                             readiness_passed = True
                         else:
                             return ProbeResult(
                                 url=display_url,
-                                available=False,
+                                available=True,
                                 models=model_ids,
                                 matched_model=matched_model,
                                 readiness_tested=True,
@@ -169,7 +427,7 @@ def probe_endpoint(
                     else:
                         return ProbeResult(
                             url=display_url,
-                            available=False,
+                            available=True,
                             models=model_ids,
                             matched_model=matched_model,
                             readiness_tested=True,
@@ -184,15 +442,19 @@ def probe_endpoint(
                 except Exception as e:
                     return ProbeResult(
                         url=display_url,
-                        available=False,
+                        available=True,
                         models=model_ids,
                         matched_model=matched_model,
                         readiness_tested=True,
                         readiness_passed=False,
                         latency_ms=elapsed_ms,
                         error=FailureRecord(
-                            code="READINESS_PROBE_ERROR",
-                            message=f"Inference readiness probe failed: {e}",
+                            code="READINESS_TIMEOUT"
+                            if isinstance(e, httpx.TimeoutException)
+                            else "READINESS_PROBE_ERROR",
+                            message="Inference readiness probe timed out; remote request cancellation is unknown"
+                            if isinstance(e, httpx.TimeoutException)
+                            else "Inference readiness probe failed",
                         ),
                     )
 
@@ -218,17 +480,17 @@ def probe_endpoint(
             available=False,
             error=FailureRecord(code="READ_TIMEOUT", message="Read timed out"),
         )
-    except httpx.ConnectError as e:
+    except httpx.ConnectError:
         return ProbeResult(
             url=display_url,
             available=False,
-            error=FailureRecord(code="CONNECT_ERROR", message=f"Failed to connect: {e}"),
+            error=FailureRecord(code="CONNECT_ERROR", message="Failed to connect"),
         )
-    except Exception as e:
+    except Exception:
         return ProbeResult(
             url=display_url,
             available=False,
-            error=FailureRecord(code="PROBE_ERROR", message=f"Probe unexpected error: {e}"),
+            error=FailureRecord(code="PROBE_ERROR", message="Endpoint probe failed unexpectedly"),
         )
 
 
@@ -260,7 +522,7 @@ def select_active_endpoint(
             timeout_seconds=timeout_seconds,
         )
 
-        if probe_res.available:
+        if probe_res.available and (not check_readiness or probe_res.readiness_passed):
             return candidate, probe_res
 
         summary = {

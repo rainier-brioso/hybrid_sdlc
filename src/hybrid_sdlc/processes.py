@@ -281,16 +281,69 @@ class _WindowsJobObject:
         kernel32.AssignProcessToJobObject.argtypes = [wintypes.HANDLE, wintypes.HANDLE]
         return bool(kernel32.AssignProcessToJobObject(self.handle, process_handle))
 
-    def terminate(self) -> None:
+    def terminate(self) -> bool:
+        """Request termination and confirm the entire job drained within two seconds."""
         if not self.handle or os.name != "nt":
-            return
+            return False
         import ctypes
         from ctypes import wintypes
 
         kernel32 = ctypes.windll.kernel32  # type: ignore[attr-defined]
         kernel32.TerminateJobObject.restype = wintypes.BOOL
         kernel32.TerminateJobObject.argtypes = [wintypes.HANDLE, wintypes.UINT]
-        kernel32.TerminateJobObject(self.handle, 1)
+        if not kernel32.TerminateJobObject(self.handle, 1):
+            return False
+        # TerminateJobObject initiates asynchronous process termination. Waiting
+        # for the root Popen handle alone does not establish descendant exit.
+        return self._wait_until_empty(timeout_seconds=2.0)
+
+    def _active_process_count(self) -> int | None:
+        """Query owned-job accounting, never infer emptiness from API failure."""
+        if not self.handle or os.name != "nt":
+            return None
+        import ctypes
+        from ctypes import wintypes
+
+        class JOBOBJECT_BASIC_ACCOUNTING_INFORMATION(ctypes.Structure):
+            _fields_ = [
+                ("TotalUserTime", ctypes.c_int64),
+                ("TotalKernelTime", ctypes.c_int64),
+                ("ThisPeriodTotalUserTime", ctypes.c_int64),
+                ("ThisPeriodTotalKernelTime", ctypes.c_int64),
+                ("TotalPageFaultCount", wintypes.DWORD),
+                ("TotalProcesses", wintypes.DWORD),
+                ("ActiveProcesses", wintypes.DWORD),
+                ("TotalTerminatedProcesses", wintypes.DWORD),
+            ]
+
+        kernel32 = ctypes.windll.kernel32  # type: ignore[attr-defined]
+        kernel32.QueryInformationJobObject.restype = wintypes.BOOL
+        kernel32.QueryInformationJobObject.argtypes = [
+            wintypes.HANDLE,
+            wintypes.INT,
+            wintypes.LPVOID,
+            wintypes.DWORD,
+            wintypes.LPVOID,
+        ]
+        info = JOBOBJECT_BASIC_ACCOUNTING_INFORMATION()
+        if not kernel32.QueryInformationJobObject(
+            self.handle, 1, ctypes.byref(info), ctypes.sizeof(info), None
+        ):  # JobObjectBasicAccountingInformation
+            return None
+        return int(info.ActiveProcesses)
+
+    def _wait_until_empty(self, *, timeout_seconds: float) -> bool:
+        deadline = time.perf_counter() + timeout_seconds
+        while True:
+            active = self._active_process_count()
+            if active is None:
+                return False
+            if active == 0:
+                return True
+            remaining = deadline - time.perf_counter()
+            if remaining <= 0:
+                return False
+            time.sleep(min(0.01, remaining))
 
     def close(self) -> None:
         if not self.handle or os.name != "nt":
@@ -395,6 +448,7 @@ def kill_process_tree(proc: subprocess.Popen[bytes]) -> None:
                 stdout=subprocess.DEVNULL,
                 stderr=subprocess.DEVNULL,
                 check=False,
+                timeout=2.0,
             )
         except Exception:
             pass
@@ -417,6 +471,14 @@ def kill_process_tree(proc: subprocess.Popen[bytes]) -> None:
                 pass
 
 
+def _terminate_owned_tree(proc: subprocess.Popen[bytes], job_obj: _WindowsJobObject | None) -> bool:
+    """Use the assigned Windows Job Object before falling back to taskkill."""
+    if job_obj is not None and job_obj.terminate():
+        return True
+    kill_process_tree(proc)
+    return False
+
+
 def run_bounded_subprocess(
     argv: list[str],
     cwd: Path,
@@ -425,6 +487,7 @@ def run_bounded_subprocess(
     buffer_cap_bytes: int = 500 * 1024,
     cancel_event: threading.Event | None = None,
     process_observer: Callable[[int, datetime | None], None] | None = None,
+    stdin_data: bytes | None = None,
 ) -> SubprocessResult:
     """Run a subprocess strictly via argv without shell, bounding time and log buffer.
 
@@ -442,6 +505,7 @@ def run_bounded_subprocess(
     popen_kwargs: dict[str, Any] = {
         "cwd": str(cwd),
         "env": env,
+        "stdin": subprocess.PIPE if stdin_data is not None else None,
         "stdout": subprocess.PIPE,
         "stderr": subprocess.PIPE,
         "shell": False,
@@ -528,8 +592,9 @@ def run_bounded_subprocess(
         child_created_at = None
     except Exception as e:
         if job_obj:
-            job_obj.terminate()
-        kill_process_tree(proc)
+            _terminate_owned_tree(proc, job_obj)
+        else:
+            kill_process_tree(proc)
         try:
             proc.wait(timeout=2.0)
         except subprocess.TimeoutExpired:
@@ -547,8 +612,9 @@ def run_bounded_subprocess(
                 process_observer(proc.pid, child_created_at)
             except Exception as e:
                 if job_obj:
-                    job_obj.terminate()
-                kill_process_tree(proc)
+                    _terminate_owned_tree(proc, job_obj)
+                else:
+                    kill_process_tree(proc)
                 try:
                     proc.wait(timeout=2.0)
                 except subprocess.TimeoutExpired:
@@ -601,7 +667,23 @@ def run_bounded_subprocess(
     t_out.start()
     t_err.start()
 
-    deadline = time.monotonic() + timeout_seconds
+    t_in: threading.Thread | None = None
+    if stdin_data is not None:
+        stdin_stream = proc.stdin
+        assert stdin_stream is not None
+
+        def writer() -> None:
+            try:
+                stdin_stream.write(stdin_data)
+                stdin_stream.close()
+            except OSError:
+                pass
+
+        t_in = threading.Thread(target=writer, daemon=True)
+        t_in.start()
+
+    deadline = start_time + timeout_seconds
+    tree_terminated = False
     try:
         while True:
             if cancel_event is not None and cancel_event.is_set():
@@ -609,7 +691,7 @@ def run_bounded_subprocess(
                 break
             if proc.poll() is not None:
                 break
-            remaining = deadline - time.monotonic()
+            remaining = deadline - time.perf_counter()
             if remaining <= 0:
                 timed_out = True
                 break
@@ -618,9 +700,7 @@ def run_bounded_subprocess(
         cancelled = True
     finally:
         if timed_out or cancelled:
-            if job_obj:
-                job_obj.terminate()
-            kill_process_tree(proc)
+            tree_terminated = _terminate_owned_tree(proc, job_obj)
             try:
                 proc.wait(timeout=2.0)
             except subprocess.TimeoutExpired:
@@ -628,13 +708,13 @@ def run_bounded_subprocess(
 
         t_out.join(timeout=1.0)
         t_err.join(timeout=1.0)
+        if t_in is not None:
+            t_in.join(timeout=1.0)
         if job_obj:
             job_obj.close()
         _unregister_active_process(proc)
 
-    if timed_out and proc.poll() is None:
-        if job_obj:
-            job_obj.terminate()
+    if timed_out and proc.poll() is None and not tree_terminated:
         kill_process_tree(proc)
         try:
             proc.wait(timeout=2.0)

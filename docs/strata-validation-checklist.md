@@ -8,7 +8,7 @@ observations from this validation run; do not fill in results in advance.
 In PowerShell, enter the repository worktree first:
 
 ```powershell
-Set-Location 'C:\Users\ray\.codex\worktrees\phase-3-job-state\hybrid_sdlc'
+Set-Location 'C:\path\to\hybrid_sdlc' # Replace with your checkout location.
 $base = 'http://127.0.0.1:8080'
 $health = Invoke-RestMethod "$base/health" -TimeoutSec 10
 $health | ConvertTo-Json -Depth 10
@@ -25,7 +25,7 @@ evidence; do not infer readiness from container state alone.
 Check Hybrid SDLC's endpoint/model probe after `loaded` is true:
 
 ```powershell
-hybrid-sdlc check --repo-root 'C:\Users\ray\.codex\worktrees\phase-3-job-state\hybrid_sdlc' --json
+hybrid-sdlc check --repo-root . --json
 ```
 
 The default CLI check probes model availability. It is not a coding-task
