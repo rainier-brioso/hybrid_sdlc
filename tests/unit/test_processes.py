@@ -171,6 +171,22 @@ def test_shutdown_waits_for_inflight_spawn_then_kills_registered_process(
 def test_windows_child_stays_suspended_until_job_assignment_and_timeout_kills_tree(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
+    import ctypes
+
+    kernel32 = ctypes.WinDLL("kernel32", use_last_error=True)
+    kernel32.OpenProcess.argtypes = [ctypes.c_uint32, ctypes.c_int, ctypes.c_uint32]
+    kernel32.OpenProcess.restype = ctypes.c_void_p
+    kernel32.WaitForSingleObject.argtypes = [ctypes.c_void_p, ctypes.c_uint32]
+    kernel32.WaitForSingleObject.restype = ctypes.c_uint32
+    kernel32.GetExitCodeProcess.argtypes = [ctypes.c_void_p, ctypes.POINTER(ctypes.c_uint32)]
+    kernel32.GetExitCodeProcess.restype = ctypes.c_int
+    kernel32.CloseHandle.argtypes = [ctypes.c_void_p]
+    kernel32.CloseHandle.restype = ctypes.c_int
+
+    process_synchronize = 0x00100000
+    process_query_limited_information = 0x1000
+    wait_object_0 = 0
+    wait_timeout = 0x102
     child_pid_file = tmp_path / "child.pid"
     grandchild_pid_file = tmp_path / "grandchild.pid"
     child_script = tmp_path / "child.py"
@@ -190,7 +206,12 @@ def test_windows_child_stays_suspended_until_job_assignment_and_timeout_kills_tr
     assignment_started = threading.Event()
     allow_assignment = threading.Event()
     original_assign = process_api._WindowsJobObject.assign_process
+    original_terminate = process_api._terminate_owned_tree
     results: list[object] = []
+    retained_processes: list[tuple[str, int, int]] = []
+    capture_failures: list[str] = []
+    capture_attempted = False
+    popen_pids: list[int] = []
 
     def gated_assign(job: process_api._WindowsJobObject, process_handle: object) -> bool:
         assignment_started.set()
@@ -198,7 +219,52 @@ def test_windows_child_stays_suspended_until_job_assignment_and_timeout_kills_tr
             raise TimeoutError("test did not release gated Job Object assignment")
         return original_assign(job, process_handle)
 
+    def retain_fixture_processes_before_termination(
+        proc: subprocess.Popen[bytes], job: process_api._WindowsJobObject | None
+    ) -> bool:
+        nonlocal capture_attempted
+        if not capture_attempted:
+            capture_attempted = True
+            popen_pids.append(proc.pid)
+            try:
+                for label, pid_file in (
+                    ("child", child_pid_file),
+                    ("grandchild", grandchild_pid_file),
+                ):
+                    if not pid_file.is_file():
+                        raise AssertionError(
+                            f"{label} PID file missing before process-tree termination"
+                        )
+                    pid = int(pid_file.read_text(encoding="utf-8"))
+                    handle = kernel32.OpenProcess(
+                        process_synchronize | process_query_limited_information, False, pid
+                    )
+                    if not handle:
+                        raise OSError(
+                            ctypes.get_last_error(),
+                            f"OpenProcess failed for {label} PID {pid}",
+                        )
+                    retained_processes.append((label, pid, handle))
+                    wait_state = kernel32.WaitForSingleObject(handle, 0)
+                    exit_code = ctypes.c_uint32()
+                    has_exit_code = bool(
+                        kernel32.GetExitCodeProcess(handle, ctypes.byref(exit_code))
+                    )
+                    if wait_state != wait_timeout:
+                        raise AssertionError(
+                            f"{label} PID {pid} was not alive immediately before cleanup: "
+                            f"wait_state=0x{wait_state:08x}, "
+                            f"exit_code={exit_code.value if has_exit_code else 'unavailable'}"
+                        )
+            except Exception as exc:
+                capture_failures.append(f"{type(exc).__name__}: {exc}")
+        # Always run the real cleanup, even if a PID file or handle check failed.
+        return original_terminate(proc, job)
+
     monkeypatch.setattr(process_api._WindowsJobObject, "assign_process", gated_assign)
+    monkeypatch.setattr(
+        process_api, "_terminate_owned_tree", retain_fixture_processes_before_termination
+    )
     monkeypatch.setattr(process_api, "_shutdown_requested", False)
     runner = threading.Thread(
         target=lambda: results.append(
@@ -226,15 +292,30 @@ def test_windows_child_stays_suspended_until_job_assignment_and_timeout_kills_tr
         result = results[0]
         assert isinstance(result, process_api.SubprocessResult)
         assert result.timed_out
-        assert child_pid_file.exists()
-        assert grandchild_pid_file.exists()
-        child_pid = int(child_pid_file.read_text(encoding="utf-8"))
-        grandchild_pid = int(grandchild_pid_file.read_text(encoding="utf-8"))
-        assert get_process_identity(child_pid).state == "dead"
-        assert get_process_identity(grandchild_pid).state == "dead"
+        assert not capture_failures, "; ".join(capture_failures)
+        assert [label for label, _, _ in retained_processes] == ["child", "grandchild"]
+        assert popen_pids
+        # Popen can track a venv launcher rather than the fixture interpreter.
+        # Its wait and empty job accounting do not synchronize final kernel
+        # teardown of that interpreter. Wait on the original process objects,
+        # not reusable numeric PIDs, with one bounded deadline and no retries.
+        deadline = time.monotonic() + 2.0
+        for label, pid, handle in retained_processes:
+            remaining_ms = max(0, int((deadline - time.monotonic()) * 1000))
+            wait_state = kernel32.WaitForSingleObject(handle, remaining_ms)
+            exit_code = ctypes.c_uint32()
+            has_exit_code = bool(kernel32.GetExitCodeProcess(handle, ctypes.byref(exit_code)))
+            assert wait_state == wait_object_0, (
+                f"Popen PID {popen_pids[0]}, {label} PID {pid}; "
+                "retained process handle was not signaled within 2s after cleanup: "
+                f"wait_state=0x{wait_state:08x}, "
+                f"exit_code={exit_code.value if has_exit_code else 'unavailable'}"
+            )
     finally:
         allow_assignment.set()
         runner.join(timeout=5)
+        for _, _, handle in retained_processes:
+            kernel32.CloseHandle(handle)
         monkeypatch.setattr(process_api, "_shutdown_requested", False)
 
 

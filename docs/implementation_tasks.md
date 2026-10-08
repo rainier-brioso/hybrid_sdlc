@@ -1166,10 +1166,29 @@ A task is complete when:
   skips in 226.77 s, 82.95% total coverage. Ruff formatting/lint (100 files),
   strict mypy (25 source files), manual Compose parsing, and final clean
   wheel/sdist/rebuilt-wheel smoke checks pass. Implementation/review subagents
-  reached their usage limit during this follow-up; the parent completed and
-  inspected the hook, but independent review of the new startup/compatibility
-  code remains pending. Automatic defaults have not been verified on a live
+  initially reached their usage limit during this follow-up; the parent completed
+  and inspected the hook. The resumed independent startup/compatibility review
+  found no material defects; focused revalidation passed 150 tests with one
+  Windows symlink-privilege skip. Automatic defaults have not been verified on a live
   model restart, and this follow-up supplies no new hardware benchmark evidence.
+
+  PR #10 Windows CI follow-up (2026-10-08): all compatibility and packaging
+  jobs passed, but the process containment test queried a fixture PID after
+  cleanup and reported it alive. Retained-handle diagnostics reproduced a
+  launcher/interpreter split: `Popen` tracked a different PID from the fixture
+  interpreter. Job termination returned success and accounting reached zero,
+  while the interpreter's handle was briefly unsignaled with exit code 1,
+  then signaled within a bounded wait. PID reuse alone was not the explanation.
+  The regression now retains both actual fixture process handles before real
+  cleanup, verifies they are alive, and requires both to signal within one
+  shared two-second deadline afterward. A surviving process remains a hard
+  failure; no polling retries, skips, or production cleanup changes were added.
+  This verifies bounded eventual termination, not immediate signaling of every
+  process object at runner return. All 30 process tests and 12 repeated target
+  runs passed; independent review, Ruff, formatting, and mypy passed.
+  Full revalidation passed 738 tests with 14 environment/prerequisite skips
+  in 192.02 s, retaining 82.95% coverage. The Windows hosted CI rerun remains
+  the final confirmation; no service restart or inference was performed.
 
 - [ ] **HSDLC-066 — Benchmark Qwen 3.6 35B-A3B native versus Docker**  
   Files: `benchmarks/results/rtx-3090-qwen36-35b-a3b-native.json`, `benchmarks/results/rtx-3090-qwen36-35b-a3b-docker.json`, `docs/model-profiles.md`  
