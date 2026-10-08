@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 import tomllib
 from pathlib import Path
 
@@ -49,6 +50,27 @@ def test_docker_model_profiles_are_portable_and_parseable() -> None:
         assert profile["limits"]["context_tokens"] == expected_context
 
 
+def test_strata_worker_profile_budget_matches_supported_settings_locations() -> None:
+    root = Path(__file__).resolve().parents[2]
+    defaults_paths = (
+        root / "config" / "strata" / "worker-defaults.json",
+        root / "src" / "hybrid_sdlc" / "_runtime" / "strata" / "worker-defaults.json",
+    )
+    defaults = [json.loads(path.read_text(encoding="utf-8")) for path in defaults_paths]
+    assert defaults[0] == defaults[1]
+    assert defaults[0] == {"reasoning_effort": "low", "max_tokens": 4096}
+    assert (root / "config/strata/startup.py").read_bytes() == (
+        root / "src/hybrid_sdlc/_runtime/strata/startup.py"
+    ).read_bytes()
+
+    with (root / "config" / "model-profiles" / "strata-coder-rtx3090-worker.toml").open(
+        "rb"
+    ) as stream:
+        profile = tomllib.load(stream)
+    assert profile["limits"]["output_tokens"] == defaults[0]["max_tokens"]
+    assert profile["limits"]["reasoning_budget_tokens"] == 1024
+
+
 def test_spec_kit_templates_use_canonical_layout_and_require_contracts() -> None:
     root = Path(__file__).resolve().parents[2]
     constitution = root / ".specify" / "memory" / "constitution.md"
@@ -85,6 +107,7 @@ def test_spec_kit_templates_use_canonical_layout_and_require_contracts() -> None
     runtime_force_include = {
         "src/hybrid_sdlc/_runtime/strata/compose.yaml": "hybrid_sdlc/_runtime/strata/compose.yaml",
         "src/hybrid_sdlc/_runtime/strata/worker-defaults.json": "hybrid_sdlc/_runtime/strata/worker-defaults.json",
+        "src/hybrid_sdlc/_runtime/strata/startup.py": "hybrid_sdlc/_runtime/strata/startup.py",
     }
     assert set(force_include) == set(specify_force_include) | set(runtime_force_include)
     assert all(

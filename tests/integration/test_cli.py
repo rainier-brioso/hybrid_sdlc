@@ -353,6 +353,44 @@ def test_cli_run_task_json_stdout_only(tmp_path: Path) -> None:
     assert stdout.startswith("{") and stdout.endswith("}")
 
 
+def test_run_task_rejects_invalid_request_budgets_before_endpoint_probe(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    _init_git_repo(tmp_path)
+    (tmp_path / "hybrid_sdlc.toml").write_text(
+        '[command_profiles.pytest]\nargv = ["pytest"]\n', encoding="utf-8"
+    )
+    (tmp_path / "spec.md").write_text("# Spec\n", encoding="utf-8")
+    subprocess.run(["git", "add", "."], cwd=tmp_path, check=True)
+    subprocess.run(["git", "commit", "-m", "add valid task inputs"], cwd=tmp_path, check=True)
+    monkeypatch.setattr(
+        "hybrid_sdlc.cli.select_active_endpoint",
+        lambda **kwargs: pytest.fail("invalid budgets must fail before endpoint probe"),
+    )
+
+    response = CliRunner().invoke(
+        cli,
+        [
+            "run-task",
+            "spec.md",
+            "--repo-root",
+            str(tmp_path),
+            "--task-id",
+            "T-1",
+            "--test-profile",
+            "pytest",
+            "--aider-max-tokens",
+            "8192",
+            "--aider-reasoning-budget-tokens",
+            "8192",
+            "--json",
+        ],
+    )
+
+    assert response.exit_code == ExitCode.CONFIG_ERROR
+    assert "must be less than aider_max_tokens" in response.output
+
+
 def test_cli_run_task_forwards_explicit_commit_and_reports_isolated_result(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
@@ -360,6 +398,7 @@ def test_cli_run_task_forwards_explicit_commit_and_reports_isolated_result(
     config_file = tmp_path / "hybrid_sdlc.toml"
     config_file.write_text(
         'aider_repo_map_tokens = 0\naider_edit_files = ["README.md"]\n'
+        "aider_max_tokens = 4096\naider_reasoning_budget_tokens = 512\n"
         "[command_profiles.pytest]\nargv = ['pytest']\n",
         encoding="utf-8",
     )
@@ -407,6 +446,10 @@ def test_cli_run_task_forwards_explicit_commit_and_reports_isolated_result(
             "T-1",
             "--test-profile",
             "pytest",
+            "--aider-max-tokens",
+            "8192",
+            "--aider-reasoning-budget-tokens",
+            "1024",
             "--commit",
             "--json",
         ],
@@ -418,6 +461,8 @@ def test_cli_run_task_forwards_explicit_commit_and_reports_isolated_result(
     assert captured["rollback_on_failure"] is False
     assert captured["repo_map_tokens"] == 0
     assert captured["target_files"] == [Path("README.md")]
+    assert captured["aider_max_tokens"] == 8192
+    assert captured["aider_reasoning_budget_tokens"] == 1024
     assert payload["commit_hash"] == "a" * 40
     assert payload["worktree_path"] == str(tmp_path / "isolated")
     assert payload["review_patch"] == str(tmp_path / "isolated.patch")

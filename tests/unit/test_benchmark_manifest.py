@@ -515,6 +515,61 @@ class BenchmarkManifestTests(unittest.TestCase):
         self.assertNotIn("PRIVATE_SENTINEL", " ".join(errors))
         self.assertNotIn("SECRET_HASH_SENTINEL", " ".join(errors))
 
+    def test_equivalent_settings_with_reordered_keys_are_accepted(self) -> None:
+        manifest = _valid_manifest()
+        base = manifest["comparison"]["variants"]
+
+        # Nested dict with >=2 keys and a list containing a dict (>=2 keys).
+        nested_a = {"alpha": 1, "beta": [2, {"gamma": 3, "delta": 4}]}
+        nested_b = {"beta": [2, {"delta": 4, "gamma": 3}], "alpha": 1}
+        nested_c = {"beta": [2, {"delta": 4, "gamma": 3}], "alpha": 1}
+        nested_d = {"alpha": 1, "beta": [2, {"gamma": 3, "delta": 4}]}
+
+        # Top-level settings with different insertion orders per mapping.
+        native_req = base["native"]["runtime"]["request_settings"]
+        native_eff = base["native"]["runtime"]["effective_settings"]
+        docker_req = base["docker"]["runtime"]["request_settings"]
+        docker_eff = base["docker"]["runtime"]["effective_settings"]
+
+        native_req["extra"] = nested_a
+        native_eff.clear()
+        native_eff.update(
+            {
+                "parallelism": 1,
+                "output_limit": 4096,
+                "reasoning_effort": "low",
+                "kv": "int8",
+                "context_tokens": 16_384,
+                "extra": nested_b,
+            }
+        )
+        docker_req.clear()
+        docker_req.update(
+            {
+                "output_limit": 4096,
+                "context_tokens": 16_384,
+                "parallelism": 1,
+                "reasoning_effort": "low",
+                "kv": "int8",
+                "extra": nested_c,
+            }
+        )
+        docker_eff.clear()
+        docker_eff.update(
+            {
+                "kv": "int8",
+                "parallelism": 1,
+                "extra": nested_d,
+                "output_limit": 4096,
+                "reasoning_effort": "low",
+                "context_tokens": 16_384,
+            }
+        )
+
+        before = copy.deepcopy(manifest)
+        self.assertEqual(validate_manifest(manifest), [])
+        self.assertEqual(manifest, before)
+
     def test_error_order_is_independent_of_settings_mapping_insertion_order(self) -> None:
         first = _valid_manifest()
         second = _valid_manifest()

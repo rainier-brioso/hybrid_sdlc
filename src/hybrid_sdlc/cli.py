@@ -430,6 +430,14 @@ def check_cmd(
 @click.option("--model", help="Override target model name.")
 @click.option("--max-retries", type=int, help="Override maximum edit attempts.")
 @click.option(
+    "--aider-max-tokens", type=int, help="Override Aider's per-request output token limit."
+)
+@click.option(
+    "--aider-reasoning-budget-tokens",
+    type=int,
+    help="Override Strata's per-request reasoning budget (0 disables it).",
+)
+@click.option(
     "--commit",
     "commit_requested",
     is_flag=True,
@@ -449,6 +457,8 @@ def run_task_cmd(
     host_url: str | None,
     model: str | None,
     max_retries: int | None,
+    aider_max_tokens: int | None,
+    aider_reasoning_budget_tokens: int | None,
     commit_requested: bool,
     rollback_on_failure: bool,
     json_mode: bool,
@@ -456,7 +466,13 @@ def run_task_cmd(
     """Synchronously execute a delegated spec task through the bounded editing and testing loop."""
     try:
         verified_root = verify_repo_root(repo_root)
-        config = load_config(repo_root=verified_root)
+        config = load_config(
+            repo_root=verified_root,
+            cli_overrides={
+                "aider_max_tokens": aider_max_tokens,
+                "aider_reasoning_budget_tokens": aider_reasoning_budget_tokens,
+            },
+        )
     except HybridSDLCError as e:
         if json_mode:
             click.echo(json.dumps(e.to_failure_record().model_dump(mode="json"), indent=2))
@@ -538,6 +554,8 @@ def run_task_cmd(
             rollback_on_failure=rollback_on_failure,
             repo_map_tokens=config.aider_repo_map_tokens,
             target_files=[Path(path) for path in config.aider_edit_files],
+            aider_max_tokens=config.aider_max_tokens,
+            aider_reasoning_budget_tokens=config.aider_reasoning_budget_tokens,
         )
     except HybridSDLCError as e:
         if json_mode:

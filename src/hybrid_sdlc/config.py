@@ -7,7 +7,7 @@ from pathlib import Path
 from typing import Any
 from urllib.parse import urlparse
 
-from pydantic import BaseModel, ConfigDict, Field, field_validator
+from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
 from hybrid_sdlc.command_profiles import CommandProfile
 from hybrid_sdlc.errors import ConfigurationError
@@ -86,12 +86,24 @@ class ToolkitConfig(BaseModel):
     )
     aider_repo_map_tokens: int | None = Field(default=None, strict=True, ge=0)
     aider_edit_files: list[str] = Field(default_factory=list, strict=True)
+    aider_max_tokens: int | None = Field(default=None, strict=True, ge=1)
+    aider_reasoning_budget_tokens: int | None = Field(default=None, strict=True, ge=0)
     command_profiles: dict[str, CommandProfile] = Field(default_factory=dict)
 
     @field_validator("aider_edit_files", mode="before")
     @classmethod
     def validate_aider_edit_files(cls, value: object) -> list[str]:
         return normalize_aider_edit_files(value)
+
+    @model_validator(mode="after")
+    def validate_aider_token_budgets(self) -> ToolkitConfig:
+        if (
+            self.aider_max_tokens is not None
+            and self.aider_reasoning_budget_tokens is not None
+            and self.aider_reasoning_budget_tokens >= self.aider_max_tokens
+        ):
+            raise ValueError("aider_reasoning_budget_tokens must be less than aider_max_tokens")
+        return self
 
 
 def load_config(

@@ -403,6 +403,10 @@ closure are recorded in `docs/implementation_tasks.md`.
   retained redacted timeout evidence, and suspected-stall reporting. Do not
   infer stalls from idle duration or automatically restart an external/shared
   endpoint (HSDLC-064E).
+- Expose optional Aider output and Strata reasoning budgets without changing
+  defaults or the MCP tool schemas (HSDLC-064F). Validate explicit values and
+  document context-fit constraints and temporary model-settings precedence;
+  verify bounded task results separately from comparative benchmarks.
 - Validate the Docker Compose deployment and document external/native server fallbacks.
 - Prioritize the optional Strata Docker setup and compatibility evaluation while the remaining llama.cpp live smoke rerun is paused. Record GPU/API validation separately from Aider smoke and native-versus-Docker performance evidence (HSDLC-064A/064B).
 - Define a shared hardware benchmark protocol for Strata and the retained

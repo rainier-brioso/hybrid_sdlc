@@ -130,6 +130,7 @@ def test_worker_executes_claim_and_persists_result_while_ignoring_artifacts(
     (tmp_path / "context.py").write_text("value = 1\n", encoding="utf-8")
     (tmp_path / "hybrid_sdlc.toml").write_text(
         'aider_repo_map_tokens = 2048\naider_edit_files = ["context.py"]\n'
+        "aider_max_tokens = 8192\naider_reasoning_budget_tokens = 1024\n"
         '[command_profiles.pytest]\nargv = ["pytest"]\n',
         encoding="utf-8",
     )
@@ -189,6 +190,8 @@ def test_worker_executes_claim_and_persists_result_while_ignoring_artifacts(
     assert completed.status is JobStatus.COMPLETED
     assert captured_args["repo_map_tokens"] == 2048
     assert captured_args["target_files"] == [Path("context.py")]
+    assert captured_args["aider_max_tokens"] == 8192
+    assert captured_args["aider_reasoning_budget_tokens"] == 1024
     assert completed.worker_pid is not None
     assert completed.worker_created_at is not None
     assert abs(

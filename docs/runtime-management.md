@@ -9,8 +9,23 @@ see [Strata Docker setup](strata-server-docker.md).
 
 Install the current Hybrid SDLC package and Docker Compose first. The bundled
 profile targets the existing RTX 3090 evaluation: pinned Strata, Coder IQ1_M,
-16K context, low-RAM mode, int8 KV, no vision, and low-reasoning defaults.
-GPU passthrough and sufficient memory/disk are still prerequisites.
+16K context, low-RAM mode, int8 KV, no vision, low reasoning effort, 4096 total
+output tokens, and a 1024-token reasoning wrap-up threshold. In the pinned
+Strata release, the reasoning budget belongs in the per-model config
+`/data/config/strata-coder-iq1_m.json`; it is not supported in the shared
+defaults JSON. Requests can override the model setting, including setting the
+budget to `0` to disable it. The threshold is not an exact cap, and the prompt
+plus output must fit in the model context. GPU passthrough and sufficient
+memory/disk are still prerequisites.
+
+New managed definitions include a read-only startup hook that adds the model
+budget only if absent. It validates the pinned upstream startup script and
+preserves explicit model settings. Existing exact legacy runtime definitions
+remain valid, and repeated `configure` does not migrate or overwrite them.
+Such installations retain their prior startup behavior; no automatic upgrade
+or restart is performed. Do not edit managed Compose or startup assets by hand:
+the lifecycle commands reject unrecognized definitions. Repository-level Aider
+request budgets remain available as explicit overrides for existing services.
 
 ```sh
 hybrid-sdlc runtime strata configure --port 8080

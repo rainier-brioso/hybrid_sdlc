@@ -42,6 +42,7 @@ packages = ["src/hybrid_sdlc"]
 ".specify/templates/tasks-template.md" = "hybrid_sdlc/_specify/templates/tasks-template.md"
 "src/hybrid_sdlc/_runtime/strata/compose.yaml" = "hybrid_sdlc/_runtime/strata/compose.yaml"
 "src/hybrid_sdlc/_runtime/strata/worker-defaults.json" = "hybrid_sdlc/_runtime/strata/worker-defaults.json"
+"src/hybrid_sdlc/_runtime/strata/startup.py" = "hybrid_sdlc/_runtime/strata/startup.py"
 
 [tool.hatch.build.targets.sdist]
 only-include = [

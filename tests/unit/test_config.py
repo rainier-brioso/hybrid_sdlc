@@ -18,6 +18,8 @@ def test_load_config_defaults(tmp_path: Path) -> None:
     assert config.max_retries == 3
     assert config.task_timeout_seconds == 600
     assert config.aider_repo_map_tokens is None
+    assert config.aider_max_tokens is None
+    assert config.aider_reasoning_budget_tokens is None
     assert config.aider_edit_files == []
     assert len(config.server_candidates) == 2
     assert config.server_candidates[0].url == "http://127.0.0.1:8090/v1"
@@ -127,6 +129,57 @@ def test_load_config_aider_edit_files_from_toml(tmp_path: Path) -> None:
         "src/module.py",
         "tests/test_module.py",
     ]
+
+
+@pytest.mark.parametrize(
+    ("field", "value"),
+    [
+        ("aider_max_tokens", True),
+        ("aider_max_tokens", "8192"),
+        ("aider_max_tokens", 0),
+        ("aider_max_tokens", -1),
+        ("aider_reasoning_budget_tokens", True),
+        ("aider_reasoning_budget_tokens", "0"),
+        ("aider_reasoning_budget_tokens", -1),
+    ],
+)
+def test_aider_token_budgets_reject_invalid_values(field: str, value: object) -> None:
+    with pytest.raises(ValidationError):
+        ToolkitConfig(**{field: value})
+
+
+@pytest.mark.parametrize(
+    ("max_tokens", "reasoning", "expected"),
+    [(None, 0, 0), (8192, None, None), (8192, 0, 0), (8192, 1024, 1024)],
+)
+def test_aider_token_budgets_accept_single_and_valid_values(
+    max_tokens: int | None, reasoning: int | None, expected: int | None
+) -> None:
+    config = ToolkitConfig(aider_max_tokens=max_tokens, aider_reasoning_budget_tokens=reasoning)
+    assert config.aider_max_tokens == max_tokens
+    assert config.aider_reasoning_budget_tokens == expected
+
+
+@pytest.mark.parametrize("reasoning", [8192, 9000])
+def test_aider_reasoning_budget_must_be_below_output_limit(reasoning: int) -> None:
+    with pytest.raises(ValidationError, match="must be less than"):
+        ToolkitConfig(aider_max_tokens=8192, aider_reasoning_budget_tokens=reasoning)
+
+
+def test_aider_token_budgets_load_from_toml_and_cli_overrides(tmp_path: Path) -> None:
+    (tmp_path / "hybrid_sdlc.toml").write_text(
+        "aider_max_tokens = 4096\naider_reasoning_budget_tokens = 512\n", encoding="utf-8"
+    )
+    from_toml = load_config(repo_root=tmp_path)
+    assert from_toml.aider_max_tokens == 4096
+    assert from_toml.aider_reasoning_budget_tokens == 512
+
+    overridden = load_config(
+        repo_root=tmp_path,
+        cli_overrides={"aider_max_tokens": 8192, "aider_reasoning_budget_tokens": 1024},
+    )
+    assert overridden.aider_max_tokens == 8192
+    assert overridden.aider_reasoning_budget_tokens == 1024
 
 
 @pytest.mark.parametrize(

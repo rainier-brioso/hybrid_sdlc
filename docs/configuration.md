@@ -38,6 +38,31 @@ Omit the setting (or use an empty list) to preserve Aider's normal context selec
 
 These paths provide initial context and are **not** an edit allowlist or a security boundary: Aider may still edit other repository files. Use repository permissions and the existing isolated-worktree review flow to inspect changes.
 
+## Optional Aider Request Budgets
+
+For compatible OpenAI-style endpoints such as Strata, optional settings can set Aider's request output limit and the provider-specific reasoning budget:
+
+```toml
+# Experimental values for the measured 16K-context task; tune for each prompt/model.
+aider_max_tokens = 4096
+aider_reasoning_budget_tokens = 1024
+```
+
+Both settings are omitted by default, preserving Aider's existing request behavior. `aider_max_tokens` must be a positive integer. `aider_reasoning_budget_tokens` accepts zero or a positive integer; zero explicitly disables the Strata reasoning budget. If both are supplied, the reasoning budget must be lower than the output limit.
+
+The shipped Strata deployment separately supplies server-side defaults of 4096
+output tokens and a 1024-token reasoning budget for new definitions. Its startup
+hook sets the model budget only when absent; explicit model settings and request
+values take precedence. Existing services are not automatically restarted or
+migrated. These Strata deployment defaults do not change the backend-neutral
+toolkit defaults; see [Strata Docker setup](strata-server-docker.md).
+
+The output limit is a response-token cap, not the model's context size. It must fit in the context remaining after the complete prompt Aider sends. Hybrid SDLC does not estimate the serialized prompt size, choose a smaller limit, or truncate the prompt automatically. In one observed 16,384-token Strata context, a 10,573-token prompt left a server-reported maximum output of 5,803; requesting 8,192 was rejected before generation. Choose a limit with room for the actual prompt and any server overhead. The reasoning budget controls how much of that response budget Strata may spend reasoning before it should leave room to answer; it is a wrap-up threshold, not an exact token count, and does not enlarge the context window. These values are task-specific examples, not general recommended defaults.
+
+Hybrid SDLC writes only configured values to a short-lived Aider model-settings file under the special `aider/extra_params` entry and passes its path to the Aider process. That special entry can replace other values an operator has placed in the same global extra-parameters slot. Named model defaults remain available, but arbitrary ambient extra parameters are neither read nor copied. The file is removed after Aider exits, including timeout, cancellation, and launch-error paths.
+
+For synchronous CLI runs, `--aider-max-tokens` and `--aider-reasoning-budget-tokens` override the repository TOML values. MCP tools use the repository configuration; the five tool schemas do not add budget arguments.
+
 ## Trust Model & Named Command Profiles
 
 > [!WARNING]

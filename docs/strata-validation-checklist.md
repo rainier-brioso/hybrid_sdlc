@@ -33,11 +33,20 @@ evaluation, and the optional readiness probe may time out on cold inference.
 
 ## 2. Inspect the mounted defaults
 
-The startup-mounted `config/strata/worker-defaults.json` currently specifies
-`reasoning_effort: low` and `max_tokens: 4096`. Strata documents `GET /props`
-as exposing configured generation defaults, with shared settings taking
-precedence. Inspect and record the full response after startup before
-interpreting fields. Its nested response shape is not assumed here:
+The startup-mounted `config/strata/worker-defaults.json` specifies
+`reasoning_effort: low` and `max_tokens: 4096`. Do not add
+`reasoning_budget_tokens` to this shared JSON: the pinned Strata release rejects
+that setting there and discards the shared defaults. Its reasoning budget is
+configured in the per-model file
+`/data/config/strata-coder-iq1_m.json`; the shipped startup hook adds `1024`
+only when the key is absent, preserving explicitly configured values. Existing
+running or legacy managed services are not automatically upgraded.
+Request-level values override that model default, and `0` disables the
+budget. The budget is a wrap-up threshold, not an exact cap on reasoning
+tokens. Strata documents `GET /props` as exposing configured generation
+defaults, with shared settings taking precedence. Inspect and record the full
+response after startup before interpreting fields. Its nested response shape
+is not assumed here:
 
 ```powershell
 $settings = Invoke-RestMethod "$base/settings" -TimeoutSec 10
@@ -47,11 +56,18 @@ $properties.default_generation_settings | ConvertTo-Json -Depth 10
 ```
 
 Verify `/settings` reports `defaults.reasoning_effort` as `low` and
-`defaults.max_tokens` as `4096`. On the pinned release, `/props` reports the
+`defaults.max_tokens` as `4096`. Confirm the model config contains
+`reasoning_budget_tokens: 1024`. On the pinned release, `/props` reports the
 output cap as `default_generation_settings.params.n_predict`, but does not
-expose reasoning effort there. Record the actual values. This settings
-check is separate from the inference request below, which explicitly
-overrides reasoning effort to `none`.
+expose reasoning effort there. Record the actual values. The prompt and
+generated output must fit within the model context. This settings check is
+separate from the inference request below, which explicitly overrides
+reasoning effort to `none`.
+
+When the model budget is enabled, startup should also report
+`thinking budget: 1024 tokens`. Record any intentional override instead of
+assuming the new default was applied to an existing deployment. Static and
+image syntax checks do not prove that a restarted live model uses this setting.
 
 ## 3. Run one bounded API smoke request
 

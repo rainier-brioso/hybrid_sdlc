@@ -68,10 +68,24 @@ model ID is `qwen3.8-flash-next-coder-iq1_m`; verify that Strata's model list
 matches before using [the candidate worker profile](../config/model-profiles/strata-coder-rtx3090-worker.toml).
 Compose mounts [worker-defaults.json](../config/strata/worker-defaults.json)
 read-only at the shared-settings path Strata reads during startup. It sets
-`reasoning_effort` to `low` and the default `max_tokens` to 4096. A request that
-supplies its own reasoning effort or output limit takes precedence. Low
-reasoning guides the model's thinking and does not enforce a hard reasoning
-token cap.
+`reasoning_effort` to `low` and the default `max_tokens` to 4096. The pinned
+release does not accept `reasoning_budget_tokens` in this shared file; it
+discards shared defaults containing that unsupported field. The worker's
+reasoning budget belongs in `/data/config/strata-coder-iq1_m.json`. The shipped
+startup hook adds `1024` there when that key is absent, after setup and before
+the API server starts, as recorded in the
+[worker profile](../config/model-profiles/strata-coder-rtx3090-worker.toml).
+Explicit model-config values, including `0`, are preserved. The hook verifies
+the pinned upstream entrypoint's checksum and refuses an unexpected version.
+A per-request reasoning budget overrides the model default; `0` disables it.
+This budget is a wrap-up threshold, not an exact cap on reasoning tokens. The
+prompt and generated output must fit within the model context.
+
+These are Strata-only deployment defaults; Hybrid SDLC does not send a Strata
+reasoning field to other backends by default. Existing running containers are
+not changed by updating these files. Apply the new manual Compose definition
+through an explicitly chosen container recreation when no tasks are active;
+the model volume is retained. This change has not restarted your service.
 
 Keep this JSON file as the durable source of defaults. The Strata web/API
 settings editor changes shared defaults in memory; the mounted file is
@@ -177,7 +191,9 @@ measurements are available.
 - `/health` reports loaded with 16K context and the expected model ID.
   `/settings` reports low reasoning and max_tokens 4096; `/props` exposes the
   output limit as `default_generation_settings.params.n_predict` but omits
-  reasoning effort. The Hybrid SDLC model-availability probe passed.
+  reasoning effort. `reasoning_budget_tokens` is a per-model setting rather
+  than a shared setting in the pinned release. The Hybrid SDLC model-availability
+  probe passed.
 - A bounded chat (none effort, max_tokens 128) answered `42` with stop finish
   reason in 4.95 s. This tiny initial request is not a throughput benchmark.
 - Isolated Strata/Aider SMOKE-001 passed in one attempt, 56.7 s; an independent
