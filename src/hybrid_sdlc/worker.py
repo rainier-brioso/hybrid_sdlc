@@ -80,6 +80,8 @@ def _execute(
         process_observer=process_observer,
         repo_map_tokens=config.aider_repo_map_tokens,
         target_files=[Path(path) for path in config.aider_edit_files],
+        aider_max_tokens=config.aider_max_tokens,
+        aider_reasoning_budget_tokens=config.aider_reasoning_budget_tokens,
     )
 
 

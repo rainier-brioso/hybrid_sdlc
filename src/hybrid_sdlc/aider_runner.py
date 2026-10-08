@@ -3,14 +3,17 @@
 from __future__ import annotations
 
 import hashlib
+import json
 import os
 import re
 import stat
 import subprocess
+import tempfile
 import threading
 import time
 import uuid
-from collections.abc import Callable
+from collections.abc import Callable, Iterator
+from contextlib import contextmanager
 from datetime import UTC, datetime
 from pathlib import Path
 
@@ -71,6 +74,7 @@ def build_aider_argv(
     extra_flags: list[str] | None = None,
     aider_cmd: list[str] | str = "aider",
     repo_map_tokens: int | None = None,
+    model_settings_file: Path | None = None,
 ) -> list[str]:
     """Construct a deterministic argv array for invoking Aider.
 
@@ -110,10 +114,99 @@ def build_aider_argv(
     if repo_map_tokens is not None:
         argv.extend(["--map-tokens", str(repo_map_tokens)])
 
+    if model_settings_file is not None:
+        argv.extend(["--model-settings-file", str(model_settings_file)])
+
     if extra_flags:
         argv.extend(extra_flags)
 
     return argv
+
+
+def validate_aider_token_budgets(max_tokens: object, reasoning_budget_tokens: object) -> None:
+    """Reject invalid optional Aider request budgets before any task side effects."""
+    if max_tokens is not None and (
+        isinstance(max_tokens, bool) or not isinstance(max_tokens, int) or max_tokens < 1
+    ):
+        raise ValueError("aider_max_tokens must be a positive integer")
+    if reasoning_budget_tokens is not None and (
+        isinstance(reasoning_budget_tokens, bool)
+        or not isinstance(reasoning_budget_tokens, int)
+        or reasoning_budget_tokens < 0
+    ):
+        raise ValueError("aider_reasoning_budget_tokens must be a non-negative integer")
+    if (
+        max_tokens is not None
+        and reasoning_budget_tokens is not None
+        and reasoning_budget_tokens >= max_tokens
+    ):
+        raise ValueError("aider_reasoning_budget_tokens must be less than aider_max_tokens")
+
+
+@contextmanager
+def _temporary_model_settings(
+    max_tokens: int | None,
+    reasoning_budget_tokens: int | None,
+) -> Iterator[Path | None]:
+    """Yield temporary Aider YAML settings; omit the file when budgets are unset.
+
+    JSON is a YAML subset, avoiding a runtime YAML dependency. This writes only
+    explicitly configured values and never reads ambient Aider settings.
+    """
+    if max_tokens is None and reasoning_budget_tokens is None:
+        yield None
+        return
+
+    params: dict[str, object] = {}
+    if max_tokens is not None:
+        params["max_tokens"] = max_tokens
+    if reasoning_budget_tokens is not None:
+        params["extra_body"] = {"reasoning_budget_tokens": reasoning_budget_tokens}
+    content = json.dumps([{"name": "aider/extra_params", "extra_params": params}], indent=2)
+    with tempfile.TemporaryDirectory(prefix="hybrid-sdlc-aider-settings-") as directory:
+        settings_path = Path(directory) / "model-settings.yml"
+        settings_path.write_text(content + "\n", encoding="utf-8")
+        yield settings_path
+
+
+def _run_aider_attempt(
+    *,
+    endpoint_url: str,
+    model_name: str,
+    spec_file: Path,
+    task_instruction: str,
+    repo_root: Path,
+    aider_cmd: list[str] | str,
+    repo_map_tokens: int | None,
+    target_files: list[Path],
+    max_tokens: int | None,
+    reasoning_budget_tokens: int | None,
+    attempt_timeout_seconds: float,
+    buffer_cap_bytes: int,
+    cancel_event: threading.Event | None,
+    process_observer: Callable[[int, datetime | None], None] | None,
+) -> SubprocessResult:
+    """Build and run Aider while the optional settings file is alive."""
+    with _temporary_model_settings(max_tokens, reasoning_budget_tokens) as settings_file:
+        aider_argv = build_aider_argv(
+            endpoint_url=endpoint_url,
+            model_name=model_name,
+            spec_file=spec_file,
+            task_instruction=task_instruction,
+            aider_cmd=aider_cmd,
+            repo_map_tokens=repo_map_tokens,
+            target_files=target_files,
+            model_settings_file=settings_file,
+        )
+        return run_bounded_subprocess(
+            argv=aider_argv,
+            cwd=repo_root,
+            env=build_sanitized_environment(),
+            timeout_seconds=attempt_timeout_seconds,
+            buffer_cap_bytes=buffer_cap_bytes,
+            cancel_event=cancel_event,
+            process_observer=process_observer,
+        )
 
 
 def validate_aider_target_files(
@@ -249,8 +342,11 @@ def _run_bounded_loop_in_checkout(
     artifact_root: Path | None = None,
     repo_map_tokens: int | None = None,
     target_files: list[Path] | None = None,
+    aider_max_tokens: int | None = None,
+    aider_reasoning_budget_tokens: int | None = None,
 ) -> RunResult:
     """Execute the bounded editing and testing state machine."""
+    validate_aider_token_budgets(aider_max_tokens, aider_reasoning_budget_tokens)
     repo_root = repo_root.resolve()
     run_id = f"run_{int(time.time())}_{uuid.uuid4().hex[:8]}"
     start_iso = datetime.now(UTC).isoformat()
@@ -356,23 +452,18 @@ def _run_bounded_loop_in_checkout(
             att_start_perf = time.perf_counter()
 
             # Construct Aider argv
-            aider_argv = build_aider_argv(
+            aider_result = _run_aider_attempt(
                 endpoint_url=endpoint_url,
                 model_name=model_name,
                 spec_file=spec_file,
                 task_instruction=instruction,
+                repo_root=repo_root,
                 aider_cmd=aider_cmd,
                 repo_map_tokens=repo_map_tokens,
                 target_files=resolved_target_files,
-            )
-
-            # Run Aider
-            clean_env = build_sanitized_environment()
-            aider_result = run_bounded_subprocess(
-                argv=aider_argv,
-                cwd=repo_root,
-                env=clean_env,
-                timeout_seconds=attempt_timeout_seconds,
+                max_tokens=aider_max_tokens,
+                reasoning_budget_tokens=aider_reasoning_budget_tokens,
+                attempt_timeout_seconds=attempt_timeout_seconds,
                 buffer_cap_bytes=buffer_cap_bytes,
                 cancel_event=cancel_event,
                 process_observer=process_observer,
@@ -575,8 +666,11 @@ def run_bounded_loop(
     rollback_on_failure: bool = False,
     repo_map_tokens: int | None = None,
     target_files: list[Path] | None = None,
+    aider_max_tokens: int | None = None,
+    aider_reasoning_budget_tokens: int | None = None,
 ) -> RunResult:
     """Run the bounded workflow in a detached worktree based on source HEAD."""
+    validate_aider_token_budgets(aider_max_tokens, aider_reasoning_budget_tokens)
     source_root = repo_root.resolve()
     source_spec = resolve_confined_path(spec_path, repo_root=source_root, must_exist=True)
     if not source_spec.is_file():
@@ -613,6 +707,8 @@ def run_bounded_loop(
             artifact_root=record.record_path.parent / ".hybrid_sdlc",
             repo_map_tokens=repo_map_tokens,
             target_files=relative_target_files,
+            aider_max_tokens=aider_max_tokens,
+            aider_reasoning_budget_tokens=aider_reasoning_budget_tokens,
         )
 
         commit_hash = None

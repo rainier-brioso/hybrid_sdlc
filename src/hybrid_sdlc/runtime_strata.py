@@ -25,6 +25,10 @@ from hybrid_sdlc.errors import HybridSDLCError, ProcessExecutionError
 from hybrid_sdlc.processes import run_bounded_subprocess
 
 _ASSET_DIR = Path(__file__).with_name("_runtime") / "strata"
+_STARTUP_ENTRYPOINT_LINE = (
+    '    entrypoint: ["/opt/strata/.venv/bin/python", "/opt/hybrid-sdlc/startup.py"]\n'
+)
+_STARTUP_MOUNT_LINE = "      - ./startup.py:/opt/hybrid-sdlc/startup.py:ro\n"
 _SCHEMA = 1
 _PROJECT_PATTERN = re.compile(r"^[a-z][a-z0-9_-]{0,62}$")
 _VOLUME_PATTERN = re.compile(r"^[a-zA-Z0-9][a-zA-Z0-9_.-]{0,62}$")
@@ -138,6 +142,7 @@ def _paths() -> tuple[Path, Path, Path, Path]:
         "activity.json",
         "compose.yaml",
         "worker-defaults.json",
+        "startup.py",
         "activity.lock",
     ):
         if _is_reparse(root / name):
@@ -184,10 +189,19 @@ def _load_config() -> tuple[Path, dict[str, Any], dict[str, Any], Path]:
         actual = compose.read_text(encoding="utf-8")
     except (OSError, UnicodeError) as exc:
         raise RuntimeManagementError("Managed Compose file is missing or unreadable") from exc
-    if actual != expected:
+    legacy = _render_compose(
+        token, project, port, volume, bool(config.get("reuse_model_volume")), use_startup=False
+    )
+    if actual not in (expected, legacy):
         raise RuntimeManagementError(
             "Managed Compose file was modified; refusing Docker operations"
         )
+    if actual == expected:
+        try:
+            if (root / "startup.py").read_bytes() != (_ASSET_DIR / "startup.py").read_bytes():
+                raise RuntimeManagementError("Managed Strata startup file was modified")
+        except OSError as exc:
+            raise RuntimeManagementError("Managed Strata startup file is missing") from exc
     defaults = root / "worker-defaults.json"
     try:
         if defaults.read_bytes() != (_ASSET_DIR / "worker-defaults.json").read_bytes():
@@ -211,12 +225,22 @@ def _load_config() -> tuple[Path, dict[str, Any], dict[str, Any], Path]:
 
 
 def _render_compose(
-    token: str, project: str, port: int, volume: str, reuse_model_volume: bool
+    token: str,
+    project: str,
+    port: int,
+    volume: str,
+    reuse_model_volume: bool,
+    *,
+    use_startup: bool = True,
 ) -> str:
     try:
         template = (_ASSET_DIR / "compose.yaml").read_text(encoding="utf-8")
     except (OSError, UnicodeError) as exc:
         raise RuntimeManagementError("Packaged Strata Compose asset is unavailable") from exc
+    if not use_startup:
+        # Recognize only the exact previous shipped layout, never arbitrary
+        # operator edits. Existing installations are not silently migrated.
+        template = template.replace(_STARTUP_ENTRYPOINT_LINE, "").replace(_STARTUP_MOUNT_LINE, "")
     # Keep ordinary names in their historical plain-scalar form so existing
     # runtime markers continue to validate against their canonical Compose file.
     # Quote YAML numeric, date, null, and boolean scalars to keep them strings.
@@ -291,6 +315,7 @@ def configure(*, port: int = 8080, model_volume: str | None = None) -> dict[str,
         (root / "worker-defaults.json").write_bytes(
             (_ASSET_DIR / "worker-defaults.json").read_bytes()
         )
+        (root / "startup.py").write_bytes((_ASSET_DIR / "startup.py").read_bytes())
         _atomic_json(activity, {"schema_version": _SCHEMA, "leases": []})
         composed = _render_compose(token, project, port, volume, model_volume is not None)
         temp = compose.with_name(f".{compose.name}.{secrets.token_hex(8)}.tmp")

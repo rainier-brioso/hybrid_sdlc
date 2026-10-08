@@ -3,6 +3,7 @@ services:
     image: hybrid-sdlc/strata:v0.1.39-cuda13-sm86
     pull_policy: never
     gpus: all
+    entrypoint: ["/opt/strata/.venv/bin/python", "/opt/hybrid-sdlc/startup.py"]
     environment:
       FAMILY: coder
       MODEL: IQ1_M
@@ -18,6 +19,7 @@ services:
       - "127.0.0.1:__PORT__:8080"
     volumes:
       - __MODEL_VOLUME__:/data
+      - ./startup.py:/opt/hybrid-sdlc/startup.py:ro
       - ./worker-defaults.json:/opt/strata/strata-coder-iq1_m.shared-settings.json:ro
     labels:
       com.hybrid-sdlc.managed: "true"

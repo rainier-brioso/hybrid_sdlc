@@ -1075,6 +1075,121 @@ A task is complete when:
   HSDLC-065 remains open for verified immutable benchmark inputs; this
   validator does not supply measurements or authorize comparative claims.
 
+- [x] **HSDLC-064F - Verify configurable Aider request budgets with Strata**
+  Files: `src/hybrid_sdlc/config.py`, `src/hybrid_sdlc/aider_runner.py`,
+  CLI/MCP/worker routing, and `docs/configuration.md`
+  Depends on: HSDLC-064A
+  Acceptance:
+  - Omitted settings preserve Aider's existing request behavior; configured
+    output and reasoning limits are visible in a controlled Strata request.
+  - A bounded real-repository task produces an answer within its output limit;
+    preserve the request/log evidence and independently review its patch/tests.
+  - Record model/runtime identity, effective budgets, duration, result, and any
+    truncation. Do not infer general recommendations from one task.
+
+  Configuration implementation completed (2026-10-07): optional strict
+  `aider_max_tokens` and `aider_reasoning_budget_tokens` settings route through
+  synchronous CLI, MCP sync, and async workers. A unique temporary Aider
+  settings file supplies only explicit values through `aider/extra_params` and
+  is removed after each subprocess. Defaults and MCP tool schemas remain
+  unchanged. The documented 4096 output / 1024 reasoning example is
+  experimental and task-specific. A preliminary live attempt with an 8192
+  output cap was rejected before generation: for a 16,384-token context and
+  10,573-token prompt, Strata reported a maximum output of 5,803 tokens.
+  Hybrid SDLC does not estimate prompt size or automatically lower the cap.
+  This is a context-fit rejection, not evidence of model failure or a
+  successful delegation.
+
+  Controlled live verification (2026-10-07 UTC): used the existing manual
+  Strata service, advertised model `qwen3.8-flash-next-coder-iq1_m`, context
+  16,384, image `hybrid-sdlc/strata:v0.1.39-cuda13-sm86`, and local image ID
+  `sha256:c3fed5000a88d2174ee55b6dec5ecac9d740c8bcb0a80091e94a4f9a87784b99`.
+  Its documented build revision is
+  `6f32ec070f23ced9f50e704d854d775da52591ab`. The disposable committed task
+  REQUEST-BUDGET-001 adds one nested insertion-order regression to the
+  existing offline benchmark-validator suite; it is not a hardware benchmark.
+  CLI flags supplied 4096 output / 1024 reasoning, with clone-only 300 s
+  attempt / 900 s overall deadlines, one attempt, and repository maps disabled.
+  Shared service settings and the source repository's local TOML were unchanged.
+
+  Run `run_1791409964_8646db93` returned `LOOP_ZERO_DIFF` after 7.39 s for
+  the initial 8192-output request. A bounded direct launch diagnosis confirmed
+  Aider reported the provider's context-fit rejection yet exited zero. This
+  exposes a follow-up diagnostic classification gap: an empty patch does not
+  establish that inference ran. No attempt to bypass context limits was made.
+  With fitting limits, `run_1791410050_576fbe14` generated only the authorized
+  test file in 141.39 s, but its misplaced non-mutation snapshot failed tests.
+  Server logs show the 1024-token reasoning wrap-up, 1810 total generated tokens,
+  and normal `stop` with no cancellation or length truncation.
+
+  One narrow review-repair run, `run_1791410241_c303af03`, based on clone-only
+  commit `f042f7a93cdabe520bf4f7cd0e22108dad1873d2`, passed all 20 validator
+  tests in 91.12 s. Logs show prompt 10,693, reasoning wrap-up at 1024, and
+  1690 total generated tokens in 84 s, normal `stop`, no cancellation, and
+  95.5% expert-cache hit rate. Independent tests passed again. Review found
+  one coverage gap in corresponding native/docker nested key orders; the
+  source integration corrected two test inputs directly and follow-up review
+  found no remaining material issue. The retained model patch was not altered.
+  This is a reviewed model contribution with direct correction, not first-pass
+  autonomous quality acceptance or a throughput comparison. HSDLC-064B/065
+  remain open for their representative benchmark and immutable-pin evidence.
+
+  Final validation (2026-10-08 local): 710 passed / 14 environment or
+  prerequisite skips in 186.86 s; total coverage 83.01%. Ruff formatting/lint,
+  strict mypy (24 source files), and all 20 validator unittests under Python
+  3.13 pass. Independent implementation and integration reviews found no
+  remaining material issue. Job Object breakaway, Windows symlink privileges,
+  POSIX permission checks, and the optional distribution prerequisite remain
+  unverified by the skipped checks. No source-branch commit, push, installed
+  tool update, or service restart was performed.
+
+  Strata-only defaults follow-up (2026-10-08): the operator chose 4096 total
+  output / 1024 reasoning as deployment defaults, not backend-neutral request
+  defaults. The pinned upstream shared-settings validator rejects the reasoning
+  key, so the shared JSON remains low effort / 4096 output. A mirrored, packaged
+  startup hook verifies the exact upstream entrypoint SHA-256, inserts a fixed
+  pre-server hook, and atomically adds the model budget only when absent. It
+  handles both upstream's first-install regular `/opt` config and later `/data`
+  symlink, preserving explicit values (including zero), other model fields, and
+  data-path boundaries. No source/endpoint settings are inferred or overwritten.
+  New managed definitions include the read-only hook. Exact legacy definitions
+  remain accepted without automatic migration; unrecognized Compose or startup
+  edits are rejected. User-local TOML and the running service remain unchanged.
+
+  Offline image verification passed pinned shell syntax, actual Linux
+  first-install config updates, persisted symlink behavior, and explicit zero,
+  without setup, GPU access, model volumes, or inference. Fresh wheel, sdist,
+  and sdist-rebuilt-wheel clean installs and asset parity passed. The first full
+  run caught three Windows newline assumptions in new boundary tests; their
+  byte-preservation assertions were corrected and focused tests passed.
+  Final full-suite revalidation: 738 passed / 14 environment or prerequisite
+  skips in 226.77 s, 82.95% total coverage. Ruff formatting/lint (100 files),
+  strict mypy (25 source files), manual Compose parsing, and final clean
+  wheel/sdist/rebuilt-wheel smoke checks pass. Implementation/review subagents
+  initially reached their usage limit during this follow-up; the parent completed
+  and inspected the hook. The resumed independent startup/compatibility review
+  found no material defects; focused revalidation passed 150 tests with one
+  Windows symlink-privilege skip. Automatic defaults have not been verified on a live
+  model restart, and this follow-up supplies no new hardware benchmark evidence.
+
+  PR #10 Windows CI follow-up (2026-10-08): all compatibility and packaging
+  jobs passed, but the process containment test queried a fixture PID after
+  cleanup and reported it alive. Retained-handle diagnostics reproduced a
+  launcher/interpreter split: `Popen` tracked a different PID from the fixture
+  interpreter. Job termination returned success and accounting reached zero,
+  while the interpreter's handle was briefly unsignaled with exit code 1,
+  then signaled within a bounded wait. PID reuse alone was not the explanation.
+  The regression now retains both actual fixture process handles before real
+  cleanup, verifies they are alive, and requires both to signal within one
+  shared two-second deadline afterward. A surviving process remains a hard
+  failure; no polling retries, skips, or production cleanup changes were added.
+  This verifies bounded eventual termination, not immediate signaling of every
+  process object at runner return. All 30 process tests and 12 repeated target
+  runs passed; independent review, Ruff, formatting, and mypy passed.
+  Full revalidation passed 738 tests with 14 environment/prerequisite skips
+  in 192.02 s, retaining 82.95% coverage. The Windows hosted CI rerun remains
+  the final confirmation; no service restart or inference was performed.
+
 - [ ] **HSDLC-066 — Benchmark Qwen 3.6 35B-A3B native versus Docker**  
   Files: `benchmarks/results/rtx-3090-qwen36-35b-a3b-native.json`, `benchmarks/results/rtx-3090-qwen36-35b-a3b-docker.json`, `docs/model-profiles.md`  
   Depends on: HSDLC-065  

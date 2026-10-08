@@ -10,6 +10,7 @@ services:
         CUDA_ARCHITECTURES: "86"
         BUILD_VISION: "0"
     gpus: all
+    entrypoint: ["/opt/strata/.venv/bin/python", "/opt/hybrid-sdlc/startup.py"]
     environment:
       FAMILY: coder
       MODEL: IQ1_M
@@ -25,6 +26,7 @@ services:
       - "127.0.0.1:8080:8080"
     volumes:
       - strata-data:/data
+      - ./config/strata/startup.py:/opt/hybrid-sdlc/startup.py:ro
       - ./config/strata/worker-defaults.json:/opt/strata/strata-coder-iq1_m.shared-settings.json:ro
     healthcheck:
       test:

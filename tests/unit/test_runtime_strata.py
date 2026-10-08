@@ -77,6 +77,46 @@ def test_configure_explicit_volume_is_external_and_settings_cannot_be_changed(
         configure(port=8100)
 
 
+def test_new_configure_copies_and_validates_startup_asset(runtime_root: Path) -> None:
+    from hybrid_sdlc import runtime_strata
+
+    configure()
+    assert (runtime_root / "startup.py").read_bytes() == (
+        runtime_strata._ASSET_DIR / "startup.py"
+    ).read_bytes()
+    assert "/opt/hybrid-sdlc/startup.py:ro" in (runtime_root / "compose.yaml").read_text()
+    (runtime_root / "startup.py").write_text("# modified", encoding="utf-8")
+    with pytest.raises(RuntimeManagementError, match="startup file was modified"):
+        runtime_strata._load_config()
+
+
+@pytest.mark.parametrize("external", [False, True])
+def test_exact_legacy_runtime_remains_usable_without_migration(
+    runtime_root: Path, external: bool
+) -> None:
+    from hybrid_sdlc import runtime_strata
+
+    configure(model_volume="existing-models" if external else None)
+    marker = json.loads((runtime_root / "runtime.json").read_text())
+    legacy = _render_compose(
+        marker["owner_token"],
+        marker["project"],
+        marker["port"],
+        marker["model_volume"],
+        external,
+        use_startup=False,
+    )
+    (runtime_root / "compose.yaml").write_text(legacy, encoding="utf-8")
+    (runtime_root / "startup.py").unlink()
+    runtime_strata._load_config()
+    assert configure()["changed"] is False
+    assert (runtime_root / "compose.yaml").read_text() == legacy
+    assert not (runtime_root / "startup.py").exists()
+    (runtime_root / "compose.yaml").write_text(legacy + "# modified\n", encoding="utf-8")
+    with pytest.raises(RuntimeManagementError, match="Compose file was modified"):
+        runtime_strata._load_config()
+
+
 @pytest.mark.parametrize("bad_port", [0, 65536, True, "8080"])
 def test_configure_rejects_invalid_ports(runtime_root: Path, bad_port: object) -> None:
     with pytest.raises(RuntimeManagementError):

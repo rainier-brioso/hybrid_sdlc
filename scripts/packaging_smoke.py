@@ -21,6 +21,7 @@ TEMPLATES = (
 RUNTIME_ASSETS = (
     "src/hybrid_sdlc/_runtime/strata/compose.yaml",
     "src/hybrid_sdlc/_runtime/strata/worker-defaults.json",
+    "src/hybrid_sdlc/_runtime/strata/startup.py",
 )
 FORBIDDEN_PARTS = {
     ".hybrid_sdlc",

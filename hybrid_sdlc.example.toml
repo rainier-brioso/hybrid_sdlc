@@ -6,6 +6,11 @@ max_retries = 3
 task_timeout_seconds = 600
 attempt_timeout_seconds = 180
 
+# Optional Aider request budgets for compatible OpenAI-style endpoints.
+# These values are experimental examples, not general recommendations.
+# aider_max_tokens = 4096
+# aider_reasoning_budget_tokens = 1024
+
 # Candidate local OpenAI-compatible inference servers
 [[server_candidates]]
 url = "http://127.0.0.1:8090/v1"

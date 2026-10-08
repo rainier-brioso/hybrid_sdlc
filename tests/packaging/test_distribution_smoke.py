@@ -37,6 +37,7 @@ def _write_sdist(
         "package-0/src/hybrid_sdlc/__init__.py": b"",
         "package-0/src/hybrid_sdlc/_runtime/strata/compose.yaml": b"services: {}\n",
         "package-0/src/hybrid_sdlc/_runtime/strata/worker-defaults.json": b"{}\n",
+        "package-0/src/hybrid_sdlc/_runtime/strata/startup.py": b"# startup\n",
     }
     for name in omit or set():
         members.pop(name, None)
@@ -88,6 +89,7 @@ def test_sdist_requires_and_checks_runtime_assets(tmp_path: Path) -> None:
             {
                 "src/hybrid_sdlc/_runtime/strata/compose.yaml": b"changed",
                 "src/hybrid_sdlc/_runtime/strata/worker-defaults.json": b"{}\n",
+                "src/hybrid_sdlc/_runtime/strata/startup.py": b"# startup\n",
             },
         )
 
