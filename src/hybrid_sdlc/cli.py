@@ -556,6 +556,7 @@ def run_task_cmd(
             target_files=[Path(path) for path in config.aider_edit_files],
             aider_max_tokens=config.aider_max_tokens,
             aider_reasoning_budget_tokens=config.aider_reasoning_budget_tokens,
+            aider_python=config.aider_python,
         )
     except HybridSDLCError as e:
         if json_mode:

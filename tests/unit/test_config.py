@@ -20,6 +20,7 @@ def test_load_config_defaults(tmp_path: Path) -> None:
     assert config.aider_repo_map_tokens is None
     assert config.aider_max_tokens is None
     assert config.aider_reasoning_budget_tokens is None
+    assert config.aider_python is None
     assert config.aider_edit_files == []
     assert len(config.server_candidates) == 2
     assert config.server_candidates[0].url == "http://127.0.0.1:8090/v1"
@@ -129,6 +130,27 @@ def test_load_config_aider_edit_files_from_toml(tmp_path: Path) -> None:
         "src/module.py",
         "tests/test_module.py",
     ]
+
+
+def test_aider_python_accepts_absolute_string_or_path(tmp_path: Path) -> None:
+    interpreter = tmp_path / "python"
+    assert ToolkitConfig(aider_python=str(interpreter)).aider_python == interpreter
+    assert ToolkitConfig(aider_python=interpreter).aider_python == interpreter
+
+
+@pytest.mark.parametrize("value", ["", "python", ".\\python.exe", 3, True, [], {}])
+def test_aider_python_rejects_invalid_values(value: object) -> None:
+    with pytest.raises(ValidationError):
+        ToolkitConfig(aider_python=value)
+
+
+def test_aider_python_loads_from_toml(tmp_path: Path) -> None:
+    interpreter = tmp_path / "aider-venv" / "Scripts" / "python.exe"
+    (tmp_path / "hybrid_sdlc.toml").write_text(
+        f'aider_python = "{interpreter.as_posix()}"\n', encoding="utf-8"
+    )
+
+    assert load_config(repo_root=tmp_path).aider_python == interpreter
 
 
 @pytest.mark.parametrize(

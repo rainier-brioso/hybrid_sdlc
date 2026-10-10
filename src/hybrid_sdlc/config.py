@@ -88,7 +88,22 @@ class ToolkitConfig(BaseModel):
     aider_edit_files: list[str] = Field(default_factory=list, strict=True)
     aider_max_tokens: int | None = Field(default=None, strict=True, ge=1)
     aider_reasoning_budget_tokens: int | None = Field(default=None, strict=True, ge=0)
+    aider_python: Path | None = None
     command_profiles: dict[str, CommandProfile] = Field(default_factory=dict)
+
+    @field_validator("aider_python", mode="before")
+    @classmethod
+    def validate_aider_python(cls, value: object) -> Path | None:
+        if value is None:
+            return None
+        if not isinstance(value, (str, Path)) or isinstance(value, bool):
+            raise ValueError("aider_python must be an absolute interpreter path")
+        if not str(value).strip():
+            raise ValueError("aider_python must be a non-empty absolute interpreter path")
+        path = Path(value)
+        if not path.is_absolute():
+            raise ValueError("aider_python must be an absolute interpreter path")
+        return path
 
     @field_validator("aider_edit_files", mode="before")
     @classmethod

@@ -149,7 +149,8 @@ def check_archive(archive: Path) -> None:
         names = {PurePosixPath(*name.parts[1:]) for name in raw_names}
     strings = {name.as_posix() for name in names}
     if archive.suffix == ".whl":
-        required = {"hybrid_sdlc/_specify/" + name.removeprefix(".specify/") for name in TEMPLATES}
+        required = {"hybrid_sdlc/_aider_cache_bootstrap.py"}
+        required |= {"hybrid_sdlc/_specify/" + name.removeprefix(".specify/") for name in TEMPLATES}
         required |= {
             "hybrid_sdlc/_runtime/strata/" + PurePosixPath(name).name for name in RUNTIME_ASSETS
         }
@@ -158,6 +159,7 @@ def check_archive(archive: Path) -> None:
             "pyproject.toml",
             "README.md",
             "src/hybrid_sdlc/__init__.py",
+            "src/hybrid_sdlc/_aider_cache_bootstrap.py",
         }
         required |= set(RUNTIME_ASSETS)
     if missing := required - strings:

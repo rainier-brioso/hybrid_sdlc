@@ -35,6 +35,7 @@ def _write_sdist(
         "package-0/README.md": b"readme",
         "package-0/pyproject.toml": b"[build-system]",
         "package-0/src/hybrid_sdlc/__init__.py": b"",
+        "package-0/src/hybrid_sdlc/_aider_cache_bootstrap.py": b"# adapter\n",
         "package-0/src/hybrid_sdlc/_runtime/strata/compose.yaml": b"services: {}\n",
         "package-0/src/hybrid_sdlc/_runtime/strata/worker-defaults.json": b"{}\n",
         "package-0/src/hybrid_sdlc/_runtime/strata/startup.py": b"# startup\n",
@@ -78,6 +79,14 @@ def test_sdist_rejects_template_bytes_that_differ_from_source(tmp_path: Path) ->
     }
     with pytest.raises(RuntimeError, match="template bytes that differ from source"):
         check_template_payloads(archive, canonical)
+
+
+def test_sdist_requires_standalone_aider_cache_bootstrap(tmp_path: Path) -> None:
+    archive = tmp_path / "missing-bootstrap.tar.gz"
+    _write_sdist(archive, omit={"package-0/src/hybrid_sdlc/_aider_cache_bootstrap.py"})
+
+    with pytest.raises(RuntimeError, match="missing required members"):
+        check_archive(archive)
 
 
 def test_sdist_requires_and_checks_runtime_assets(tmp_path: Path) -> None:

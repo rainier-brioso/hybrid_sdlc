@@ -24,7 +24,42 @@ repository configuration or select its endpoint for tasks automatically.
 aider_repo_map_tokens = 0
 ```
 
-The setting accepts a non-negative integer. Omission leaves Aider's default unchanged. Setting it to `0` disables the repository map, which can avoid Aider creating `.aider.tags.cache.v4` during a small task with explicitly named files. That also removes repository-wide symbol context and is best limited to tasks whose relevant files are listed directly. A positive value retains the map with the requested token budget. For map-enabled tasks, Aider may still create its repository-map cache in the task checkout; cache handling remains unresolved.
+The setting accepts a non-negative integer. Omission leaves Aider's default unchanged. Setting it to `0` disables the repository map, which can avoid Aider creating `.aider.tags.cache.v4` during a small task with explicitly named files. That also removes repository-wide symbol context and is best limited to tasks whose relevant files are listed directly. A positive value retains the map with the requested token budget.
+
+### Optional cache-isolated Aider launch
+
+`aider_python` explicitly selects the Python interpreter of an existing Aider
+installation. It enables a compatibility adapter for **Aider 0.86.2 only**:
+
+```toml
+# Absolute path to the Python interpreter containing aider-chat, not aider.exe.
+# Windows example; replace the installation directory for your machine.
+aider_python = 'C:\tools\aider-env\Scripts\python.exe'
+# Linux/macOS alternative:
+# aider_python = '/opt/aider-env/bin/python'
+```
+
+The adapter redirects Aider's repository-map disk cache to run-owned storage
+outside the isolated checkout, without disabling repository maps or filtering
+the review patch. Unexpected checkout edits, including files under a cache-like
+directory name, remain subject to normal patch export. Existing user caches and
+ignore rules are not modified.
+
+Omit this setting to keep the existing Aider command launch. That unadapted launch
+can still create `.aider.tags.cache.v4` inside the task checkout. The adapter does
+not combine with a custom `aider_cmd` prefix supplied through the Python API;
+that combination is rejected rather than silently dropping wrapper arguments. It
+does not discover interpreters, install Aider, or fall back to disabling maps. An
+invalid interpreter, unsupported Aider version, or incompatible private API is
+an error. Aider's private API is not a stable extension contract; support for a
+new version requires explicit validation.
+
+The external cache is reused during retries and retained with run artifacts,
+including after timeout or cancellation. Immediate deletion could race a still
+exiting child process. Cache contents may contain source symbols and paths; treat
+them as private run artifacts. This option is not an OS sandbox: the interpreter
+and repository commands must be trusted. Synthetic tests do not establish live
+model performance or cross-platform end-to-end validation.
 
 ## Aider Edit Context Files
 

@@ -126,6 +126,12 @@ class TaskExecutionError(HybridSDLCError):
     default_exit_code = ExitCode.TASK_FAILED
 
 
+class AiderAdapterError(TaskExecutionError):
+    """The opt-in Aider cache adapter cannot run with the selected installation."""
+
+    default_code = "AIDER_ADAPTER_UNSUPPORTED"
+
+
 class BaselineTestFailureError(TaskExecutionError):
     """Baseline test check failed before any edits were applied."""
 
