@@ -806,7 +806,7 @@ A task is complete when:
   representative fixture. HSDLC-064B remains open; no runtime parity or
   candidate promotion is claimed by the successful synchronous smoke.
 
-- [ ] **HSDLC-064C - Keep Aider repository-map cache out of bounded task patches**
+- [x] **HSDLC-064C - Keep Aider repository-map cache out of bounded task patches**
   Depends on: the first live Strata smoke evidence under HSDLC-064B
   Acceptance:
   - Address `.aider.tags.cache.v4/cache.db` without deleting user-owned caches,
@@ -822,6 +822,82 @@ A task is complete when:
   omission preserves repository-map context; the explicit `0` fixture rerun
   passed clean-diff acceptance. Keep this task open for map-enabled cache
   handling: this opt-in mode does not solve cache artifacts for general tasks.
+
+  Investigation (2026-10-09): installed Aider 0.86.2 and its published options
+  expose no repository-map cache-directory setting. `RepoMap.TAGS_CACHE_DIR`
+  selects v3/v4 and both normal loading and error recovery construct the path
+  under the repository root. The toolkit's result exporter correctly includes
+  nonignored untracked files; broad `.aider*` filtering or changes to shared Git
+  excludes would conceal unexpected changes and are not an accepted solution.
+  A disposable, version-checked compatibility wrapper could redirect that
+  constant to owned temporary storage while preserving map context, but this
+  uses private Aider internals and needs an explicitly selected Aider Python
+  runtime rather than guessing a console launcher's interpreter. Filesystem
+  links are an alternative, with unresolved Windows privilege/reparse concerns.
+  This candidate required further comparison before adding a compatibility
+  surface. No wrapper, dependency change, cache deletion,
+  ignore-rule change, live model request, or service restart was performed.
+  HSDLC-064C remains open; the historical failed smoke evidence is preserved.
+
+  Offline comparison (2026-10-10): disposable probes using installed Aider
+  0.86.2 generated repository-map context with a positive 1024-token map budget
+  and no model requests. Redirecting `RepoMap.TAGS_CACHE_DIR` to separately
+  owned storage preserved a preexisting checkout cache marker and successfully
+  recreated the external cache through an injected cache-error handler. A
+  clean, controlled quarantine preserved cache bytes; an unexpected added file
+  or an in-place database mutation made it refuse relocation. Its trusted inventory
+  was available only because the experiment directly controlled map generation;
+  the production runner cannot infer equivalent provenance from filenames or a
+  SQLite schema after an entire Aider invocation.
+  Prefer a version-checked launch adapter with explicitly selected Aider Python
+  and run-owned external cache storage, not cache-directory filtering or changes
+  to either generic patch exporter. Before implementing, resolve cache retention
+  through descendant shutdown: immediate temporary-directory cleanup after a
+  Windows timeout/cancellation can race a still-exiting child. These probes do
+  not verify a packaged adapter, actual patch export, retries, timeout/cancellation
+  handling, hostile links, cross-platform support, or a live map-enabled task.
+  No production behavior, installed dependencies, inference service, or user
+  ignore rules changed. HSDLC-064C remains open pending those acceptance checks.
+
+  Implementation (2026-10-10): added opt-in `aider_python`, an explicit absolute
+  interpreter path propagated through CLI, synchronous MCP, and background
+  workers. A packaged, standalone bootstrap runs in isolated Python mode and
+  checks Aider 0.86.2 plus the expected RepoMap cache seam before redirecting it.
+  Invalid/unsupported installations return structured adapter failures; maps
+  are not silently disabled. Custom Python-API `aider_cmd` prefixes cannot be
+  combined with this option. A fresh external cache beside each task checkout
+  is reused across retries, retained on terminal paths, and listed in run
+  artifacts. Both generic exporters and user ignore rules remain unchanged.
+  Synthetic integration tests use isolated fake Aider environments to exercise
+  the actual bootstrap subprocess, retry reuse, timeout/cancellation retention,
+  preservation of baseline cache files, and exact export of unexpected edits
+  inside a cache-like checkout directory. Independent review findings about
+  custom-command argument loss and test-owned storage were corrected.
+  Validation: 115 targeted tests passed; the full regression invocation passed
+  757 tests with 14 environment/opt-in skips. Four final in-process bootstrap
+  cases were added while that invocation was running; rerunning all 10 bootstrap
+  tests passed with appended combined coverage of 82.89%. Ruff lint/format and
+  mypy (26 source files) passed. Final wheel, sdist, and sdist-rebuilt installation
+  smokes passed separately, including the bootstrap archive-presence check. The
+  Windows Job Object/symlink and POSIX-only skips remain unverified behavior.
+  HSDLC-064C remains open: the real Aider map-enabled authorized-files-only smoke
+  has not been rerun, and no inference service was restarted or reconfigured.
+
+  Live acceptance (2026-10-10): `run_1791654921_5ea57d48` passed the isolated
+  authorized-files-only smoke with real Aider 0.86.2, map budget 1024, and the
+  explicit adapter interpreter. Only `calculator.py` and `test_smoke.py` changed
+  (+14/-1); four tests passed and an independent reviewer reran them. Read-only
+  SQLite keys demonstrate map indexing, including unselected `context.py`, in
+  the external run-owned cache. No generated database entered the checkout or
+  either patch; its baseline cache marker, ignore rules, and source repository
+  were unchanged. No model edits were committed or applied. Historical failing
+  cache evidence and the paused llama.cpp fixture remain preserved.
+  Total duration 243.06 seconds includes a Strata engine fault and automatic
+  reload; one toolkit attempt is not a claim of one provider request. This is
+  cache-handling acceptance, not a steady-state benchmark or controlled idle
+  proof. See [detailed evidence](aider-map-cache-validation.md). HSDLC-064C is
+  complete for the documented opt-in Aider 0.86.2 adapter; ordinary unadapted
+  launches retain their existing behavior.
 
 - [x] **HSDLC-064D - Add explicit managed Strata lifecycle commands**
   Files: `src/hybrid_sdlc/runtime_strata.py`, `src/hybrid_sdlc/_runtime/strata/`,
@@ -975,6 +1051,14 @@ A task is complete when:
   82.24% coverage. PR #8 was merged on 2026-10-07 as `06038e3`. This verifies
   the CI cleanup correction, not live long-idle behavior; HSDLC-064E remains
   open for its separate controlled evidence.
+
+  Runtime observation (2026-10-10): the HSDLC-064C smoke encountered a healthy
+  container whose engine failed on inference (`prefill: relayout: the stream
+  failed`, engine exit 1). Strata automatically reloaded it and the smoke then
+  succeeded without a manual restart. Preserve this alongside the
+  [cache smoke evidence](aider-map-cache-validation.md), but do not infer the
+  root cause or idle interval. The controlled long-idle/retry protocol was not
+  performed; HSDLC-064E remains open.
 
 - [ ] **HSDLC-065 — Define the hardware benchmark protocol**  
   Files: `benchmarks/README.md`, `benchmarks/benchmark_task.json`  

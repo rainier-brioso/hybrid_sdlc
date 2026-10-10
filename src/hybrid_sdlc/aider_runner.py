@@ -21,6 +21,7 @@ from hybrid_sdlc.artifacts import atomic_save_json, redact_secrets
 from hybrid_sdlc.command_profiles import CommandProfile, resolve_profile_executable
 from hybrid_sdlc.config import normalize_aider_edit_files
 from hybrid_sdlc.errors import (
+    AiderAdapterError,
     BaselineTestFailureError,
     CancellationError,
     CommandPolicyError,
@@ -63,6 +64,7 @@ RE_TIMESTAMP = re.compile(
 )
 RE_SECONDS = re.compile(r"\b\d+(?:\.\d+)?s\b")
 RE_PYTEST_SUMMARY = re.compile(r"FAILED\s+([^\s:]+::[^\s:]+)(?:\s+-\s+([^\n]+))?")
+_AIDER_ADAPTER_ERROR_PREFIX = "HYBRID_SDLC_AIDER_ADAPTER_ERROR:"
 
 
 def build_aider_argv(
@@ -177,6 +179,8 @@ def _run_aider_attempt(
     task_instruction: str,
     repo_root: Path,
     aider_cmd: list[str] | str,
+    aider_python: Path | None = None,
+    repo_map_cache_dir: Path | None = None,
     repo_map_tokens: int | None,
     target_files: list[Path],
     max_tokens: int | None,
@@ -198,6 +202,22 @@ def _run_aider_attempt(
             target_files=target_files,
             model_settings_file=settings_file,
         )
+        if aider_python is not None:
+            if repo_map_cache_dir is None:
+                raise AiderAdapterError(
+                    "The Aider cache adapter has no run-owned cache directory",
+                    code="AIDER_CACHE_PATH_INVALID",
+                )
+            bootstrap = Path(__file__).with_name("_aider_cache_bootstrap.py")
+            aider_argv = [
+                str(aider_python),
+                "-I",
+                str(bootstrap),
+                "--cache-dir",
+                str(repo_map_cache_dir),
+                "--",
+                *aider_argv[len([aider_cmd] if isinstance(aider_cmd, str) else aider_cmd) :],
+            ]
         return run_bounded_subprocess(
             argv=aider_argv,
             cwd=repo_root,
@@ -344,6 +364,8 @@ def _run_bounded_loop_in_checkout(
     target_files: list[Path] | None = None,
     aider_max_tokens: int | None = None,
     aider_reasoning_budget_tokens: int | None = None,
+    aider_python: Path | None = None,
+    repo_map_cache_dir: Path | None = None,
 ) -> RunResult:
     """Execute the bounded editing and testing state machine."""
     validate_aider_token_budgets(aider_max_tokens, aider_reasoning_budget_tokens)
@@ -422,6 +444,14 @@ def _run_bounded_loop_in_checkout(
                 attempts=[],
                 final_diff=None,
                 failure=failure_record,
+                artifacts={
+                    "run_record": f".hybrid_sdlc/runs/{run_id}.json",
+                    **(
+                        {"aider_repo_map_cache": str(repo_map_cache_dir)}
+                        if repo_map_cache_dir is not None
+                        else {}
+                    ),
+                },
             )
             artifact_dir = artifact_root or (repo_root / ".hybrid_sdlc")
             out_path = artifact_dir / "runs" / f"{run_id}.json"
@@ -459,6 +489,8 @@ def _run_bounded_loop_in_checkout(
                 task_instruction=instruction,
                 repo_root=repo_root,
                 aider_cmd=aider_cmd,
+                aider_python=aider_python,
+                repo_map_cache_dir=repo_map_cache_dir,
                 repo_map_tokens=repo_map_tokens,
                 target_files=resolved_target_files,
                 max_tokens=aider_max_tokens,
@@ -487,6 +519,17 @@ def _run_bounded_loop_in_checkout(
                         ),
                     },
                 )
+                failure_record = err.to_failure_record()
+                break
+
+            adapter_error = (
+                _parse_aider_adapter_error(aider_result.stderr)
+                if aider_python is not None and aider_result.exit_code == 86
+                else None
+            )
+            if adapter_error is not None:
+                code, message = adapter_error
+                err = AiderAdapterError(message, code=code)
                 failure_record = err.to_failure_record()
                 break
 
@@ -603,6 +646,11 @@ def _run_bounded_loop_in_checkout(
             failure=failure_record,
             artifacts={
                 "run_record": f".hybrid_sdlc/runs/{run_id}.json",
+                **(
+                    {"aider_repo_map_cache": str(repo_map_cache_dir)}
+                    if repo_map_cache_dir is not None
+                    else {}
+                ),
             },
         )
         artifact_dir = artifact_root or (repo_root / ".hybrid_sdlc")
@@ -645,6 +693,53 @@ def _isolated_test_executable(
     )
 
 
+def _parse_aider_adapter_error(stderr: str) -> tuple[str, str] | None:
+    """Extract a structured failure emitted before Aider starts editing."""
+    for line in stderr.splitlines():
+        marker_index = line.find(_AIDER_ADAPTER_ERROR_PREFIX)
+        if marker_index < 0:
+            continue
+        try:
+            payload = json.loads(line[marker_index + len(_AIDER_ADAPTER_ERROR_PREFIX) :])
+        except json.JSONDecodeError:
+            return (
+                "AIDER_ADAPTER_UNAVAILABLE",
+                "The Aider cache adapter returned invalid diagnostics",
+            )
+        if not isinstance(payload, dict):
+            return (
+                "AIDER_ADAPTER_UNAVAILABLE",
+                "The Aider cache adapter returned invalid diagnostics",
+            )
+        code = payload.get("code")
+        message = payload.get("message")
+        if isinstance(code, str) and code.startswith("AIDER_") and isinstance(message, str):
+            return code, message
+        return "AIDER_ADAPTER_UNAVAILABLE", "The Aider cache adapter returned invalid diagnostics"
+    return None
+
+
+def _validate_aider_python(aider_python: Path | None, aider_cmd: list[str] | str = "aider") -> None:
+    """Fail before task side effects when the explicitly selected interpreter is unavailable."""
+    if aider_python is None:
+        return
+    if aider_cmd not in ("aider", ["aider"]):
+        raise AiderAdapterError(
+            "aider_python cannot be combined with a custom aider_cmd",
+            code="AIDER_ADAPTER_INVALID_ARGUMENTS",
+        )
+    if (
+        not aider_python.is_absolute()
+        or not aider_python.is_file()
+        or not os.access(aider_python, os.X_OK)
+    ):
+        raise AiderAdapterError(
+            "The configured aider_python interpreter is unavailable or not executable",
+            code="AIDER_ADAPTER_UNAVAILABLE",
+            details={"aider_python": str(aider_python)},
+        )
+
+
 @reserve_managed_endpoint
 def run_bounded_loop(
     repo_root: Path,
@@ -668,9 +763,11 @@ def run_bounded_loop(
     target_files: list[Path] | None = None,
     aider_max_tokens: int | None = None,
     aider_reasoning_budget_tokens: int | None = None,
+    aider_python: Path | None = None,
 ) -> RunResult:
     """Run the bounded workflow in a detached worktree based on source HEAD."""
     validate_aider_token_budgets(aider_max_tokens, aider_reasoning_budget_tokens)
+    _validate_aider_python(aider_python, aider_cmd)
     source_root = repo_root.resolve()
     source_spec = resolve_confined_path(spec_path, repo_root=source_root, must_exist=True)
     if not source_spec.is_file():
@@ -684,6 +781,33 @@ def run_bounded_loop(
 
     record: WorktreeRecord = create_worktree(source_root)
     try:
+        repo_map_cache_dir: Path | None = None
+        if aider_python is not None:
+            repo_map_cache_dir = record.record_path.parent / "aider-cache"
+            if repo_map_cache_dir.exists() or repo_map_cache_dir.is_symlink():
+                raise AiderAdapterError(
+                    "The per-run Aider cache path already exists; refusing to reuse unowned data",
+                    code="AIDER_CACHE_PATH_INVALID",
+                    details={"cache_path": str(repo_map_cache_dir)},
+                )
+            try:
+                repo_map_cache_dir.mkdir(mode=0o700)
+            except OSError as exc:
+                raise AiderAdapterError(
+                    "Could not create the owned per-run Aider cache directory",
+                    code="AIDER_CACHE_PATH_INVALID",
+                    details={"cache_path": str(repo_map_cache_dir), "error": str(exc)},
+                ) from exc
+            if (
+                repo_map_cache_dir.is_symlink()
+                or repo_map_cache_dir.resolve(strict=True) != repo_map_cache_dir
+                or repo_map_cache_dir.is_relative_to(record.path)
+            ):
+                raise AiderAdapterError(
+                    "The per-run Aider cache directory is not a canonical path outside the checkout",
+                    code="AIDER_CACHE_PATH_INVALID",
+                    details={"cache_path": str(repo_map_cache_dir)},
+                )
         validate_committed_path(record.path, relative_spec)
         isolated_executable = _isolated_test_executable(
             profile, source_root, record.path, resolved_test_executable
@@ -709,6 +833,8 @@ def run_bounded_loop(
             target_files=relative_target_files,
             aider_max_tokens=aider_max_tokens,
             aider_reasoning_budget_tokens=aider_reasoning_budget_tokens,
+            aider_python=aider_python,
+            repo_map_cache_dir=repo_map_cache_dir,
         )
 
         commit_hash = None

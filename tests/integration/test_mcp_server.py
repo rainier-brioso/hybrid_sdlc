@@ -206,6 +206,7 @@ def test_sync_tool_returns_structured_run_result(
             "aider_edit_files": ["context.py"],
             "aider_max_tokens": 8192,
             "aider_reasoning_budget_tokens": 1024,
+            "aider_python": tmp_path / "python",
             "command_profiles": {"pytest": {"name": "pytest", "argv": ["python", "-c", "pass"]}},
         }
     )
@@ -254,6 +255,7 @@ def test_sync_tool_returns_structured_run_result(
     assert captured["target_files"] == [Path("context.py")]
     assert captured["aider_max_tokens"] == 8192
     assert captured["aider_reasoning_budget_tokens"] == 1024
+    assert captured["aider_python"] == tmp_path / "python"
     assert "topSecret123" not in str(response.structured_content)
     assert "secretUser" not in str(response.structured_content)
     assert "secretValue" not in str(response.structured_content)

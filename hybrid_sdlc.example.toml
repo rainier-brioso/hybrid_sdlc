@@ -11,6 +11,12 @@ attempt_timeout_seconds = 180
 # aider_max_tokens = 4096
 # aider_reasoning_budget_tokens = 1024
 
+# Optional cache-isolated launch for an existing Aider 0.86.2 environment.
+# Use its absolute Python path, not the aider console executable.
+# Omit to retain the ordinary Aider launch. See docs/configuration.md.
+# aider_python = '/opt/aider-env/bin/python'
+# Windows alternative: aider_python = 'C:\tools\aider-env\Scripts\python.exe'
+
 # Candidate local OpenAI-compatible inference servers
 [[server_candidates]]
 url = "http://127.0.0.1:8090/v1"
