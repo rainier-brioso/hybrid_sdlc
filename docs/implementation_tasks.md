@@ -899,6 +899,23 @@ A task is complete when:
   complete for the documented opt-in Aider 0.86.2 adapter; ordinary unadapted
   launches retain their existing behavior.
 
+  PR #11 CI follow-up (2026-10-10): Ubuntu Python 3.11.11 and 3.13.1 failed the
+  three synthetic adapter integration tests, while Windows/macOS/Ubuntu 3.12
+  and packaging passed. Exact-version Linux reproduction established that the
+  fixture's copied interpreter exited 127 under the sanitized environment:
+  its relative `../lib/libpythonX.Y.so.1.0` was absent after relocation. Newer
+  Python patch builds did not reproduce that failure. The fixture now requests
+  POSIX interpreter symlinks, preserving its library layout, and keeps copies
+  on Windows. A startup preflight checks interpreter identity, Python version,
+  fake Aider import location and metadata, and exposes child stdout/stderr on
+  failure. All three tests pass on both exact failing Linux versions and local
+  Windows. Independent review found no remaining defect; no production code,
+  environment allowlist, assertion, skip, or CI gate was weakened.
+  Final local revalidation: 761 passed / 14 environment/opt-in skips, 82.89%
+  coverage; Ruff lint/format and mypy (26 source files) passed. Remote CI must
+  pass on the follow-up commit before merge; the original failed run remains
+  failed evidence.
+
 - [x] **HSDLC-064D - Add explicit managed Strata lifecycle commands**
   Files: `src/hybrid_sdlc/runtime_strata.py`, `src/hybrid_sdlc/_runtime/strata/`,
   CLI/runner/submission/worker hooks, runtime unit/CLI integration tests,

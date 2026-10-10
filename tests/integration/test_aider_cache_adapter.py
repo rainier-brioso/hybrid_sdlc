@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 import os
 import subprocess
 import sys
@@ -15,6 +16,7 @@ import pytest
 from hybrid_sdlc.aider_runner import run_bounded_loop
 from hybrid_sdlc.command_profiles import CommandProfile
 from hybrid_sdlc.models import RunStatus
+from hybrid_sdlc.security import build_sanitized_environment
 
 
 def _git(repo: Path, *args: str) -> None:
@@ -44,7 +46,7 @@ def _fake_aider_python(
     version: str = "0.86.2",
 ) -> Path:
     environment = root / "aider-python"
-    venv.EnvBuilder(with_pip=False).create(environment)
+    venv.EnvBuilder(with_pip=False, symlinks=os.name != "nt").create(environment)
     if os.name == "nt":
         interpreter = environment / "Scripts" / "python.exe"
         site_packages = environment / "Lib" / "site-packages"
@@ -79,6 +81,38 @@ def _fake_aider_python(
     (dist_info / "METADATA").write_text(
         f"Metadata-Version: 2.1\nName: aider-chat\nVersion: {version}\n", encoding="utf-8"
     )
+
+    probe = subprocess.run(
+        [
+            str(interpreter),
+            "-I",
+            "-c",
+            "import importlib.metadata, json, sys, aider, aider.main; "
+            "print(json.dumps({'executable': sys.executable, 'version': sys.version.split()[0], "
+            "'aider_module': aider.__file__, "
+            "'aider_version': importlib.metadata.version('aider-chat')}))",
+        ],
+        cwd=root,
+        env=build_sanitized_environment(),
+        text=True,
+        capture_output=True,
+        check=False,
+        timeout=10,
+    )
+    diagnostics = (
+        f"interpreter={interpreter}; site_packages={site_packages}; "
+        f"exit_code={probe.returncode}; stdout={probe.stdout!r}; stderr={probe.stderr!r}"
+    )
+    assert probe.returncode == 0, f"Fake Aider interpreter preflight failed: {diagnostics}"
+    report = json.loads(probe.stdout)
+    assert Path(report["executable"]).resolve() == interpreter.resolve(), diagnostics
+    assert report["version"].startswith(f"{sys.version_info.major}.{sys.version_info.minor}."), (
+        diagnostics
+    )
+    assert Path(report["aider_module"]).resolve().is_relative_to(site_packages.resolve()), (
+        diagnostics
+    )
+    assert report["aider_version"] == version, diagnostics
     return interpreter
 
 
