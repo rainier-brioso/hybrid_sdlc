@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import traceback
 from pathlib import Path
 
 import pytest
@@ -101,6 +102,34 @@ def test_load_config_invalid_port(tmp_path: Path) -> None:
     with pytest.raises(ConfigurationError) as exc_info:
         load_config(repo_root=tmp_path)
     assert exc_info.value.code == "CONFIG_VALIDATION_ERROR"
+
+
+@pytest.mark.parametrize(
+    "url",
+    [
+        "http://synthetic-user:synthetic-password@127.0.0.1/v1",
+        "http://127.0.0.1/v1?token=synthetic-query-secret",
+        "http://127.0.0.1/v1#synthetic-fragment-secret",
+        "http://[malformed/v1",
+        "http://127.0.0.1/path with spaces",
+        "http://127.0.0.1/v1%escape",
+    ],
+)
+def test_config_rejects_private_or_ambiguous_endpoint_urls_without_echoing_input(
+    tmp_path: Path, url: str
+) -> None:
+    import json
+
+    (tmp_path / "hybrid_sdlc.toml").write_text(
+        f"server_candidates = [{{ url = {json.dumps(url)} }}]\n", encoding="utf-8"
+    )
+    with pytest.raises(ConfigurationError) as exc_info:
+        load_config(repo_root=tmp_path)
+    rendered = str(exc_info.value) + json.dumps(exc_info.value.to_failure_record().model_dump())
+    rendered += "".join(traceback.format_exception(exc_info.value))
+    assert "synthetic-password" not in rendered
+    assert "synthetic-query-secret" not in rendered
+    assert "synthetic-fragment-secret" not in rendered
 
 
 @pytest.mark.parametrize("value", [True, "0", 1.5, -1])

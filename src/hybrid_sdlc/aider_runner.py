@@ -19,7 +19,7 @@ from pathlib import Path
 
 from hybrid_sdlc.artifacts import atomic_save_json, redact_secrets
 from hybrid_sdlc.command_profiles import CommandProfile, resolve_profile_executable
-from hybrid_sdlc.config import normalize_aider_edit_files
+from hybrid_sdlc.config import normalize_aider_edit_files, validate_endpoint_url
 from hybrid_sdlc.errors import (
     AiderAdapterError,
     BaselineTestFailureError,
@@ -71,7 +71,7 @@ def build_aider_argv(
     endpoint_url: str,
     model_name: str,
     spec_file: Path,
-    task_instruction: str,
+    message_file_path: Path,
     target_files: list[Path] | None = None,
     extra_flags: list[str] | None = None,
     aider_cmd: list[str] | str = "aider",
@@ -84,6 +84,9 @@ def build_aider_argv(
     Redirects Aider histories and prevents automatic ignore-file edits.
     Skips the metadata-warning prompt so yes-always cannot launch its browser URL.
     """
+    validate_endpoint_url(endpoint_url)
+    if not isinstance(message_file_path, Path):
+        raise ValueError("Aider message file path is required")
     cmd_prefix = [aider_cmd] if isinstance(aider_cmd, str) else list(aider_cmd)
     argv = cmd_prefix + [
         "--model",
@@ -103,10 +106,16 @@ def build_aider_argv(
         os.devnull,
         "--no-suggest-shell-commands",
         "--yes-always",
+        "--encoding",
+        "utf-8",
         "--read",
         str(spec_file),
+        # Aider's dispatch checks --message before --message-file. Explicitly
+        # clear any configured message so the private file is always consumed.
         "--message",
-        task_instruction,
+        "",
+        "--message-file",
+        str(message_file_path),
     ]
 
     if target_files:
@@ -120,9 +129,24 @@ def build_aider_argv(
         argv.extend(["--model-settings-file", str(model_settings_file)])
 
     if extra_flags:
+        managed_options = ("--message", "--message-file", "--encoding", "--msg")
+        if any(_is_managed_aider_option(flag, managed_options) for flag in extra_flags):
+            raise ValueError("Aider message and encoding options are managed internally")
         argv.extend(extra_flags)
 
     return argv
+
+
+def _is_managed_aider_option(flag: str, options: tuple[str, ...]) -> bool:
+    """Catch exact, abbreviated, aliased, and attached-value privacy overrides."""
+    normalized = flag.replace("_", "-")
+    option = normalized.split("=", 1)[0]
+    return (
+        option in options
+        or any(candidate.startswith(option) for candidate in options)
+        or option in ("-m", "-f")
+        or (not option.startswith("--") and option.startswith(("-m", "-f")))
+    )
 
 
 def validate_aider_token_budgets(max_tokens: object, reasoning_budget_tokens: object) -> None:
@@ -171,6 +195,28 @@ def _temporary_model_settings(
         yield settings_path
 
 
+@contextmanager
+def _temporary_instruction_file(
+    instruction: str, protected_roots: tuple[Path, ...]
+) -> Iterator[Path]:
+    """Keep prompt text out of child argv and remove it after every attempt."""
+    with tempfile.TemporaryDirectory(prefix="hybrid-sdlc-aider-message-") as directory:
+        private_directory = Path(directory).resolve()
+        for protected_root in protected_roots:
+            try:
+                private_directory.relative_to(protected_root.resolve())
+            except ValueError:
+                continue
+            raise OSError("Private Aider instruction directory overlaps protected task data")
+        message_path = Path(directory) / "instruction.txt"
+        descriptor = os.open(message_path, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
+        with os.fdopen(descriptor, "w", encoding="utf-8", newline="") as stream:
+            stream.write(instruction)
+        if os.name != "nt":
+            message_path.chmod(stat.S_IRUSR | stat.S_IWUSR)
+        yield message_path
+
+
 def _run_aider_attempt(
     *,
     endpoint_url: str,
@@ -189,14 +235,21 @@ def _run_aider_attempt(
     buffer_cap_bytes: int,
     cancel_event: threading.Event | None,
     process_observer: Callable[[int, datetime | None], None] | None,
+    protected_roots: tuple[Path, ...] = (),
 ) -> SubprocessResult:
     """Build and run Aider while the optional settings file is alive."""
-    with _temporary_model_settings(max_tokens, reasoning_budget_tokens) as settings_file:
+    validate_endpoint_url(endpoint_url)
+    with (
+        _temporary_instruction_file(
+            task_instruction, (repo_root.resolve(), *(root.resolve() for root in protected_roots))
+        ) as instruction_file,
+        _temporary_model_settings(max_tokens, reasoning_budget_tokens) as settings_file,
+    ):
         aider_argv = build_aider_argv(
             endpoint_url=endpoint_url,
             model_name=model_name,
             spec_file=spec_file,
-            task_instruction=task_instruction,
+            message_file_path=instruction_file,
             aider_cmd=aider_cmd,
             repo_map_tokens=repo_map_tokens,
             target_files=target_files,
@@ -360,6 +413,7 @@ def _run_bounded_loop_in_checkout(
     cancel_event: threading.Event | None = None,
     process_observer: Callable[[int, datetime | None], None] | None = None,
     artifact_root: Path | None = None,
+    protected_roots: tuple[Path, ...] = (),
     repo_map_tokens: int | None = None,
     target_files: list[Path] | None = None,
     aider_max_tokens: int | None = None,
@@ -499,6 +553,11 @@ def _run_bounded_loop_in_checkout(
                 buffer_cap_bytes=buffer_cap_bytes,
                 cancel_event=cancel_event,
                 process_observer=process_observer,
+                protected_roots=(
+                    repo_root,
+                    *protected_roots,
+                    *((artifact_root,) if artifact_root else ()),
+                ),
             )
 
             if aider_result.cancelled:
@@ -812,6 +871,7 @@ def run_bounded_loop(
         isolated_executable = _isolated_test_executable(
             profile, source_root, record.path, resolved_test_executable
         )
+        artifact_root = record.record_path.parent / ".hybrid_sdlc"
         result = _run_bounded_loop_in_checkout(
             repo_root=record.path,
             spec_path=record.path / Path(relative_spec),
@@ -828,7 +888,8 @@ def run_bounded_loop(
             resolved_test_executable=isolated_executable,
             cancel_event=cancel_event,
             process_observer=process_observer,
-            artifact_root=record.record_path.parent / ".hybrid_sdlc",
+            artifact_root=artifact_root,
+            protected_roots=(source_root, record.record_path.parent),
             repo_map_tokens=repo_map_tokens,
             target_files=relative_target_files,
             aider_max_tokens=aider_max_tokens,

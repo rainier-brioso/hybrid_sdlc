@@ -21,6 +21,7 @@ from urllib.parse import urlparse
 
 from filelock import FileLock, Timeout
 
+from hybrid_sdlc.config import validate_endpoint_url
 from hybrid_sdlc.errors import HybridSDLCError, ProcessExecutionError
 from hybrid_sdlc.processes import run_bounded_subprocess
 
@@ -64,6 +65,7 @@ def reserve_managed_endpoint(function: Callable[_P, _R]) -> Callable[_P, _R]:
         endpoint = bound.arguments.get("endpoint_url")
         if not isinstance(endpoint, str):
             raise RuntimeManagementError("A task endpoint is required for runtime coordination")
+        validate_endpoint_url(endpoint)
         with sync_task_lease(endpoint):
             return function(*args, **kwargs)
 

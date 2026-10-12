@@ -180,6 +180,86 @@ def test_cli_check_healthy(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> N
     assert data["matched_model"] == "Qwen/Qwen2.5-Coder-32B-Instruct"
 
 
+def test_cli_check_rejects_credentialed_override_before_probe(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    _init_git_repo(tmp_path)
+    monkeypatch.setattr(
+        "hybrid_sdlc.cli.probe_endpoint",
+        lambda **kwargs: pytest.fail("invalid endpoint must not reach the probe"),
+    )
+    result = CliRunner().invoke(
+        cli,
+        [
+            "check",
+            "--repo-root",
+            str(tmp_path),
+            "--host-url",
+            "http://synthetic-user:synthetic-password@127.0.0.1/v1?token=synthetic-query",
+            "--json",
+        ],
+    )
+    assert result.exit_code == ExitCode.CONFIG_ERROR
+    payload = json.loads(result.output)
+    assert payload["code"] == "CONFIG_VALIDATION_ERROR"
+    assert "synthetic-user" not in result.output
+    assert "synthetic-password" not in result.output
+    assert "synthetic-query" not in result.output
+
+
+def test_cli_check_rejects_explicit_empty_override_without_fallback(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    _init_git_repo(tmp_path)
+    monkeypatch.setattr(
+        "hybrid_sdlc.cli.probe_endpoint",
+        lambda **kwargs: pytest.fail("empty override must not fall back to configured endpoints"),
+    )
+    result = CliRunner().invoke(
+        cli, ["check", "--repo-root", str(tmp_path), "--host-url", "", "--json"]
+    )
+    assert result.exit_code == ExitCode.CONFIG_ERROR
+    payload = json.loads(result.output)
+    assert payload["code"] == "CONFIG_VALIDATION_ERROR"
+
+
+def test_cli_run_task_rejects_credentialed_override_before_probe(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    _init_git_repo(tmp_path)
+    (tmp_path / "hybrid_sdlc.toml").write_text(
+        '[command_profiles.pytest]\nargv = ["python", "-c", "pass"]\n', encoding="utf-8"
+    )
+    (tmp_path / "spec.md").write_text("# Task\n", encoding="utf-8")
+    subprocess.run(["git", "add", "hybrid_sdlc.toml", "spec.md"], cwd=tmp_path, check=True)
+    subprocess.run(["git", "commit", "-qm", "add task input"], cwd=tmp_path, check=True)
+    monkeypatch.setattr(
+        "hybrid_sdlc.cli.select_active_endpoint",
+        lambda **kwargs: pytest.fail("invalid endpoint must not reach endpoint selection"),
+    )
+    result = CliRunner().invoke(
+        cli,
+        [
+            "run-task",
+            "spec.md",
+            "--repo-root",
+            str(tmp_path),
+            "--task-id",
+            "TASK-1",
+            "--test-profile",
+            "pytest",
+            "--host-url",
+            "http://synthetic-user:synthetic-password@127.0.0.1/v1",
+            "--json",
+        ],
+    )
+    assert result.exit_code == ExitCode.CONFIG_ERROR
+    payload = json.loads(result.output)
+    assert payload["code"] == "CONFIG_VALIDATION_ERROR"
+    assert "synthetic-user" not in result.output
+    assert "synthetic-password" not in result.output
+
+
 def test_cli_check_readiness_failure_keeps_availability_but_exits_nonzero(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:

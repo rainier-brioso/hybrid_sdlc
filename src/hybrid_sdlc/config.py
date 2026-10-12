@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import re
 import tomllib
 from pathlib import Path
 from typing import Any
@@ -21,6 +22,38 @@ DEFAULT_MAX_RETRIES = 3
 DEFAULT_TASK_TIMEOUT_SECONDS = 600
 DEFAULT_ATTEMPT_TIMEOUT_SECONDS = 180
 DEFAULT_LOG_BUFFER_CAP_BYTES = 500 * 1024
+
+
+def validate_endpoint_url(value: str) -> str:
+    """Validate an endpoint without permitting private URL components."""
+    if not isinstance(value, str):
+        raise ValueError("Endpoint URL must be a credential-free HTTP(S) URL")
+    if any(char.isspace() for char in value):
+        raise ValueError("Endpoint URL must not contain whitespace")
+    if re.search(r"%(?![0-9a-fA-F]{2})", value):
+        raise ValueError("Endpoint URL contains an invalid escape")
+    if any(ord(char) < 0x20 or ord(char) == 0x7F for char in value):
+        raise ValueError("Endpoint URL contains invalid characters")
+    try:
+        parsed = urlparse(value)
+    except ValueError:
+        raise ValueError("Endpoint URL is malformed") from None
+    if parsed.username is not None or parsed.password is not None:
+        raise ValueError("Endpoint URL must not contain credentials")
+    if "?" in value or "#" in value:
+        raise ValueError("Endpoint URL must not contain a query or fragment")
+    if not parsed.scheme or parsed.scheme not in ("http", "https"):
+        raise ValueError("Endpoint URL must use HTTP or HTTPS")
+    try:
+        hostname = parsed.hostname
+        port = parsed.port
+    except ValueError:
+        raise ValueError("Endpoint URL has an invalid host or port") from None
+    if not hostname:
+        raise ValueError("Endpoint URL must include a host")
+    if port is not None and not (1 <= port <= 65535):
+        raise ValueError("Endpoint URL has an invalid port")
+    return value.rstrip("/")
 
 
 def normalize_aider_edit_files(value: object) -> list[str]:
@@ -51,7 +84,7 @@ def normalize_aider_edit_files(value: object) -> list[str]:
 class ServerCandidateConfig(BaseModel):
     """Configuration for an inference server candidate."""
 
-    model_config = ConfigDict(extra="forbid")
+    model_config = ConfigDict(extra="forbid", hide_input_in_errors=True)
 
     url: str
     model_alias: str | None = None
@@ -59,14 +92,7 @@ class ServerCandidateConfig(BaseModel):
     @field_validator("url")
     @classmethod
     def validate_url(cls, v: str) -> str:
-        parsed = urlparse(v)
-        if not parsed.scheme or parsed.scheme not in ("http", "https"):
-            raise ValueError(f"Invalid URL scheme '{parsed.scheme}'; must be http or https")
-        if not parsed.netloc:
-            raise ValueError("URL must include host and port (e.g. http://127.0.0.1:8090/v1)")
-        if parsed.port is not None and not (1 <= parsed.port <= 65535):
-            raise ValueError(f"Port {parsed.port} out of range (1-65535)")
-        return v.rstrip("/")
+        return validate_endpoint_url(v)
 
 
 class ToolkitConfig(BaseModel):
@@ -205,8 +231,19 @@ def load_config(
     try:
         return ToolkitConfig(**raw_data)
     except Exception as e:
+        rendered_error = str(e)
+        # Pydantic can include rejected input in nested model errors. URL field
+        # errors are always represented by static diagnostics; hide the full
+        # serializer output whenever endpoint candidates were supplied.
+        has_candidate_input = "server_candidates" in raw_data
+        if has_candidate_input:
+            raise ConfigurationError(
+                "Invalid toolkit configuration",
+                code="CONFIG_VALIDATION_ERROR",
+                details={"error": "Configuration validation failed"},
+            ) from None
         raise ConfigurationError(
-            f"Invalid toolkit configuration: {e}",
+            f"Invalid toolkit configuration: {rendered_error}",
             code="CONFIG_VALIDATION_ERROR",
-            details={"error": str(e)},
+            details={"error": rendered_error},
         ) from e

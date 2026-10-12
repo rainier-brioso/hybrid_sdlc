@@ -103,10 +103,9 @@ def test_managed_readiness_refuses_active_task_even_with_userinfo_url(
     )
     with runtime_strata.sync_task_lease("http://127.0.0.1:8090/v1"):
         result = probe_endpoint("http://user:secret@localhost:8090/v1", check_readiness=True)
-    assert result.available
-    assert not result.readiness_tested
+    assert not result.available
     assert result.error is not None
-    assert result.error.code == "READINESS_BUSY"
+    assert result.error.code == "INVALID_ENDPOINT"
     assert not posted
     assert "secret" not in result.url
 
@@ -227,7 +226,8 @@ def test_probe_result_redacts_url_credentials(monkeypatch: pytest.MonkeyPatch) -
 
     result = probe_endpoint("http://alice:super-secret@127.0.0.1:8090/v1")
     assert "super-secret" not in result.url
-    assert "[REDACTED]" in result.url
+    assert result.error is not None and result.error.code == "INVALID_ENDPOINT"
+    assert "super-secret" not in result.model_dump_json()
 
 
 def test_select_active_endpoint_order(monkeypatch: pytest.MonkeyPatch) -> None:

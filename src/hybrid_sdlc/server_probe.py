@@ -13,7 +13,7 @@ from typing import Any
 import httpx
 
 from hybrid_sdlc.artifacts import redact_secrets
-from hybrid_sdlc.config import ServerCandidateConfig
+from hybrid_sdlc.config import ServerCandidateConfig, validate_endpoint_url
 from hybrid_sdlc.errors import ModelNotFoundError, ProcessExecutionError, ServerProbeError
 from hybrid_sdlc.models import FailureRecord, ProbeResult
 from hybrid_sdlc.processes import SubprocessResult, run_bounded_subprocess
@@ -45,6 +45,14 @@ def probe_endpoint(
     timeout_seconds: float = DEFAULT_PROBE_TIMEOUT_SECONDS,
 ) -> ProbeResult:
     """Probe endpoint availability and optionally perform readiness inference."""
+    try:
+        url = validate_endpoint_url(url)
+    except ValueError as exc:
+        return ProbeResult(
+            url="<invalid endpoint>",
+            available=False,
+            error=FailureRecord(code="INVALID_ENDPOINT", message=str(exc)),
+        )
     if not check_readiness:
         return _probe_endpoint_direct(
             url, required_model=required_model, timeout_seconds=timeout_seconds
