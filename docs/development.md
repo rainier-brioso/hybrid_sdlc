@@ -9,7 +9,7 @@ This document covers the developer workflow for the `hybrid-sdlc` package.
 | Tool | Purpose | Install |
 |------|---------|---------|
 | [uv](https://github.com/astral-sh/uv) | Fast Python package manager | `pip install uv` |
-| Python ≥ 3.11 | Runtime | System package manager |
+| Python 3.11–3.13 | Toolkit runtime; examples use 3.12 | System package manager or uv |
 | Git | Repository operations | System package manager |
 
 ---
@@ -18,15 +18,19 @@ This document covers the developer workflow for the `hybrid-sdlc` package.
 
 ```bash
 # Clone and enter the repository
-git clone <repo-url>
+git clone https://github.com/rainier-brioso/hybrid_sdlc.git
 cd hybrid_sdlc
 
 # Install all dependencies (runtime + dev) from the lock file
-uv sync --frozen
+uv sync --python 3.12 --frozen --group dev
 
 # Verify the CLI is reachable
 uv run hybrid-sdlc --help
 ```
+
+This is the toolkit's developer environment, not an install for every host or
+the target repository's test runtime. For separate CLI/Aider tool environments,
+first-run examples and uninstall, see [installation](installation.md).
 
 ---
 
@@ -137,8 +141,12 @@ In PowerShell, use `uv build --sdist --wheel --out-dir dist` followed by
 `$env:HYBRID_SDLC_PACKAGING_DIST = "dist"; uv run pytest -q tests/packaging/test_distribution_smoke.py`.
 Once configured, the smoke fails if the artifact directory, uv, or package dependencies are unavailable.
 
-The distributions currently contain the Python CLI/MCP package and Spec Kit templates only.
-They do not package or manage Docker services or local model runtimes.
+The distributions contain the Python CLI/MCP package, Spec Kit templates and
+managed Strata runtime assets. They do not include a model engine/image, model
+weights or the repository-local host marketplace/plugin distribution. Explicit
+lifecycle commands use the packaged assets for a separately owned service;
+image preparation and model deployment remain separate operations. See
+[runtime management](runtime-management.md).
 
 CI permissions are read-only by default and redundant runs are cancelled.
 Bind the stable aggregate check `CI / Required` to the protected-branch ruleset.

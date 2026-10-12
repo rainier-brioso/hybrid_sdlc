@@ -18,8 +18,8 @@ optional containerized model deployment, not for the MCP server itself.
 ```sh
 git clone https://github.com/rainier-brioso/hybrid_sdlc.git
 cd hybrid_sdlc
-uv tool install .
-uv tool install aider-chat
+uv tool install --python 3.12 .
+uv tool install --python 3.12 'aider-chat==0.86.2'
 hybrid-sdlc --help
 ```
 
@@ -48,8 +48,17 @@ hybrid-sdlc run-task spec.md --repo-root . --task-id TASK-001 --test-profile tes
 Use a task ID from your spec. Model availability is not inference readiness.
 The result identifies the isolated checkout and review patch; passing tests
 does not automatically apply it to the source checkout. Review the exact diff.
+For the complete step-by-step workflow, including Windows/POSIX paths,
+async polling, cleanup and uninstall, see [installation](docs/installation.md).
+For failures, see [troubleshooting](docs/troubleshooting.md).
 See [configuration](docs/configuration.md), the
 [example profiles](hybrid_sdlc.example.toml), and [development](docs/development.md).
+
+Endpoint URLs must be credential-free, without userinfo, query strings or
+fragments. Task instructions are delivered through temporary private files,
+not command-line text. Aider input/output is explicitly UTF-8. The optional
+`aider_python` adapter supports Aider 0.86.2 only and keeps repository-map caches
+outside the checkout; see the configuration guide before enabling it.
 
 ## Connect an agent host
 
@@ -97,7 +106,7 @@ representative coding benchmarks remain unverified.
 
 ## Recorded Strata measurements
 
-These are small observations from October 4–5, 2026, not performance guarantees.
+These are small observations from October 4–12, 2026, not performance guarantees.
 The observed setup was Docker/WSL2, RTX 3090 24 GB, roughly 32 GB host RAM,
 and a roughly 24 GiB VM memory limit. Runtime/memory conditions varied.
 
@@ -107,18 +116,25 @@ and a roughly 24 GiB VM memory limit. Runtime/memory conditions varied.
 | Two identical prompt repeats | 1,314 reused tokens; total 0.172 / 0.125 s | Cached samples, not fresh-prompt throughput |
 | Installed MCP SDK smoke | 19.707 s; one attempt; two tests passed | Tiny two-file fixture, not a Codex-session proof |
 | Antigravity synchronous smoke | 52.397 s; one attempt; two tests passed | User-reported host invocation, patch/tests independently reviewed |
+| Controlled idle-cycle baseline | 74.13 s; one attempt; four tests passed | Isolated two-file task, map enabled |
+| Same task after 25 h 30 m idle | 177.19 s; one attempt; four tests passed | Identical reviewed patch; no observed engine reload or manual restart |
 
 Sources: [prompt protocol and measurements](benchmarks/results/strata/prompt-processing-20261004.md),
 [installed MCP record](benchmarks/results/strata/installed-mcp-smoke-20261004.json),
 and [Antigravity record](benchmarks/results/strata/antigravity-mcp-smoke-20261005.json).
+The [controlled idle-cycle record](benchmarks/results/strata/long-idle-20261010.md)
+includes fixed inputs, timestamps and limits. Its slower repeat spent about
+158 seconds processing the prompt; the slowdown's cause is not established.
 Earlier smoke requests decoded at 58.5–75.5 tokens/s, but prompt processing
 dominated latency; this is not end-to-end coding throughput. Identical cached
 requests must not be combined with fresh prompts to claim a typical speed.
 
 One earlier Antigravity attempt timed out after 150 seconds. The successful
 retry followed a user restart; neither the reported long idle period nor the
-restart proves the timeout's cause. Controlled long-idle and native-versus-Docker
-tests remain open in the [implementation tasks](docs/implementation_tasks.md).
+restart proves the timeout's cause. A later controlled long-idle cycle passed,
+but one cycle does not establish sustained reliability. Native-versus-Docker
+and representative coding benchmarks remain open in the
+[implementation tasks](docs/implementation_tasks.md).
 The [hardware benchmark protocol](benchmarks/README.md) defines the inputs and
 measurements required before making runtime comparisons; its manifest template
 is not a completed benchmark or a claim of native/Docker parity.
@@ -130,8 +146,11 @@ permissions. Worktrees, path checks, redaction, and advisory locks are not an OS
 sandbox. Keep secrets, model weights, and machine-local configuration out of Git.
 Managed activity coordination cannot see unrelated API clients.
 
-Packaging, managed lifecycle, and guarded runtime diagnostics are implemented;
-controlled long-idle validation remains pending. Windows background survival requires
+Packaging, managed lifecycle, guarded runtime diagnostics and the bounded
+[security review](docs/security.md) are implemented; one controlled idle cycle
+is recorded. Comparative benchmarks and clean-machine release rehearsals are
+still pending: this is not yet a fully validated supported release.
+Windows background survival requires
 a host allowing Job Object breakaway and is not proven on restrictive runners.
 See the [plan](docs/implementation_plan.md) and [tasks](docs/implementation_tasks.md)
 for completed work, validation limits, and remaining milestones.
