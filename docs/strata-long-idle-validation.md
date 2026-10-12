@@ -1,4 +1,10 @@
-# Controlled Strata long-idle validation (not yet executed)
+# Controlled Strata long-idle validation
+
+One cycle was completed on October 10–12, 2026:
+[baseline and post-idle evidence](../benchmarks/results/strata/long-idle-20261010.md).
+Both tasks passed; post-idle prompt processing was slower. This satisfies the
+narrow recorded-evidence criterion, not a general reliability or causal claim.
+The protocol below remains available for further controlled cycles.
 
 The reported long idle period and successful retry after restart do not prove
 a stall's cause. This protocol is separate from the existing successful smoke

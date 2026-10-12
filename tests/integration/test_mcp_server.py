@@ -118,7 +118,7 @@ def test_successful_tool_responses_redact_credentials_recursively(
     monkeypatch.setattr(
         "hybrid_sdlc.mcp_server.select_active_endpoint",
         lambda **kwargs: (
-            ServerCandidateConfig(url=_USERINFO_URL),
+            ServerCandidateConfig(url="http://127.0.0.1:8090/v1"),
             ProbeResult(
                 url=_USERINFO_URL,
                 available=True,
@@ -270,3 +270,54 @@ def test_status_schema_rejects_wait_above_limit() -> None:
 
     assert response.is_error is True
     assert "60" in response.content[0].text
+
+
+def test_sync_and_submit_reject_invalid_configured_endpoint_before_probe_or_launch(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    _init_repo(tmp_path)
+    invalid_url = "http://synthetic-user:synthetic-password@127.0.0.1/v1?token=synthetic-query"
+    (tmp_path / "hybrid_sdlc.toml").write_text(
+        f'[[server_candidates]]\nurl = "{invalid_url}"\n\n'
+        '[command_profiles.pytest]\nargv = ["python", "-c", "pass"]\n',
+        encoding="utf-8",
+    )
+    monkeypatch.setattr(
+        "hybrid_sdlc.submission.select_active_endpoint",
+        lambda **kwargs: pytest.fail("invalid configured endpoint must not be probed"),
+    )
+    monkeypatch.setattr(
+        "hybrid_sdlc.submission._launch_worker",
+        lambda *args, **kwargs: pytest.fail("invalid configured endpoint must not launch"),
+    )
+    monkeypatch.setattr(
+        "hybrid_sdlc.mcp_server.run_bounded_loop",
+        lambda *args, **kwargs: pytest.fail("invalid configured endpoint must not run"),
+    )
+
+    sync_result = _call_tool(
+        "run_spec_task_sync",
+        {
+            "repo_root": str(tmp_path),
+            "spec_path": "spec.md",
+            "task_id": "TASK-1",
+            "test_profile": "pytest",
+        },
+    )
+    submit_result = _call_tool(
+        "submit_spec_job",
+        {
+            "repo_root": str(tmp_path),
+            "spec_path": "spec.md",
+            "task_id": "TASK-1",
+            "test_profile": "pytest",
+        },
+    )
+
+    for result in (sync_result, submit_result):
+        assert result.is_error is True
+        text = result.content[0].text
+        assert "CONFIG_VALIDATION_ERROR" in text
+        assert "synthetic-user" not in text
+        assert "synthetic-password" not in text
+        assert "synthetic-query" not in text

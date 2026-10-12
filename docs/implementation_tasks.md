@@ -969,7 +969,7 @@ A task is complete when:
   independent review found no remaining confirmed blocker. These fixes remain
   local to the next branch; no new commit, push, or PR merge is claimed.
 
-- [ ] **HSDLC-064E - Add runtime readiness and suspected-stall diagnostics**
+- [x] **HSDLC-064E - Add runtime readiness and suspected-stall diagnostics**
   Depends on: HSDLC-064D, HSDLC-020
   Acceptance:
   - Keep default MCP health checks read-only and non-generating; expose bounded
@@ -1077,7 +1077,25 @@ A task is complete when:
   root cause or idle interval. The controlled long-idle/retry protocol was not
   performed; HSDLC-064E remains open.
 
-- [ ] **HSDLC-065 — Define the hardware benchmark protocol**  
+  Controlled idle-cycle baseline (2026-10-10): on merged PR #11, run
+  `run_1791665842_aa128476` passed in 74.13 s with exactly the two authorized
+  files changed and four tests independently rerun. The manual service was
+  not restarted or migrated. Baseline inputs, request completion time, and
+  proposed 24-hour interval are recorded in
+  [the cycle record](../benchmarks/results/strata/long-idle-20261010.md).
+  Post-idle repeat (2026-10-12 Madrid / 2026-10-11 UTC): after a conservative
+  25 h 30 m 44 s interval, `run_1791757760_9f4dcbfa` passed on its first attempt
+  in 177.19 s. The exact patch matched the baseline, all four tests passed
+  independently, and the source fixture stayed clean. Container/image/start
+  identity and observed settings were unchanged; the operator reported no
+  requests, sleep or restart and inspected logs showed no intervening requests.
+  No engine error/reload, manual recovery or keep-alive inference was observed
+  in this cycle. The slower prompt processing has no established cause.
+  This completes the narrow evidence criterion, not a general reliability,
+  stall-causality or Docker/native-parity claim; repeat cycles and stronger
+  ambient telemetry are needed before those claims.
+
+- [ ] **HSDLC-065 — Define the hardware benchmark protocol**
   Files: `benchmarks/README.md`, `benchmarks/benchmark_task.json`  
   Depends on: HSDLC-064  
   Acceptance:
@@ -1307,13 +1325,39 @@ A task is complete when:
   - Documentation compares time-to-green and patch success rate in addition to token throughput and memory.
   - The dense 27B profile is not labeled faster or preferred without measured evidence.
 
-- [ ] **HSDLC-067 — Complete security and destructive-operation review**  
+- [x] **HSDLC-067 — Complete security and destructive-operation review**
   Files: `docs/security.md`, test evidence  
   Depends on: HSDLC-055, HSDLC-061, HSDLC-062  
   Acceptance:
   - Threat model clearly separates policy validation from OS sandboxing.
   - Review covers path escape, executable shadowing, environment leakage, log leakage, process cleanup, worktree targeting, cleanup boundaries, and plugin configuration.
   - No destructive command can target the user's checkout through computed or unresolved paths.
+
+  Review started (2026-10-12): [security evidence](security.md) covers the
+  trust model, paths, executable selection, environment/log privacy, process
+  ownership, worktree targeting, retention, host/plugin configuration and
+  managed runtime boundaries. Offline synthetic reproduction confirmed that
+  endpoint credentials and task instructions can enter Aider's child argv.
+  No destructive-targeting defect was confirmed in the reviewed paths, but
+  this is not proof against hostile same-user filesystem races or untrusted
+  repository commands.
+
+  Remediation completed (2026-10-12): credential-bearing, query/fragment,
+  whitespace and malformed endpoints fail before HTTP/launch; rejection errors
+  do not echo URL input. Aider instructions use per-attempt private UTF-8 files,
+  outside source/checkout/retained attempt storage, with normal-exit, failure,
+  timeout, cancellation and launch-error cleanup. Empty message and explicit
+  UTF-8 settings neutralize ambient config, and aliases/abbreviations cannot
+  override these managed options. CLI, direct runner/probe and MCP sync/submit
+  rejection regressions pass; result schemas and tool signatures are unchanged.
+  Full final suite: 786 passed / 14 environment/opt-in skips, 152 subtests passed,
+  82.98% coverage. Ruff format/lint, strict mypy (26 source files), eight fresh
+  isolated packaging checks, local links and diff checks passed. Independent
+  review findings were fixed and re-reviewed without a remaining actionable
+  gap in those areas. Abrupt host termination, inherited Windows ACLs, trusted
+  PATH/repository commands and hostile same-user races remain explicit limits,
+  not OS-sandbox guarantees. No live inference, service change, user-tool
+  reinstall, new remote CI result, commit or push is claimed.
 
 - [ ] **HSDLC-068 — Write installation, operation, and troubleshooting documentation**  
   Files: `README.md`, `docs/installation.md`, `docs/troubleshooting.md`  

@@ -230,5 +230,7 @@ registration. Finish that work before running a disruptive lifecycle command.
 
 The earlier stall after a reported long idle period remains unconfirmed.
 Metadata-only timeout evidence and conservative suspected-stall classification
-are implemented; controlled long-idle/retry validation remains open under HSDLC-064E.
+are implemented. One [controlled long-idle cycle](../benchmarks/results/strata/long-idle-20261010.md)
+passed, completing HSDLC-064E's recorded-evidence criterion; the slower repeat
+has no established cause and does not establish sustained reliability.
 Automatic restart is not part of the diagnostic workflow.

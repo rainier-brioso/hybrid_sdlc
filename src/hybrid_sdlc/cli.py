@@ -14,7 +14,7 @@ from hybrid_sdlc import __version__
 from hybrid_sdlc.aider_runner import run_bounded_loop, validate_aider_target_files
 from hybrid_sdlc.artifacts import clean_artifacts
 from hybrid_sdlc.command_profiles import resolve_profile_executable
-from hybrid_sdlc.config import ServerCandidateConfig, load_config
+from hybrid_sdlc.config import ServerCandidateConfig, load_config, validate_endpoint_url
 from hybrid_sdlc.errors import (
     ConfigurationError,
     ExitCode,
@@ -361,8 +361,17 @@ def check_cmd(
     model_to_verify = model or config.selected_model
     results: list[ProbeResult] = []
 
-    if host_url:
-        candidates = [ServerCandidateConfig(url=host_url, model_alias=model_to_verify)]
+    if host_url is not None:
+        try:
+            safe_host_url = validate_endpoint_url(host_url)
+            candidates = [ServerCandidateConfig(url=safe_host_url, model_alias=model_to_verify)]
+        except (TypeError, ValueError):
+            err = ConfigurationError("Invalid endpoint URL", code="CONFIG_VALIDATION_ERROR")
+            if json_mode:
+                click.echo(json.dumps(err.to_failure_record().model_dump(mode="json"), indent=2))
+            else:
+                click.echo(f"Configuration error: {err.message}", err=True)
+            sys.exit(ExitCode.CONFIG_ERROR)
     else:
         candidates = config.server_candidates
 
@@ -495,6 +504,17 @@ def run_task_cmd(
     profile = config.command_profiles[test_profile]
     retries = max_retries if max_retries is not None else config.max_retries
     target_model = model or config.selected_model
+
+    if host_url is not None:
+        try:
+            validate_endpoint_url(host_url)
+        except (TypeError, ValueError):
+            err = ConfigurationError("Invalid endpoint URL", code="CONFIG_VALIDATION_ERROR")
+            if json_mode:
+                click.echo(json.dumps(err.to_failure_record().model_dump(mode="json"), indent=2))
+            else:
+                click.echo(f"Error: {err.message}", err=True)
+            sys.exit(err.exit_code)
 
     # Validate the committed spec before contacting the model. Other source
     # checkout changes are safe because execution occurs in a detached worktree.

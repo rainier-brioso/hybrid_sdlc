@@ -5,6 +5,7 @@ from __future__ import annotations
 import json
 import os
 import sys
+import tempfile
 from pathlib import Path
 
 import pytest
@@ -66,7 +67,7 @@ def test_build_aider_argv() -> None:
         endpoint_url="http://127.0.0.1:8090/v1",
         model_name="Qwen2.5-Coder-32B",
         spec_file=spec_file,
-        task_instruction="Implement task 1",
+        message_file_path=Path("private-instruction.txt"),
         target_files=[target_file],
     )
 
@@ -87,6 +88,39 @@ def test_build_aider_argv() -> None:
     assert "--yes-always" in argv
     assert str(spec_file) in argv
     assert str(target_file) in argv
+    assert "--message-file" in argv
+    assert argv[argv.index("--message-file") + 1] == "private-instruction.txt"
+    assert argv[argv.index("--message") + 1] == ""
+    assert "--encoding" in argv
+    assert argv[argv.index("--encoding") + 1] == "utf-8"
+
+
+@pytest.mark.parametrize(
+    "unsafe_option",
+    [
+        "--message",
+        "--msg",
+        "--ms=synthetic-secret",
+        "--message-f",
+        "--message-file",
+        "-m",
+        "-msecret",
+        "-fpath",
+        "--encoding",
+        "--enc",
+    ],
+)
+def test_builder_rejects_extra_flags_that_can_override_private_message(
+    unsafe_option: str,
+) -> None:
+    with pytest.raises(ValueError, match="managed internally"):
+        build_aider_argv(
+            endpoint_url="http://127.0.0.1:8080/v1",
+            model_name="local-model",
+            spec_file=Path("spec.md"),
+            message_file_path=Path("instruction.txt"),
+            extra_flags=[unsafe_option],
+        )
 
 
 def test_automated_aider_skips_metadata_prompt_without_disabling_settings_checks() -> None:
@@ -94,7 +128,7 @@ def test_automated_aider_skips_metadata_prompt_without_disabling_settings_checks
         endpoint_url="http://127.0.0.1:8080/v1",
         model_name="qwen3.8-flash-next-coder-iq1_m",
         spec_file=Path("spec.md"),
-        task_instruction="Implement SMOKE-001",
+        message_file_path=Path("instruction.txt"),
     )
 
     assert "--yes-always" in argv
@@ -107,7 +141,7 @@ def test_build_aider_argv_only_sets_repo_map_when_explicit() -> None:
         "endpoint_url": "http://127.0.0.1:8080/v1",
         "model_name": "local-model",
         "spec_file": Path("spec.md"),
-        "task_instruction": "Implement task",
+        "message_file_path": Path("instruction.txt"),
     }
 
     default_argv = build_aider_argv(**common)
@@ -126,7 +160,7 @@ def test_build_aider_argv_omits_model_settings_by_default_and_adds_when_explicit
         "endpoint_url": "http://127.0.0.1:8080/v1",
         "model_name": "local-model",
         "spec_file": Path("spec.md"),
-        "task_instruction": "Implement task",
+        "message_file_path": Path("instruction.txt"),
     }
     assert "--model-settings-file" not in build_aider_argv(**common)
     settings_file = tmp_path / "settings.yml"
@@ -174,7 +208,7 @@ def test_temporary_model_settings_cleanup_after_exception() -> None:
     assert settings_path is not None and not settings_path.exists()
 
 
-@pytest.mark.parametrize("outcome", ["success", "timeout", "cancelled"])
+@pytest.mark.parametrize("outcome", ["success", "failure", "timeout", "cancelled"])
 def test_aider_settings_exist_during_subprocess_and_are_removed_afterward(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch, outcome: str
 ) -> None:
@@ -184,13 +218,24 @@ def test_aider_settings_exist_during_subprocess_and_are_removed_afterward(
         argv = kwargs["argv"]
         assert isinstance(argv, list)
         settings_file = Path(argv[argv.index("--model-settings-file") + 1])
+        message_file = Path(argv[argv.index("--message-file") + 1])
         assert settings_file.is_file()
+        assert message_file.is_file()
+        assert message_file.read_text(encoding="utf-8") == "task line 1\nUnicode: café 🧪"
+        assert "task line 1" not in " ".join(argv)
+        assert argv[argv.index("--message") + 1] == ""
+        assert not message_file.is_relative_to(tmp_path.resolve())
+        if os.name != "nt":
+            assert message_file.stat().st_mode & 0o777 == 0o600
+            assert message_file.parent.stat().st_mode & 0o777 == 0o700
         captured["path"] = settings_file
+        captured["message_path"] = message_file
+        captured["argv"] = argv
         captured["content"] = json.loads(settings_file.read_text(encoding="utf-8"))
         from hybrid_sdlc.processes import SubprocessResult
 
         return SubprocessResult(
-            exit_code=1 if outcome != "success" else 0,
+            exit_code=1 if outcome in ("failure", "timeout", "cancelled") else 0,
             stdout="",
             stderr="",
             is_truncated=False,
@@ -204,7 +249,7 @@ def test_aider_settings_exist_during_subprocess_and_are_removed_afterward(
         endpoint_url="http://127.0.0.1:8080/v1",
         model_name="qwen-local",
         spec_file=tmp_path / "spec.md",
-        task_instruction="task",
+        task_instruction="task line 1\nUnicode: café 🧪",
         repo_root=tmp_path,
         aider_cmd="aider",
         repo_map_tokens=None,
@@ -219,6 +264,8 @@ def test_aider_settings_exist_during_subprocess_and_are_removed_afterward(
 
     assert result.timed_out is (outcome == "timeout")
     assert result.cancelled is (outcome == "cancelled")
+    assert not Path(captured["message_path"]).exists()
+    assert not any("task line 1" in str(arg) for arg in captured["argv"])
     assert captured["content"] == [
         {
             "name": "aider/extra_params",
@@ -235,11 +282,13 @@ def test_aider_settings_are_removed_when_subprocess_launch_raises(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     settings_paths: list[Path] = []
+    message_paths: list[Path] = []
 
     def fail_launch(**kwargs: object):
         argv = kwargs["argv"]
         assert isinstance(argv, list)
         settings_paths.append(Path(argv[argv.index("--model-settings-file") + 1]))
+        message_paths.append(Path(argv[argv.index("--message-file") + 1]))
         raise OSError("launch failed")
 
     monkeypatch.setattr("hybrid_sdlc.aider_runner.run_bounded_subprocess", fail_launch)
@@ -261,6 +310,74 @@ def test_aider_settings_are_removed_when_subprocess_launch_raises(
             process_observer=None,
         )
     assert len(settings_paths) == 1 and not settings_paths[0].exists()
+    assert len(message_paths) == 1 and not message_paths[0].exists()
+
+
+def test_aider_subprocess_reads_private_unicode_multiline_message_file(tmp_path: Path) -> None:
+    output = tmp_path / "captured.json"
+    script = (
+        "import json, pathlib, sys\n"
+        "args = sys.argv[2:]\n"
+        "message = pathlib.Path(args[args.index('--message-file') + 1])\n"
+        "pathlib.Path(sys.argv[1]).write_text(json.dumps({"
+        "'argv': args, 'message': message.read_text(encoding='utf-8'), "
+        "'path': str(message)}), encoding='utf-8')\n"
+    )
+    instruction = "Implement café 🧪\nsecond line"
+    _run_aider_attempt(
+        endpoint_url="http://127.0.0.1:8080/v1",
+        model_name="qwen-local",
+        spec_file=tmp_path / "spec.md",
+        task_instruction=instruction,
+        repo_root=tmp_path,
+        aider_cmd=[sys.executable, "-c", script, str(output)],
+        repo_map_tokens=None,
+        target_files=[],
+        max_tokens=None,
+        reasoning_budget_tokens=None,
+        attempt_timeout_seconds=10,
+        buffer_cap_bytes=4096,
+        cancel_event=None,
+        process_observer=None,
+    )
+    captured = json.loads(output.read_text(encoding="utf-8"))
+    assert captured["message"] == instruction
+    assert instruction not in " ".join(captured["argv"])
+    assert captured["argv"][captured["argv"].index("--message") + 1] == ""
+    assert not Path(captured["path"]).exists()
+
+
+@pytest.mark.parametrize("protected_name", ["source-root", "artifact-root"])
+def test_private_instruction_tempdir_inside_protected_root_is_rejected_and_cleaned(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, protected_name: str
+) -> None:
+    protected_root = tmp_path / protected_name
+    temp_base = protected_root / ".hybrid_sdlc" / "runs"
+    temp_base.mkdir(parents=True)
+    monkeypatch.setattr(tempfile, "tempdir", str(temp_base))
+    checkout = tmp_path / "checkout"
+    checkout.mkdir()
+
+    with pytest.raises(OSError, match="overlaps protected task data"):
+        _run_aider_attempt(
+            endpoint_url="http://127.0.0.1:8080/v1",
+            model_name="qwen-local",
+            spec_file=checkout / "spec.md",
+            task_instruction="synthetic prompt that must not be written",
+            repo_root=checkout,
+            aider_cmd="aider",
+            repo_map_tokens=None,
+            target_files=[],
+            max_tokens=None,
+            reasoning_budget_tokens=None,
+            attempt_timeout_seconds=1,
+            buffer_cap_bytes=1024,
+            cancel_event=None,
+            process_observer=None,
+            protected_roots=(protected_root,),
+        )
+
+    assert list(temp_base.iterdir()) == []
 
 
 @pytest.mark.parametrize(
@@ -287,6 +404,25 @@ def test_run_bounded_loop_rejects_invalid_budgets_before_worktree(
             model_name="qwen-local",
             aider_max_tokens=max_tokens,  # type: ignore[arg-type]
             aider_reasoning_budget_tokens=reasoning,  # type: ignore[arg-type]
+        )
+
+
+def test_direct_runner_rejects_unsafe_endpoint_before_lease_or_worktree(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    def unexpected(*args: object, **kwargs: object) -> None:
+        raise AssertionError("unsafe endpoints must be rejected before side effects")
+
+    monkeypatch.setattr("hybrid_sdlc.runtime_strata.sync_task_lease", unexpected)
+    monkeypatch.setattr("hybrid_sdlc.aider_runner.create_worktree", unexpected)
+    with pytest.raises(ValueError, match="credentials"):
+        run_bounded_loop(
+            repo_root=tmp_path,
+            spec_path="spec.md",
+            task_id="T-1",
+            profile=CommandProfile(name="pytest", argv=["pytest"]),
+            endpoint_url="http://synthetic-user:synthetic-password@127.0.0.1/v1",
+            model_name="model",
         )
 
 

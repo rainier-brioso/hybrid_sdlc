@@ -525,7 +525,7 @@ def test_aider_timeout_never_persists_output_text(tmp_path: Path) -> None:
         spec_path=spec,
         task_id="TASK-TIMEOUT",
         profile=CommandProfile(name="passing", argv=[Path(sys.executable).name, "-c", "pass"]),
-        endpoint_url="http://user:private-password@127.0.0.1:8090/v1",
+        endpoint_url="http://127.0.0.1:8090/v1",
         model_name="Qwen",
         attempt_timeout_seconds=1,
         buffer_cap_bytes=1024,

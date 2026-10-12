@@ -15,6 +15,26 @@ Optional [managed Strata lifecycle](runtime-management.md) settings are separate
 user-level Docker service state. Configuring that service does not change this
 repository configuration or select its endpoint for tasks automatically.
 
+## Credential-free endpoint URLs and instruction privacy
+
+Inference endpoints must use HTTP(S) URLs without userinfo, query strings or
+fragments. For example, `http://127.0.0.1:8080/v1` is supported; embedded
+credentials and query-based authentication are not. This intentionally rejects
+non-secret query parameters too. Unsupported URLs are rejected rather than
+silently rewritten; remote authenticated-endpoint support remains separate.
+Never place secrets in the URL path, model identifier, or repository filenames.
+
+Aider receives task instructions through `--message-file`, not `--message`.
+An empty `--message` value clears any ambient message setting, and the launch
+explicitly selects UTF-8 for Aider input/output; ambient non-UTF-8 encoding
+settings are not retained.
+The UTF-8 input file is held outside the isolated checkout and retained run
+artifacts only during one attempt, then removed on attempt exit. On POSIX its
+temporary directory/file use private permissions; Windows uses the inherited
+permissions of the user's temporary storage. Abrupt host termination can leave
+temporary data, and the same user or a privileged process can still inspect it.
+This is not encrypted memory or an OS sandbox. See [security boundaries](security.md).
+
 ## Aider Repository Map
 
 `aider_repo_map_tokens` optionally sets Aider's repository-map token budget for each task:
