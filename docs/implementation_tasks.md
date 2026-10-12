@@ -1366,6 +1366,24 @@ A task is complete when:
   - Documents prerequisites, supported versions, first run, configuration, sync/async use, result review, cleanup, and uninstall.
   - Examples use canonical command syntax and named test profiles.
 
+  Documentation increment prepared (2026-10-12), from merged PR #12: new
+  [installation](installation.md) and [troubleshooting](troubleshooting.md)
+  guides cover source/wheel installation, Python/tool environment boundaries,
+  PATH/absolute executables, an ignored local-config disposable fixture,
+  named profiles, sync/async polling and cancellation, private patch review,
+  optional host/Spec Kit/runtime setup, cleanup, upgrades and uninstall.
+  README adds the controlled idle-cycle observations and current privacy/release
+  limits; contributor setup agrees with the supported Python range.
+  Examples were checked against this checkout's CLI help, rather than an older
+  globally installed command. Offline validation: local links, two TOML config
+  examples, two Python examples and 14 CLI example argument sets passed;
+  four repository-layout tests and diff checks passed. Independent on-disk
+  content review found no material correctness or safety defect. No live
+  inference, tool/host installation, service change or clean-machine rehearsal
+  was performed. HSDLC-068 remains open for its HSDLC-065 immutable benchmark
+  input dependency and final release-profile documentation; these guides do
+  not promote experimental runtimes or substitute for HSDLC-069 evidence.
+
 - [ ] **HSDLC-069 — Perform a clean-machine release rehearsal**  
   Files: release checklist/evidence  
   Depends on: HSDLC-063, HSDLC-067, HSDLC-068  
