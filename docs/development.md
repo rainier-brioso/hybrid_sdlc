@@ -123,10 +123,10 @@ branches; the Linux test suite currently measures below the shared 80% threshold
 The required Ubuntu/Python 3.12 packaging job builds one wheel and one source distribution,
 checks that local settings, tests, caches, logs, and model weights are absent, then installs each
 artifact into a separate temporary environment. It exercises both CLI help entry points and the
-installed `init` command, rebuilds a wheel from the source distribution, and repeats the install
-check for that rebuilt wheel. It compares packaged template bytes with the source templates. The
-initializer smoke stubs only the external Spec Kit capability probe; the installed command and
-packaged template resources run normally. These checks need network access to resolve
+installed CLI command surface, rebuilds a wheel from the source distribution, and repeats the install
+check for that rebuilt wheel. It compares packaged runtime asset bytes with the source assets
+and rejects removed initializer/template files. It does not invoke a model, Docker, or job
+execution. These checks need network access to resolve
 runtime/build dependencies.
 Ordinary pytest remains offline; the distribution smoke skips only when
 `HYBRID_SDLC_PACKAGING_DIST` is unset. When configured, it fails unless the directory contains
@@ -141,7 +141,7 @@ In PowerShell, use `uv build --sdist --wheel --out-dir dist` followed by
 `$env:HYBRID_SDLC_PACKAGING_DIST = "dist"; uv run pytest -q tests/packaging/test_distribution_smoke.py`.
 Once configured, the smoke fails if the artifact directory, uv, or package dependencies are unavailable.
 
-The distributions contain the Python CLI/MCP package, Spec Kit templates and
+The distributions contain the Python CLI/MCP package and
 managed Strata runtime assets. They do not include a model engine/image, model
 weights or the repository-local host marketplace/plugin distribution. Explicit
 lifecycle commands use the packaged assets for a separately owned service;

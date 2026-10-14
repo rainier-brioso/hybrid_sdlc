@@ -2,12 +2,22 @@
 
 ## Executive Summary
 
-The **Hybrid Spec-Driven SDLC Toolkit** (`hybrid-sdlc`) bridges high-reasoning cloud agents (such as Antigravity, Claude Code, and Codex) with cost-effective local inference (Qwen 2.5 Coder 32B running on an RTX 3090 via `llama-server`). 
+The **Hybrid Spec-Driven SDLC Toolkit** (`hybrid-sdlc`) bridges host/cloud
+analysts with bounded local Aider execution through configurable
+OpenAI-compatible endpoints. Strata and retained llama.cpp profiles remain
+subject to their recorded compatibility and hardware evidence.
 
 **Key Clarification on Token Economics**:
-Cloud agents perform initial architecture, decomposition, and contract specification. During the 2–10 minute local editing and testing cycle, **no cloud-model tokens are consumed**. Once local execution concludes, deterministic test and policy checks run first; cloud agents may then resume to review structured diffs and advance task state. Agent review is judgment-based rather than deterministic and may consume cloud-model tokens.
+Local Aider execution uses the configured local endpoint rather than paid
+generation. Host planning, polling, review and retries may still consume cloud
+tokens. Optimize measured cost and time per accepted change, not a guaranteed
+token saving or fixed task duration. Unknown usage remains unavailable.
 
-This plan addresses all architecture and security review findings: formalizing the execution lifecycle, establishing strict security boundaries, correcting Spec Kit directory conventions, defining bounded editing loops, and providing a canonical CLI and multi-host distribution model.
+The 2026-10-12 planning-foundation change removes Spec Kit initialization and
+replaces its mandatory layout with a lightweight host workflow. It preserves
+committed-task execution, isolated worktrees, bounded retries and explicit
+review/integration. [Planning](planning.md) defines fast versus planned work;
+runtime enhancements have separate acceptance tasks and are not assumed done.
 
 ---
 
@@ -27,7 +37,7 @@ Standard MCP does not define agent turn suspension or background resume. To ensu
 | - Host blocks/waits on tool execution.    | - Non-blocking: returns `job_id` and logs |
 | - Streams progress via MCP notifications. | - State persisted in `.hybrid_sdlc/jobs/` |
 | - Subject to host tool-call timeouts.     | - Agent yields turn or polls.             |
-| - Best for short tasks or blocking hosts. | - Enables native reactive wakeup on AGY.  |
+| - Best for short tasks or blocking hosts. | - Wakeup needs host-specific evidence.    |
 +-------------------------------------------+-------------------------------------------+
 ```
 
@@ -43,7 +53,8 @@ Standard MCP does not define agent turn suspension or background resume. To ensu
 #### Job State Persistence & Schema
 Job states are persisted to `.hybrid_sdlc/jobs/<job_id>.json`:
 - `job_id`: Format `job_<timestamp>_<uuid8>`.
-- `spec_path` & `task_id`: Spec Kit task references.
+- `spec_path` & `task_id`: A confined committed task file and a run label; no
+  Spec Kit layout or task-section parser is required.
 - `status`: `queued` | `running` | `completed` | `failed` | `cancelled`.
 - `cancellation_requested`: Persisted request observed by the owning worker on its next heartbeat.
 - `failure_reason`: Optional machine-readable reason such as `abandoned_process`, `timeout`, `test_failure`, or `security_policy`.
@@ -116,27 +127,33 @@ Because the runner edits files and executes repository-defined test commands, ex
 
 ---
 
-### 1.3 Spec Kit Directory Layout ([P1])
+### 1.3 Lightweight Planning and Task Contracts ([P1])
 
-In conformance with the current [GitHub Spec Kit specification](https://github.com/github/spec-kit), all artifacts strictly follow the official layout:
+Use [the planning workflow](planning.md), adapted to local-first cost and
+context constraints. It is host guidance, not a new planning service:
 
 ```
-.specify/
-├── memory/
-│   └── constitution.md        # Core coding rules, testing policy, architectural constraints
-└── templates/
-    ├── spec-template.md       # User stories, functional & non-functional requirements
-    ├── plan-template.md       # Technical contracts, architecture, types, and dependencies
-    └── tasks-template.md      # Atomic, reviewable, single-focus implementation tasks
-
-specs/
-└── <NNN-feature-name>/        # e.g., specs/001-local-delegate/
-    ├── spec.md                # Feature specification
-    ├── plan.md                # Implementation contracts & architectural plan
-    └── tasks.md               # Ordered checklist of atomic tasks
+docs/features/<feature>/       # Optional repository-owned convention
+├── plan.md                    # Only for dependent/uncertain work
+└── tasks/
+    ├── 01-task.md             # One short committed execution contract
+    └── 02-task.md             # Starts from integrated prerequisite baseline
 ```
 
 ---
+
+Fast modifications use one contract. Planned changes use a short dependency
+plan plus separate contracts. Risk determines verification effort independently
+of size. Analysts ground facts in source and use authorized prototypes for
+observable uncertainty. Workers receive bounded context, not full histories.
+Review checks the exact patch; integration is a distinct authorized action.
+
+Allowed paths and role labels in Markdown are currently review guidance.
+Checked execution policy, patch-scope enforcement and persisted acceptance
+records are planned follow-ups, not implemented sandbox/capability claims.
+Use one local worker at a time, reassess scope when assumptions fail, and
+never silently expand retries or switch to a paid provider. Existing user
+`.specify/` and committed specs remain untouched and usable.
 
 ### 1.4 Canonical CLI Contract & Entry Points ([P1])
 
@@ -160,10 +177,7 @@ hybrid-sdlc status [job_id] [--repo-root <path>] [--wait] [--poll-interval 0.25]
 hybrid-sdlc cancel <job_id> [--repo-root <path>] [--json]
 hybrid-sdlc clean --older-than <duration>
 
-# 4. Spec Kit Initialization
-hybrid-sdlc init [--target-dir .] [--force]
-
-# 5. Model Context Protocol Server (Stdio)
+# 4. Model Context Protocol Server (Stdio)
 hybrid-sdlc mcp
 ```
 
@@ -278,14 +292,7 @@ Target Repository: your local checkout of `hybrid_sdlc` (no fixed machine path).
 
 ```
 hybrid_sdlc/
-├── .specify/
-│   ├── memory/
-│   │   └── constitution.md              # Project constitution (TDD, safety, contracts)
-│   └── templates/
-│       ├── spec-template.md             # Standard feature specification
-│       ├── plan-template.md             # Technical design & contract template
-│       └── tasks-template.md            # Atomic task breakdown template
-├── specs/                               # Active & completed feature specs
+├── docs/planning.md                     # Lightweight contract and handoff workflow
 ├── src/
 │   └── hybrid_sdlc/
 │       ├── __init__.py                  # Package exports & version
@@ -300,7 +307,6 @@ hybrid_sdlc/
 │       ├── worker.py                    # Detached asynchronous job owner
 │       ├── aider_runner.py              # Bounded Aider subprocess execution & diff tracking
 │       ├── git_tools.py                 # Git status, worktree lock, diff stats
-│       ├── spec_initializer.py          # Spec Kit scaffolding & template generator
 │       └── mcp_server.py                # Stdio MCP Server (Sync & Async tools)
 ├── skills/
 │   └── local-delegate/
@@ -333,8 +339,8 @@ gantt
     Protected-main CI, fixture E2E, failure/cancel tests            :p2, after p1, 3
     section Phase 3: MCP & Lifecycle
     MCP adapter, sync & async job lifecycle, state persistence       :p3, after p2, 2
-    section Phase 4: Spec Kit Integration
-    Correct layout (.specify/memory, specs/), idempotent init       :p4, after p3, 2
+    section Phase 4: Historical scaffolding
+    Completed initializer, superseded by planning foundation       :p4, after p3, 2
     section Phase 5: Worktree & Commits
     Opt-in commits, worktree isolation, locking                      :p5, after p4, 2
     section Phase 6: Host Adapters
@@ -376,12 +382,14 @@ closure are recorded in `docs/implementation_tasks.md`.
   - `get_job_status(job_id)`
   - `cancel_spec_job(job_id)`
 
-### Phase 4: Spec Kit Layout & Idempotent Init
+### Phase 4: Historical Scaffolding (Superseded)
 - Complete HSDLC-045A's deferred supported-host Windows MCP worker-survival E2E
   before claiming Windows asynchronous jobs are verified. Restrictive hosts
   continue to reject async submission safely.
-- Implement `spec_initializer.py` applying `.specify/memory/constitution.md` and `.specify/templates/`.
-- Ensure `hybrid-sdlc init` is idempotent and will not overwrite existing customized files without `--force`.
+- The completed Spec Kit initializer/template work is retained in historical
+  task records but removed from current runtime/packaging by HSDLC-071.
+- Users' existing planning files, journals and backups are preserved. No
+  migration write or directory deletion is part of removal.
 
 ### Phase 5: Worktree Isolation & Opt-in Commits
 - Implement advisory worktree locking (`.hybrid_sdlc/runner.lock`).
@@ -419,6 +427,27 @@ closure are recorded in `docs/implementation_tasks.md`.
 - Evaluate Qwen 3.6 27B only as a measured quality profile, not as an assumed speed improvement.
 
 ---
+
+### Planning Foundation and Real-Task Trial
+
+HSDLC-071–074 are complete: initializer coupling is removed, fast/planned
+contracts and the shipped delegation workflow are published, and explicitly
+selected task policies check identity, limit ceilings and committed provenance.
+Their path declarations are enforced against final exports and optional scoped
+commit trees. HSDLC-075's exact-artifact acceptance record remains unimplemented;
+scope/test success is not recorded review acceptance. HSDLC-076
+maintains a verification map; HSDLC-077 evaluates the workflow on the separately
+prepared Metria weight-import feature with observed failures/retries and costs.
+HSDLC-078/079 specify local role profiles and host-native subagent routing now,
+as independent opt-in configuration layers. Reuse existing user host agents;
+never overwrite their cheaper-model settings or treat MCP as an agent factory.
+Local deployment and recommended budgets build on trial/capability evidence;
+fully local analyst/reviewer enforcement remains D06, not a prompt-only claim.
+
+Metria delegation stays paused until its contracts, offline test profile and
+feature baseline are approved and committed. Keep its date-only storage design
+gate and physical acceptance separate. No app installation, production data
+access, model restart or automatic merge follows from this roadmap.
 
 ## 4. Comprehensive Verification Plan
 

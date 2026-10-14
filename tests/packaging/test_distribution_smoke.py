@@ -9,6 +9,7 @@ import subprocess
 import sys
 import tarfile
 import tempfile
+import zipfile
 from io import BytesIO
 from pathlib import Path
 
@@ -20,7 +21,6 @@ assert _SPEC is not None and _SPEC.loader is not None
 _PACKAGING_SMOKE = importlib.util.module_from_spec(_SPEC)
 _SPEC.loader.exec_module(_PACKAGING_SMOKE)
 check_archive = _PACKAGING_SMOKE.check_archive
-check_template_payloads = _PACKAGING_SMOKE.check_template_payloads
 check_runtime_asset_payloads = _PACKAGING_SMOKE.check_runtime_asset_payloads
 
 
@@ -28,10 +28,6 @@ def _write_sdist(
     path: Path, extra: dict[str, bytes] | None = None, omit: set[str] | None = None
 ) -> None:
     members = {
-        "package-0/.specify/memory/constitution.md": b"constitution",
-        "package-0/.specify/templates/spec-template.md": b"spec",
-        "package-0/.specify/templates/plan-template.md": b"plan",
-        "package-0/.specify/templates/tasks-template.md": b"tasks",
         "package-0/README.md": b"readme",
         "package-0/pyproject.toml": b"[build-system]",
         "package-0/src/hybrid_sdlc/__init__.py": b"",
@@ -50,15 +46,29 @@ def _write_sdist(
             archive.addfile(info, BytesIO(contents))
 
 
+def _write_wheel(path: Path, extra: dict[str, bytes] | None = None) -> None:
+    members = {
+        "hybrid_sdlc/__init__.py": b"",
+        "hybrid_sdlc/_aider_cache_bootstrap.py": b"# adapter\n",
+        "hybrid_sdlc/_runtime/strata/compose.yaml": b"services: {}\n",
+        "hybrid_sdlc/_runtime/strata/worker-defaults.json": b"{}\n",
+        "hybrid_sdlc/_runtime/strata/startup.py": b"# startup\n",
+    }
+    members.update(extra or {})
+    with zipfile.ZipFile(path, "w") as archive:
+        for name, contents in members.items():
+            archive.writestr(name, contents)
+
+
 def test_sdist_project_root_prefix_is_normalized(tmp_path: Path) -> None:
     archive = tmp_path / "package.tar.gz"
     _write_sdist(archive)
     check_archive(archive)
 
 
-def test_sdist_rejects_missing_templates_and_local_runtime_config(tmp_path: Path) -> None:
+def test_sdist_rejects_missing_runtime_asset_and_local_config(tmp_path: Path) -> None:
     missing = tmp_path / "missing.tar.gz"
-    _write_sdist(missing, omit={"package-0/.specify/templates/tasks-template.md"})
+    _write_sdist(missing, omit={"package-0/src/hybrid_sdlc/_runtime/strata/compose.yaml"})
     with pytest.raises(RuntimeError, match="missing required members"):
         check_archive(missing)
 
@@ -66,19 +76,6 @@ def test_sdist_rejects_missing_templates_and_local_runtime_config(tmp_path: Path
     _write_sdist(leaked, {"package-0/hybrid_sdlc.toml": b"local"})
     with pytest.raises(RuntimeError, match="local/development files"):
         check_archive(leaked)
-
-
-def test_sdist_rejects_template_bytes_that_differ_from_source(tmp_path: Path) -> None:
-    archive = tmp_path / "drifted.tar.gz"
-    _write_sdist(archive)
-    canonical = {
-        ".specify/memory/constitution.md": b"changed source constitution",
-        ".specify/templates/spec-template.md": b"spec",
-        ".specify/templates/plan-template.md": b"plan",
-        ".specify/templates/tasks-template.md": b"tasks",
-    }
-    with pytest.raises(RuntimeError, match="template bytes that differ from source"):
-        check_template_payloads(archive, canonical)
 
 
 def test_sdist_requires_standalone_aider_cache_bootstrap(tmp_path: Path) -> None:
@@ -106,6 +103,31 @@ def test_sdist_requires_and_checks_runtime_assets(tmp_path: Path) -> None:
     _write_sdist(missing, omit={"package-0/src/hybrid_sdlc/_runtime/strata/compose.yaml"})
     with pytest.raises(RuntimeError, match="missing required members"):
         check_archive(missing)
+
+
+@pytest.mark.parametrize("archive_kind", ["wheel", "sdist"])
+@pytest.mark.parametrize(
+    "legacy_member",
+    [
+        "package-0/.specify/templates/spec-template.md",
+        "package-0/src/hybrid_sdlc/_specify/templates/spec-template.md",
+        "package-0/src/hybrid_sdlc/spec_initializer.py",
+        "package-0/src/hybrid_sdlc/legacy_specify/initializer.py",
+    ],
+)
+def test_archives_reject_reintroduced_spec_kit_assets(
+    tmp_path: Path, archive_kind: str, legacy_member: str
+) -> None:
+    if archive_kind == "wheel":
+        archive = tmp_path / "package.whl"
+        member = legacy_member.removeprefix("package-0/")
+        _write_wheel(archive, {member: b"legacy"})
+    else:
+        archive = tmp_path / "package.tar.gz"
+        _write_sdist(archive, {legacy_member: b"legacy"})
+
+    with pytest.raises(RuntimeError, match="forbidden members|local/development files"):
+        check_archive(archive)
 
 
 def test_built_distributions_install_outside_source_tree() -> None:

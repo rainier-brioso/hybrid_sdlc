@@ -464,7 +464,13 @@ A task is complete when:
 
 ---
 
-## Phase 4 — Spec Kit Integration and Idempotent Initialization
+## Phase 4 — Historical Scaffolding (Spec Kit Work Superseded)
+
+HSDLC-046–050 record work completed at the time. The 2026-10-12 product decision
+supersedes that integration with HSDLC-071/072 below. Keep historical IDs and
+evidence; their deleted source paths describe the old implementation, not a
+current dependency. Existing user `.specify/`, journals and backups are not
+removed. HSDLC-045A remains a separate, open supported-host proof.
 
 - [ ] **HSDLC-045A — Verify MCP worker survival on a supported Windows host**
   Files: `tests/e2e/test_mcp_disconnect.py`, `docs/implementation_tasks.md`
@@ -518,7 +524,9 @@ A task is complete when:
   - Tests cover empty repositories, existing Spec Kit projects, customized templates, target errors, JSON output, and interrupted initialization.
   - A durable journal precedes template, backup, and manifest writes; reruns reconcile exact initializer bytes, preserve intervening user edits, and retain force backups.
   - Dry-run performs the same capability, path, and ownership preflight without writing destinations, journal, manifest, or backups.
-  - [Initialization instructions and recovery behavior](spec-kit.md) are documented.
+  - Initialization and recovery were documented; the current
+    [removal/migration guidance](planning.md#migrating-from-the-removed-initializer)
+    supersedes that guide.
 
 ---
 
@@ -1371,7 +1379,8 @@ A task is complete when:
   guides cover source/wheel installation, Python/tool environment boundaries,
   PATH/absolute executables, an ignored local-config disposable fixture,
   named profiles, sync/async polling and cancellation, private patch review,
-  optional host/Spec Kit/runtime setup, cleanup, upgrades and uninstall.
+  optional host/runtime setup, cleanup, upgrades and uninstall. Spec Kit setup
+  was superseded by the planning-foundation removal decision on 2026-10-12.
   README adds the controlled idle-cycle observations and current privacy/release
   limits; contributor setup agrees with the supported Python range.
   Examples were checked against this checkout's CLI help, rather than an older
@@ -1391,6 +1400,25 @@ A task is complete when:
   - A clean Windows environment and one clean POSIX environment install the package from the built artifact.
   - Each completes health check, fixture delegation, asynchronous reconnect, artifact cleanup, and uninstall.
 
+  Rehearsal preparation (2026-10-12), from merged PR #13: the
+  [operator protocol](release-rehearsal.md) and
+  [unexecuted record template](release-rehearsal-record.template.json) define
+  fresh Windows/POSIX client environments, identical hashed wheel installs,
+  installed-origin checks outside source, a shared committed fixture bundle,
+  independent real sync/async tasks, live-adapter disconnect/reconnect evidence,
+  known-artifact cleanup and scoped uninstall. Template phases remain `not_run`
+  and observations remain null; no rehearsal result is claimed. Restrictive
+  Windows refusal, early completion, missing continuity observations and test
+  instrumentation do not satisfy background-survival acceptance. Prerequisite
+  benchmark/release-profile gates HSDLC-065/068 remain open. No installation,
+  live model request, host registration, service change or cleanup was performed
+  by this preparation. Preparation validation: 37 local links resolved, template
+  and two MCP JSON examples parsed, four embedded Python snippets and eight CLI
+  examples parsed without invoking callbacks, and four repository-layout tests
+  passed. Independent review's installed-origin finding was repaired and
+  re-reviewed with no remaining actionable finding. HSDLC-069 and HSDLC-070
+  remain open.
+
 - [ ] **HSDLC-070 — Tag the first supported release**  
   Files: changelog and release metadata  
   Depends on: HSDLC-069  
@@ -1399,6 +1427,218 @@ A task is complete when:
   - Release notes distinguish verified behavior from experimental host capabilities and candidate hardware profiles.
 
 ---
+
+## Planning Foundation and Real-Task Validation
+
+Product decision (2026-10-12): apply the research to Hybrid SDLC before the
+Metria trial. These are bounded enhancements, not a new IDE, daemon or automatic
+shipping system. Fast and planned work share existing safety/execution rules.
+Tasks 071–074 are completed; 075–079 remain open until
+their own evidence exists. Existing benchmark/release gates are not waived.
+
+- [x] **HSDLC-071 — Remove Spec Kit coupling**
+  Files: CLI initializer/imports, package assets, packaging/layout/CLI tests,
+  installation and contributor docs.
+  Acceptance:
+  - Root `init`, capability probing, initializer code and toolkit templates are
+    absent; independent `runtime strata configure` and generic committed-spec
+    APIs remain.
+  - Existing user `.specify/`, specs, journals and backups remain unchanged;
+    invoking the removed command fails before probes or destination writes.
+  - Wheel/sdist/rebuilt-wheel checks reject removed assets while preserving
+    installed origin/help/command-surface and runtime-asset checks.
+  - Required formatting, lint, typing, tests/coverage and packaging gates pass;
+    supported-host limitations remain reported, never converted to passes.
+
+- [x] **HSDLC-072 — Publish lightweight planning and delegation rules**
+  Files: `docs/planning.md`, README, architecture/task plan, canonical delegation
+  skill and its shipped mirrors.
+  Depends on: HSDLC-071.
+  Acceptance:
+  - Fast = one contract; planned = dependencies plus contracts, with analyst
+    routing rationale and independent risk-based verification depth.
+  - Contracts name scope, exclusions, interfaces, observable acceptance,
+    baseline/prerequisites, named profile, limits and stop/handoff conditions.
+  - One committed contract per execution; task IDs are labels, not selectors.
+    Concise handoffs, prototype uncertainty, pause/pickup, retry escalation and
+    integration-baseline rules preserve user authority and current runner limits.
+  - Skill copies match and validate; references resolve. Guidance versus
+    enforcement, broken-baseline limitations and cost uncertainty are explicit.
+
+  Foundation evidence (2026-10-12), HSDLC-071/072: root initializer, capability
+  probe, source implementation and four toolkit-owned template assets removed;
+  no user repository planning files were deleted. Removed-command regressions
+  preserve existing user content without external probing. Windows/Python
+  3.12.14 full gate: 727 passed, 11 environment/opt-in skips, 83.07% coverage in
+  198.54 s. Formatting (102 files), lint and strict typing (25 source files) pass.
+  Isolated wheel, sdist and sdist-rebuilt wheel installation/origin/help/runtime
+  asset checks pass separately; ordinary pytest's unset packaging input skip
+  is not counted as that proof. All three skill copies validate and mirror tests
+  pass. Documentation checks resolve 65 local links and parse two TOML examples,
+  two Python blocks and 14 CLI examples without invoking callbacks. Read-only
+  skill scenarios exercised fast security work and planned cross-boundary work;
+  these are instruction checks, not a real-model quality/cost benchmark.
+  Independent review's incorrect runtime-command wording was fixed and
+  re-reviewed. No live inference, model lifecycle change, installed user CLI
+  upgrade, Metria app edit/install, commit or push was performed. Package/dev
+  validation uses temporary environments; no project dependency/lock changes.
+
+- [x] **HSDLC-073 — Define checked per-task execution policy**
+  Depends on: HSDLC-072.
+  Acceptance:
+  - Design a minimal versioned optional policy for intended paths/exclusions,
+    task identity and confirmed limits; no arbitrary Markdown instruction
+    extraction or replacement planning database. Settle the representation
+    before implementation and preserve legacy spec APIs deliberately.
+  - Reject malformed/ambiguous policy and contradictory overrides before job,
+    lease or worktree mutation; retain committed-contract/baseline provenance.
+  - Test boundary and compatibility behavior through CLI, sync MCP and async
+    submission. Define strict unknown-field/version and path-pattern semantics.
+
+  Implementation evidence (2026-10-14): the explicit optional
+  [JSON policy](task-policy.md) binds task/contract/profile identity, literal
+  intended/excluded paths and configured limit ceilings without changing
+  settings. Unknown fields/versions, duplicate keys, invalid types and ambiguous
+  paths fail closed. CLI/MCP preflight and the direct runner validate before
+  endpoint probing/reservation or worktree creation. Committed blob SHA-256
+  hashes and baseline provenance are persisted and rechecked by async workers
+  and against the isolated baseline. Legacy no-policy calls/records remain
+  supported. This does not enforce edit scope; HSDLC-074 remains open.
+
+  Required Windows/Python 3.12.14 gate: 863 passed, 11 environment/prerequisite
+  skips, 83.18% coverage in 165.87 s. Formatting (106 files), lint and strict
+  typing (26 source files) pass. Fresh wheel, sdist and rebuilt-wheel isolated
+  installation/import/help/runtime-asset checks pass separately from the
+  ordinary pytest packaging-input skip. Focused policy/ingress/model tests
+  passed 144 checks, including a synthetic isolated run, nested Windows policy
+  paths, deterministic CRLF normalization, Git index-flag tampering, async drift,
+  pre-side-effect rejection and legacy records. Independent review fixes bind
+  the actual configured profile and reject incomplete run provenance; final
+  review found no remaining actionable issue. Windows background survival,
+  symlink privileges and POSIX-only checks remain unverified where skipped.
+  Documentation checks resolve 72 local links and parse six TOML examples,
+  two Python blocks, three JSON examples and 15 CLI argument sets; the policy
+  example also validates against the implemented parser. Diff checks pass.
+  No live inference, installed user CLI upgrade, host/runtime configuration
+  change, Metria implementation, commit or push was performed.
+
+- [x] **HSDLC-074 — Enforce exported patch scope**
+  Depends on: HSDLC-073.
+  Acceptance:
+  - Check complete changed paths, including additions, deletions, rename sides,
+    binary files and non-ignored generated files against validated policy.
+  - Reject violations with structured failure before scoped commit/acceptance;
+    preserve inspectable candidate evidence without applying it to source.
+  - Tests prove prohibited changes are rejected, permitted changes work across
+    platforms and final revalidation catches post-test patch changes.
+  - Describe detection boundaries honestly: this is not prevention of arbitrary
+    test-process writes or an OS sandbox; context files are not the policy.
+
+  Implementation evidence (2026-10-15): scope is captured from the pinned,
+  hash-verified committed policy before repository commands run. The final
+  exported candidate is checked after tests, with additions/deletions, both
+  rename sides, binary changes and non-ignored generated files included.
+  Optional scoped commits independently check the exact staged tree under
+  the operation lock before creating a commit. Violations return
+  `TASK_SCOPE_VIOLATION` with saved private candidate/recovery artifacts and
+  a full exported-patch hash; late commit rejection refreshes the candidate.
+  Existing timeout/cancellation evidence is retained under the scope failure.
+  No-policy calls preserve legacy behavior; this is not an OS sandbox or
+  recorded review acceptance.
+
+  Full Windows/Python 3.12.14 gate: 890 passed, 11 environment/prerequisite
+  skips, 83.37% coverage in 188.27 s. Formatting (107 files), lint and strict
+  typing (26 source files) pass. Affected integration suites passed 70 tests
+  with four Windows symlink skips; 18 independent literal-scope boundary tests
+  pass. An additional late-commit runner regression passed separately after
+  the full run, without product-code changes. Fresh wheel, sdist and rebuilt-
+  wheel isolated installation checks pass separately from the ordinary opt-in
+  packaging skip. Documentation checks and diff checks pass. Independent
+  review found Git-config-dependent patch export; raw diff/textconv/color and
+  prefix settings are now explicit, with exact binary/Unicode patch-application
+  regression coverage. Final review found no remaining material issue.
+  Skipped Windows survival/symlink and POSIX-only behavior remains unverified
+  on this host. No live inference, installed tool update, runtime/host setting
+  change or Metria implementation was performed by this increment.
+
+- [ ] **HSDLC-075 — Persist exact-artifact review acceptance**
+  Depends on: HSDLC-074.
+  Acceptance:
+  - A versioned review record binds run ID, actual baseline, full patch digest,
+    independent test evidence, reviewer provenance and accepted/rejected/blocked
+    judgment. Execution success is not acceptance or integration.
+  - Validate evidence references and invalidate acceptance when patch/baseline
+    changes; no automatic merge or trusted self-report substituted for evidence.
+  - Preserve privacy, atomic writes, retention and legacy result compatibility;
+    test stale, forged/mismatched, missing and concurrent evidence handling.
+  - Same-model review is labeled accordingly; no deterministic-correctness claim.
+
+- [ ] **HSDLC-076 — Maintain a user-journey verification map**
+  Depends on: HSDLC-072.
+  Acceptance:
+  - Map public CLI/MCP operations to reproducible automated and installed/live
+    evidence, with platform prerequisites and explicit unverified journeys.
+  - Separate documentation drift, harness gaps and product regressions; never
+    weaken a failing journey to make documentation appear correct.
+  - Recurring mistakes gain behavior-level checks where possible. Long tasks
+    keep concise decisions/evidence/outcomes, not raw transcripts or private data.
+
+- [ ] **HSDLC-077 — Evaluate the workflow on Metria weight import**
+  Depends on: HSDLC-073, HSDLC-074, HSDLC-075, HSDLC-076.
+  Acceptance:
+  - Use Metria's separate feature worktree and committed one-task contracts,
+    approved offline test profile and integrated baselines. Reconcile concurrent
+    app work without overwriting it; resolve date-only storage design separately.
+  - Record all started runs/attempts, failures, retries, truncations, accepted
+    patches, review effort and end-to-end elapsed time. Token/cost observations
+    are actual or unavailable, never invented or implied by output caps.
+  - Keep task feasibility separate from matched workflow comparisons; comparative
+    savings need controlled repeated inputs and independent acceptance evidence.
+  - No model restart, app installation, member-record inspection or automatic
+    PR integration follows from the experiment. Physical app acceptance remains
+    separate and requires the appropriate authorization.
+
+- [ ] **HSDLC-078 — Specify optional local role profiles; validate after trial**
+  Depends on: HSDLC-072 for design; HSDLC-077 and D06 capability evidence for
+  recommendations or fully local role deployment.
+  Acceptance:
+  - Prepare the analyst/worker/reviewer configuration and handoff design now,
+    with explicit provider capabilities, context/output reserves and unsupported
+    role behavior. This design does not enable new roles or change live settings.
+  - Analyst/worker/reviewer settings have capability discovery, explicit model
+    and effective request limits; unsupported profiles fail without paid fallback.
+  - Host-native cheaper cloud-agent configuration remains separate and untouched.
+    One loaded local model and serialized fresh bounded sessions are initial defaults.
+  - Profile cost/quality is evaluated before recommending defaults. Enforced
+    read-only roles and endpoint-wide scheduling require D06 implementation;
+    persona text does not grant either capability.
+
+- [ ] **HSDLC-079 — Plan optional host-native subagent routing**
+  Depends on: HSDLC-072.
+  Acceptance:
+  - Inventory each supported host's actual subagent/model/reasoning/tool-limit
+    capabilities before specifying adapter configuration. Never imply that
+    an MCP server creates host agents or guarantees their lifecycle.
+  - Reuse existing user agents by default. Requested setup produces a separate
+    reviewable proposal; unrelated settings, manual overrides and concurrent
+    changes are preserved. No automatic user-level configuration rewrite.
+  - Route bounded research/review and opt-in implementation by capability and
+    risk, with one local worker as the initial default. Define task ownership,
+    concise context, limits, parent aggregation and cancellation behavior.
+  - Model IDs and effort levels are verified per host, not hardcoded globally;
+    unsupported mandatory capabilities fail clearly. Optional disclosed fallback
+    stays within user authority and never silently selects a paid provider.
+  - Separate host-agent cost controls from local endpoint limits. Record actual
+    role/model provenance and observed usage; fan-out is opt-in and bounded,
+    not inherited from pstack's panel defaults.
+  - Test routing/configuration proposal behavior without paid calls, overwrites
+    or live agent changes. A later real-task trial is separate acceptance.
+
+  Planning clarification (2026-10-12): HSDLC-078/079's design preparation starts
+  now. Local role implementation and recommended budgets still require D06 and
+  trial evidence. Existing configured host agents can support HSDLC-077 without
+  implementing setup automation first. No host settings or model service was
+  changed by this clarification.
 
 ## Deferred Work — Not Required for the Initial Release
 

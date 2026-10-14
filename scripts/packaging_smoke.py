@@ -12,12 +12,6 @@ import zipfile
 from pathlib import Path, PurePosixPath
 
 ROOT = Path(__file__).resolve().parents[1]
-TEMPLATES = (
-    ".specify/memory/constitution.md",
-    ".specify/templates/spec-template.md",
-    ".specify/templates/plan-template.md",
-    ".specify/templates/tasks-template.md",
-)
 RUNTIME_ASSETS = (
     "src/hybrid_sdlc/_runtime/strata/compose.yaml",
     "src/hybrid_sdlc/_runtime/strata/worker-defaults.json",
@@ -38,6 +32,9 @@ FORBIDDEN_PARTS = {
     "logs",
     "models",
     "tests",
+    "legacy_specify",
+    ".specify",
+    "_specify",
 }
 FORBIDDEN_SUFFIXES = {
     ".bin",
@@ -76,36 +73,6 @@ def archive_members(archive: Path) -> set[str]:
             return set(wheel.namelist())
     with tarfile.open(archive, "r:gz") as source:
         return {member.name for member in source.getmembers() if member.isfile()}
-
-
-def template_payloads(archive: Path) -> dict[str, bytes]:
-    if archive.suffix == ".whl":
-        with zipfile.ZipFile(archive) as source:
-            return {
-                name: source.read("hybrid_sdlc/_specify/" + name.removeprefix(".specify/"))
-                for name in TEMPLATES
-            }
-    with tarfile.open(archive, "r:gz") as source:
-        pyprojects = [name for name in archive_members(archive) if name.endswith("/pyproject.toml")]
-        if len(pyprojects) != 1:
-            raise RuntimeError(f"{archive.name} must contain one root pyproject.toml")
-        prefix = pyprojects[0].removesuffix("pyproject.toml")
-        payloads: dict[str, bytes] = {}
-        for name in TEMPLATES:
-            stream = source.extractfile(prefix + name)
-            if stream is None:
-                raise RuntimeError(f"{archive.name} is missing template {name}")
-            payloads[name] = stream.read()
-        return payloads
-
-
-def check_template_payloads(archive: Path, canonical: dict[str, bytes]) -> None:
-    payloads = template_payloads(archive)
-    mismatched = [name for name in TEMPLATES if payloads[name] != canonical[name]]
-    if mismatched:
-        raise RuntimeError(
-            f"{archive.name} has template bytes that differ from source: {mismatched}"
-        )
 
 
 def runtime_asset_payloads(archive: Path) -> dict[str, bytes]:
@@ -150,12 +117,11 @@ def check_archive(archive: Path) -> None:
     strings = {name.as_posix() for name in names}
     if archive.suffix == ".whl":
         required = {"hybrid_sdlc/_aider_cache_bootstrap.py"}
-        required |= {"hybrid_sdlc/_specify/" + name.removeprefix(".specify/") for name in TEMPLATES}
         required |= {
             "hybrid_sdlc/_runtime/strata/" + PurePosixPath(name).name for name in RUNTIME_ASSETS
         }
     else:
-        required = set(TEMPLATES) | {
+        required = {
             "pyproject.toml",
             "README.md",
             "src/hybrid_sdlc/__init__.py",
@@ -168,7 +134,11 @@ def check_archive(archive: Path) -> None:
     forbidden: list[str] = []
     for name in names:
         filename = name.name.lower()
-        if set(name.parts) & FORBIDDEN_PARTS or name.suffix.lower() in FORBIDDEN_SUFFIXES:
+        if (
+            set(name.parts) & FORBIDDEN_PARTS
+            or filename == "spec_initializer.py"
+            or name.suffix.lower() in FORBIDDEN_SUFFIXES
+        ):
             forbidden.append(name.as_posix())
         elif filename in {"hybrid_sdlc.toml", ".env", ".coverage"}:
             forbidden.append(name.as_posix())
@@ -229,8 +199,6 @@ def smoke_install(
     python_version: str,
     root: Path,
     env: dict[str, str],
-    git_dir: str,
-    expected_templates: dict[str, bytes],
 ) -> None:
     venv = root / f"venv-{label}"
     run([uv, "venv", "--python", python_version, str(venv)], cwd=root, env=env)
@@ -244,7 +212,7 @@ def smoke_install(
         raise RuntimeError(f"Missing installed CLI: {console}")
 
     command_env = env.copy()
-    path = [str(scripts), git_dir]
+    path = [str(scripts)]
     if os.name == "nt":
         path.extend([os.environ.get("SYSTEMROOT", "C:\\Windows")])
     else:
@@ -262,37 +230,19 @@ def smoke_install(
     )
     run([str(console), "--help"], cwd=root, env=command_env)
     run([str(python), "-I", "-m", "hybrid_sdlc", "--help"], cwd=root, env=command_env)
-
-    git = shutil.which("git")
-    if git is None:
-        raise RuntimeError("git is required for the initializer smoke")
-    target = root / f"init-{label}"
-    target.mkdir()
-    run([git, "init", "--quiet", str(target)], cwd=root, env=command_env)
-    init_check = (
-        "from unittest.mock import patch; from click.testing import CliRunner; "
-        "from hybrid_sdlc.cli import cli; "
-        "from hybrid_sdlc.spec_initializer import SpecKitCapability; "
-        "cap=SpecKitCapability('packaging-smoke','0',(),True,''); "
-        "runner=CliRunner(); "
-        "patcher=patch('hybrid_sdlc.spec_initializer.detect_spec_kit',return_value=cap); "
-        "patcher.start(); "
-        "result=runner.invoke(cli,['init','--target-dir',__import__('sys').argv[1],'--json']); "
-        "patcher.stop(); "
-        "assert result.exit_code==0,(result.output,result.exception); print(result.output)"
+    command_check = (
+        "from click.testing import CliRunner; from hybrid_sdlc.cli import cli; "
+        "runner=CliRunner(); result=runner.invoke(cli,['--help']); "
+        "assert result.exit_code==0,(result.output,result.exception); "
+        "expected=('check','run-task','submit','status','cancel','clean','mcp','setup','runtime'); "
+        "assert all(name in result.output for name in expected),result.output; "
+        "assert 'init' not in result.output,result.output; "
+        "runtime=runner.invoke(cli,['runtime','--help']); "
+        "assert runtime.exit_code==0,(runtime.output,runtime.exception); "
+        "assert 'strata' in runtime.output,runtime.output; print(result.output)"
     )
-    run([str(python), "-I", "-c", init_check, str(target)], cwd=root, env=command_env)
-    missing = [name for name in TEMPLATES if not (target / name).is_file()]
-    if missing:
-        raise RuntimeError(f"Installed CLI failed to initialize templates: {missing}")
-    incorrect = [
-        name
-        for name, contents in expected_templates.items()
-        if (target / name).read_bytes() != contents
-    ]
-    if incorrect:
-        raise RuntimeError(f"Installed CLI produced incorrect template contents: {incorrect}")
-    print(f"PASS {label}: help commands and packaged template initialization")
+    run([str(python), "-I", "-c", command_check], cwd=root, env=command_env)
+    print(f"PASS {label}: installed CLI imports and command help")
 
 
 def main() -> int:
@@ -310,15 +260,9 @@ def main() -> int:
     wheel, sdist = wheels[0], sdists[0]
     check_archive(wheel)
     check_archive(sdist)
-    canonical = {name: (ROOT / name).read_bytes() for name in TEMPLATES}
     runtime_assets = {name: (ROOT / name).read_bytes() for name in RUNTIME_ASSETS}
-    check_template_payloads(wheel, canonical)
-    check_template_payloads(sdist, canonical)
     check_runtime_asset_payloads(wheel, runtime_assets)
     check_runtime_asset_payloads(sdist, runtime_assets)
-    git = shutil.which("git")
-    if not git:
-        raise RuntimeError("git is required for the initializer smoke")
 
     with tempfile.TemporaryDirectory(prefix="hybrid-sdlc-packaging-") as temporary:
         root = Path(temporary)
@@ -330,8 +274,6 @@ def main() -> int:
             args.python_version,
             root,
             env,
-            str(Path(git).parent),
-            canonical,
         )
         smoke_install(
             sdist,
@@ -340,8 +282,6 @@ def main() -> int:
             args.python_version,
             root,
             env,
-            str(Path(git).parent),
-            canonical,
         )
         extracted = root / "sdist-source"
         extracted.mkdir()
@@ -355,7 +295,6 @@ def main() -> int:
         if len(rebuilt_wheels) != 1:
             raise RuntimeError("sdist rebuild did not produce exactly one wheel")
         check_archive(rebuilt_wheels[0])
-        check_template_payloads(rebuilt_wheels[0], canonical)
         check_runtime_asset_payloads(rebuilt_wheels[0], runtime_assets)
         smoke_install(
             rebuilt_wheels[0],
@@ -364,8 +303,6 @@ def main() -> int:
             args.python_version,
             root,
             env,
-            str(Path(git).parent),
-            canonical,
         )
     return 0
 

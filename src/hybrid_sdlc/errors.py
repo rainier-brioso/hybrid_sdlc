@@ -88,6 +88,12 @@ class CommandPolicyError(SecurityBoundaryError):
     """Test command profile or argument violates security policy."""
 
     default_code = "COMMAND_POLICY_VIOLATION"
+
+
+class TaskScopeViolationError(RepositoryError):
+    """A policy-aware task changed paths outside its declared scope."""
+
+    default_code = "TASK_SCOPE_VIOLATION"
     default_exit_code = ExitCode.POLICY_ERROR
 
 

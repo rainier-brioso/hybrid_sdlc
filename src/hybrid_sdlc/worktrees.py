@@ -493,7 +493,18 @@ def export_worktree_result(
                     raise RepositoryError("Commit does not have a scoped task ID subject")
                 commit_hash = head
 
-            tracked = git_bytes("diff", "--binary", record.baseline_commit, "--", ".").stdout
+            tracked = git_bytes(
+                "diff",
+                "--binary",
+                "--no-ext-diff",
+                "--no-textconv",
+                "--no-color",
+                "--src-prefix=a/",
+                "--dst-prefix=b/",
+                record.baseline_commit,
+                "--",
+                ".",
+            ).stdout
             untracked_listing = git_bytes("ls-files", "--others", "--exclude-standard", "-z").stdout
             untracked_paths = tuple(
                 sorted(os.fsdecode(raw) for raw in untracked_listing.split(b"\0") if raw)
@@ -523,6 +534,11 @@ def export_worktree_result(
                             "diff",
                             "--no-index",
                             "--binary",
+                            "--no-ext-diff",
+                            "--no-textconv",
+                            "--no-color",
+                            "--src-prefix=a/",
+                            "--dst-prefix=b/",
                             "--",
                             "/dev/null",
                             relative.as_posix(),
@@ -538,7 +554,11 @@ def export_worktree_result(
                         )
                     untracked_patches.append(result.stdout)
 
-            name_result = git_bytes("diff", "--name-only", "-z", record.baseline_commit)
+            # Disable rename pairing so a rename contributes both its deleted
+            # source and added destination to policy scope checks.
+            name_result = git_bytes(
+                "diff", "--no-renames", "--name-only", "-z", record.baseline_commit
+            )
             changed = {os.fsdecode(raw) for raw in name_result.stdout.split(b"\0") if raw}
             changed.update(untracked_paths)
 

@@ -27,6 +27,8 @@ from hybrid_sdlc.processes import ProcessIdentity, get_process_identity
 
 _JOB_ID_PATTERN = re.compile(r"^job_\d{8}T\d{12}Z_[0-9a-f]{8}$")
 _FAILURE_REASON_PATTERN = re.compile(r"^[a-z][a-z0-9_]*$")
+_SHA256_PATTERN = re.compile(r"^[0-9a-f]{64}$")
+_COMMIT_PATTERN = re.compile(r"^(?:[0-9a-f]{40}|[0-9a-f]{64})$")
 
 
 class JobStatus(StrEnum):
@@ -76,6 +78,10 @@ class JobRecord(BaseModel):
     schema_version: str = SCHEMA_VERSION
     job_id: str
     spec_path: str
+    policy_path: str | None = None
+    policy_sha256: str | None = None
+    spec_sha256: str | None = None
+    policy_baseline_commit: str | None = None
     task_id: str
     test_profile: str | None = None
     host_url: str | None = None
@@ -105,6 +111,21 @@ class JobRecord(BaseModel):
     @model_validator(mode="after")
     def validate_record(self) -> JobRecord:
         validate_job_id(self.job_id)
+        provenance = (
+            self.policy_path,
+            self.policy_sha256,
+            self.spec_sha256,
+            self.policy_baseline_commit,
+        )
+        if any(value is not None for value in provenance):
+            if any(value is None for value in provenance):
+                raise ValueError("Task policy provenance fields must be present together")
+            if not self.policy_path or _SHA256_PATTERN.fullmatch(self.policy_sha256 or "") is None:
+                raise ValueError("Invalid task policy provenance hashes")
+            if _SHA256_PATTERN.fullmatch(self.spec_sha256 or "") is None:
+                raise ValueError("Invalid task contract provenance hash")
+            if _COMMIT_PATTERN.fullmatch(self.policy_baseline_commit or "") is None:
+                raise ValueError("Invalid task policy baseline commit")
         if self.status is JobStatus.FAILED:
             if (
                 self.failure_reason is None
@@ -150,6 +171,10 @@ class JobManager:
         host_url: str | None = None,
         model: str | None = None,
         max_retries: int | None = None,
+        policy_path: str | None = None,
+        policy_sha256: str | None = None,
+        spec_sha256: str | None = None,
+        policy_baseline_commit: str | None = None,
         job_id: str | None = None,
     ) -> JobRecord:
         """Persist a queued job, retrying if an ID already exists."""
@@ -173,6 +198,10 @@ class JobManager:
                     host_url=host_url,
                     model=model,
                     max_retries=max_retries,
+                    policy_path=policy_path,
+                    policy_sha256=policy_sha256,
+                    spec_sha256=spec_sha256,
+                    policy_baseline_commit=policy_baseline_commit,
                     created_at=now,
                     updated_at=now,
                 )

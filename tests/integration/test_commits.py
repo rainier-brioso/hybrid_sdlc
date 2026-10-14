@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import os
 import subprocess
 from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
@@ -53,6 +54,7 @@ def _commit(
     commit_requested: bool = True,
     tests_passed: bool = True,
     policy_passed: bool = True,
+    task_scope: object | None = None,
 ) -> str | None:
     from hybrid_sdlc.git_tools import create_scoped_commit
 
@@ -63,6 +65,7 @@ def _commit(
         commit_requested=commit_requested,
         tests_passed=tests_passed,
         policy_passed=policy_passed,
+        task_scope=task_scope,  # type: ignore[arg-type]
     )
 
 
@@ -212,6 +215,122 @@ def test_staged_gitlink_is_rejected_without_committing(
     with pytest.raises(RepositoryError, match="submodules"):
         _commit(record)
     assert _git(record.path, "rev-parse", "HEAD") == record.baseline_commit
+    assert _git(repo, "rev-parse", "HEAD") == record.baseline_commit
+
+
+def test_task_scope_checks_both_rename_sides_and_preserves_candidate(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from hybrid_sdlc.errors import TaskScopeViolationError
+    from hybrid_sdlc.task_policy import TaskScope
+
+    repo, record = _create_isolated(tmp_path, monkeypatch)
+    destination = "notes/résumé draft.bin"
+    (record.path / "README.md").unlink()
+    target = record.path / destination
+    target.parent.mkdir()
+    target.write_bytes(b"\x00\x01new binary result\xff")
+    scope = TaskScope(
+        intended_paths=frozenset({"allowed.py"}),
+        excluded_paths=frozenset({"README.md"}),
+    )
+
+    with pytest.raises(TaskScopeViolationError) as caught:
+        _commit(record, task_scope=scope)
+
+    assert caught.value.details["violations"] == [
+        {"path": "README.md", "reason": "excluded"},
+        {"path": destination, "reason": "not_intended"},
+    ]
+    assert _git(record.path, "rev-parse", "HEAD") == record.baseline_commit
+    assert _git(record.path, "diff", "--cached") == ""
+    assert not (record.path / "README.md").exists()
+    assert target.read_bytes() == b"\x00\x01new binary result\xff"
+    assert _git(repo, "rev-parse", "HEAD") == record.baseline_commit
+
+
+def test_task_scope_allows_unicode_filename_and_scoped_commit(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from hybrid_sdlc.task_policy import TaskScope
+
+    repo, record = _create_isolated(tmp_path, monkeypatch)
+    destination = "notes/résumé draft.bin"
+    (record.path / "README.md").unlink()
+    target = record.path / destination
+    target.parent.mkdir()
+    target.write_bytes(b"\x00\x01new binary result\xff")
+    scope = TaskScope(
+        intended_paths=frozenset({"README.md", destination}),
+        excluded_paths=frozenset(),
+    )
+
+    commit = _commit(record, task_scope=scope)
+
+    assert commit is not None
+    names = subprocess.run(
+        [
+            "git",
+            "-C",
+            str(record.path),
+            "diff-tree",
+            "--no-commit-id",
+            "-r",
+            "--no-renames",
+            "--name-only",
+            "-z",
+            "HEAD^",
+            "HEAD",
+        ],
+        capture_output=True,
+        check=True,
+    ).stdout.split(b"\0")
+    assert {os.fsdecode(path) for path in names if path} == {"README.md", destination}
+    assert _git(repo, "rev-parse", "HEAD") == record.baseline_commit
+
+
+def test_task_scope_revalidates_exact_tree_before_commit_tree(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from hybrid_sdlc import git_tools
+    from hybrid_sdlc.errors import TaskScopeViolationError
+    from hybrid_sdlc.task_policy import TaskScope
+
+    repo, record = _create_isolated(tmp_path, monkeypatch)
+    (record.path / "README.md").write_text("permitted result\n", encoding="utf-8")
+    scope = TaskScope(
+        intended_paths=frozenset({"README.md"}),
+        excluded_paths=frozenset(),
+    )
+    original_run = git_tools.subprocess.run
+    commands: list[list[str]] = []
+
+    def insert_unlisted_before_tree(command: list[str], *args: object, **kwargs: object) -> object:
+        commands.append(command)
+        if command[:3] == ["git", "-C", str(record.path)] and command[3:4] == ["write-tree"]:
+            surprise = record.path / "late staged.txt"
+            surprise.write_text("unlisted staged content\n", encoding="utf-8")
+            original_run(
+                ["git", "-C", str(record.path), "add", "--", "late staged.txt"],
+                capture_output=True,
+                check=True,
+            )
+        return original_run(command, *args, **kwargs)
+
+    monkeypatch.setattr(git_tools.subprocess, "run", insert_unlisted_before_tree)
+
+    with pytest.raises(TaskScopeViolationError, match="outside its declared scope") as caught:
+        _commit(record, task_scope=scope)
+
+    assert caught.value.details["violations"] == [
+        {"path": "late staged.txt", "reason": "not_intended"}
+    ]
+    assert not any(command[3:4] == ["commit-tree"] for command in commands)
+    assert _git(record.path, "rev-parse", "HEAD") == record.baseline_commit
+    assert _git(record.path, "diff", "--cached") == ""
+    assert (record.path / "late staged.txt").read_text(encoding="utf-8") == (
+        "unlisted staged content\n"
+    )
     assert _git(repo, "rev-parse", "HEAD") == record.baseline_commit
 
 

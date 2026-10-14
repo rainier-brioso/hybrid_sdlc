@@ -79,10 +79,17 @@ def test_export_worktree_result_writes_exact_patch_without_changing_index_or_sou
     from hybrid_sdlc import worktrees
 
     repo = _create_repo(tmp_path)
+    (repo / ".gitattributes").write_text("README.md diff=fixture\n", encoding="utf-8")
+    _git(repo, "add", ".gitattributes")
+    _git(repo, "commit", "-m", "Configure fixture text conversion")
+    _git(repo, "config", "diff.fixture.textconv", "missing-fixture-textconv-command")
     temp_root = tmp_path / "external"
     temp_root.mkdir()
     monkeypatch.setattr(worktrees.tempfile, "gettempdir", lambda: str(temp_root))
     record = worktrees.create_worktree(repo, worktree_id="result-export")
+    _git(record.path, "config", "diff.noprefix", "true")
+    _git(record.path, "config", "color.ui", "always")
+    _git(record.path, "config", "diff.external", "missing-fixture-external-diff-command")
 
     (repo / "README.md").write_text("source checkout change\n", encoding="utf-8")
     (repo / "source-untracked.txt").write_text("keep this file\n", encoding="utf-8")
@@ -90,10 +97,20 @@ def test_export_worktree_result_writes_exact_patch_without_changing_index_or_sou
     _git(record.path, "add", "README.md")
     (record.path / "README.md").write_text("tracked final bytes\n", encoding="utf-8")
     (record.path / "space and café.txt").write_bytes(b"new file\x00with binary bytes\xff\n")
-    index_before = _git(record.path, "diff", "--cached", "--binary")
+    stable_diff_args = [
+        "diff",
+        "--cached",
+        "--binary",
+        "--no-ext-diff",
+        "--no-textconv",
+        "--no-color",
+        "--src-prefix=a/",
+        "--dst-prefix=b/",
+    ]
+    index_before = _git(record.path, *stable_diff_args)
     source_before = _checkout_snapshot(repo)
     source_head_before = _git(repo, "rev-parse", "HEAD")
-    source_index_before = _git(repo, "diff", "--cached", "--binary")
+    source_index_before = _git(repo, *stable_diff_args)
 
     result = worktrees.export_worktree_result(record)
 
@@ -104,10 +121,10 @@ def test_export_worktree_result_writes_exact_patch_without_changing_index_or_sou
     assert result.patch_path.is_file()
     patch_bytes = result.patch_path.read_bytes()
     assert b"GIT binary patch" in patch_bytes
-    assert _git(record.path, "diff", "--cached", "--binary") == index_before
+    assert _git(record.path, *stable_diff_args) == index_before
     assert _checkout_snapshot(repo) == source_before
     assert _git(repo, "rev-parse", "HEAD") == source_head_before
-    assert _git(repo, "diff", "--cached", "--binary") == source_index_before
+    assert _git(repo, *stable_diff_args) == source_index_before
 
     target = tmp_path / "patch target"
     _git(repo, "worktree", "add", "--detach", str(target), record.baseline_commit)

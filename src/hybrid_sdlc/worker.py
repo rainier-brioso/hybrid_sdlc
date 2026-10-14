@@ -19,6 +19,7 @@ from hybrid_sdlc.processes import get_process_identity
 from hybrid_sdlc.runtime_strata import release_async_task
 from hybrid_sdlc.security import verify_repo_root
 from hybrid_sdlc.server_probe import select_active_endpoint
+from hybrid_sdlc.task_policy import PolicyProvenance, PolicyRunOptions, validate_task_policy
 
 
 class WorkerClaimError(RuntimeError):
@@ -59,11 +60,36 @@ def _execute(
         raise ValueError(f"Test profile '{job.test_profile}' is not configured")
     executable = resolve_profile_executable(profile, manager.repo_root)
     model = job.model or config.selected_model
+    provenance = None
+    if job.policy_path is not None:
+        provenance = PolicyProvenance(
+            policy_path=job.policy_path,
+            policy_sha256=job.policy_sha256 or "",
+            spec_sha256=job.spec_sha256 or "",
+            baseline_commit=job.policy_baseline_commit or "",
+        )
+        validate_task_policy(
+            repo_root=manager.repo_root,
+            policy_path=job.policy_path,
+            spec_path=job.spec_path,
+            task_id=job.task_id,
+            test_profile=job.test_profile,
+            max_retries=job.max_retries or config.max_retries,
+            config=config,
+            expected=provenance,
+        )
     candidate, _ = select_active_endpoint(
         candidates=config.server_candidates,
         explicit_url=job.host_url,
         required_model=model,
     )
+    options: PolicyRunOptions = {}
+    if provenance is not None:
+        options = {
+            "policy_path": provenance.policy_path,
+            "policy_provenance": provenance,
+            "test_profile": job.test_profile,
+        }
     return run_bounded_loop(
         repo_root=manager.repo_root,
         spec_path=job.spec_path,
@@ -83,6 +109,7 @@ def _execute(
         aider_max_tokens=config.aider_max_tokens,
         aider_reasoning_budget_tokens=config.aider_reasoning_budget_tokens,
         aider_python=config.aider_python,
+        **options,
     )
 
 
