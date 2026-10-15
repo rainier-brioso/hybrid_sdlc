@@ -11,6 +11,9 @@ distinguishes fast modifications from dependent changes, with concise committed
 task contracts and risk-based review. No Spec Kit installation is required.
 Optional committed [task policies](docs/task-policy.md) check identity and limit
 ceilings, then reject out-of-scope exported patches before scoped commits.
+Explicit [review records](docs/review-acceptance.md) bind a decision to the exact
+patch and baseline, with independently executed named-profile tests. Acceptance
+does not apply the patch, create a commit, or merge it.
 
 ## Install and configure
 

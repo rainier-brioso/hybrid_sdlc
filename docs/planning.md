@@ -76,6 +76,9 @@ initially; repository locks do not prove endpoint-wide GPU scheduling.
 
 Review identity includes run ID, source baseline, complete patch digest, test
 evidence and reviewer provenance. A changed patch requires renewed acceptance.
+Use the CLI [review workflow](review-acceptance.md) to persist that decision;
+execution tools do not automatically record acceptance. Its independent test
+run checks the candidate in a fresh checkout, without applying it to the source.
 Preserve distinct states: execution succeeded, reviewed/accepted, integrated,
 and physically or operationally verified. A same-model persona review is not
 independent model evidence; deterministic checks remain essential.
@@ -130,10 +133,10 @@ identity, committed provenance and configured limit ceilings. Its literal path
 lists are checked after tests against the complete exported candidate and
 before an optional scoped commit. Changes outside those lists fail with saved
 candidate evidence. Markdown-only scope and role labels remain instructions,
-not enforced capabilities. No structured acceptance ledger or enforced analyst/
-reviewer capability mode exists yet. See the implementation tasks before
-claiming those planned protections are available. Export checks do not prevent
-arbitrary repository-command writes or provide an OS sandbox.
+not enforced capabilities. Exact-artifact review records are explicit CLI
+operations; no enforced analyst/reviewer capability mode exists yet. See the
+implementation tasks before claiming planned protections are available. Export
+checks do not prevent arbitrary repository-command writes or provide an OS sandbox.
 
 ## Improve from evidence
 

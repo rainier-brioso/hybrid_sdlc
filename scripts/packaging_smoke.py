@@ -219,9 +219,9 @@ def smoke_install(
         path.extend(["/usr/bin", "/bin"])
     command_env["PATH"] = os.pathsep.join(path)
     check_origin = (
-        "import pathlib,sys,hybrid_sdlc,hybrid_sdlc.mcp_server,hybrid_sdlc.probe_worker,hybrid_sdlc.timeout_diagnostics; "
+        "import pathlib,sys,hybrid_sdlc,hybrid_sdlc.mcp_server,hybrid_sdlc.probe_worker,hybrid_sdlc.timeout_diagnostics,hybrid_sdlc.review; "
         "v=pathlib.Path(sys.argv[1]).resolve(); "
-        "modules=(hybrid_sdlc,hybrid_sdlc.mcp_server,hybrid_sdlc.probe_worker,hybrid_sdlc.timeout_diagnostics); "
+        "modules=(hybrid_sdlc,hybrid_sdlc.mcp_server,hybrid_sdlc.probe_worker,hybrid_sdlc.timeout_diagnostics,hybrid_sdlc.review); "
         "paths=[pathlib.Path(m.__file__).resolve() for m in modules]; "
         "assert all(p.is_relative_to(v) for p in paths), paths; print(paths)"
     )
@@ -234,12 +234,18 @@ def smoke_install(
         "from click.testing import CliRunner; from hybrid_sdlc.cli import cli; "
         "runner=CliRunner(); result=runner.invoke(cli,['--help']); "
         "assert result.exit_code==0,(result.output,result.exception); "
-        "expected=('check','run-task','submit','status','cancel','clean','mcp','setup','runtime'); "
+        "expected=('check','run-task','submit','status','cancel','clean','mcp','setup','runtime','review'); "
         "assert all(name in result.output for name in expected),result.output; "
         "assert 'init' not in result.output,result.output; "
         "runtime=runner.invoke(cli,['runtime','--help']); "
         "assert runtime.exit_code==0,(runtime.output,runtime.exception); "
-        "assert 'strata' in runtime.output,runtime.output; print(result.output)"
+        "assert 'strata' in runtime.output,runtime.output; "
+        "review=runner.invoke(cli,['review','--help']); "
+        "assert review.exit_code==0,(review.output,review.exception); "
+        "assert all(name in review.output for name in ('record','status')),review.output; "
+        "record=runner.invoke(cli,['review','record','--help']); "
+        "assert record.exit_code==0,(record.output,record.exception); "
+        "assert '--expected-patch-sha256' in record.output,record.output; print(result.output)"
     )
     run([str(python), "-I", "-c", command_check], cwd=root, env=command_env)
     print(f"PASS {label}: installed CLI imports and command help")

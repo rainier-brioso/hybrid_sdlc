@@ -130,6 +130,7 @@ Advisory locks coordinate toolkit operations, not arbitrary concurrent writers;
 these checks are not an OS sandbox or protection against hostile same-user races.
 
 Passing scope and tests is execution evidence, not recorded independent review,
-product acceptance or integration. HSDLC-075 adds the exact-artifact review
-record; a policy-aware successful run is not automatically accepted or merged.
+product acceptance or integration. The explicit [review workflow](review-acceptance.md)
+records a decision and rechecks the pinned scope when verifying acceptance;
+a policy-aware successful run is not automatically accepted or merged.
 Historical run records are not retroactively scope-checked by an upgrade.

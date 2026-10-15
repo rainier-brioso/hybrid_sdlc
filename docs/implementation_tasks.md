@@ -1561,7 +1561,7 @@ their own evidence exists. Existing benchmark/release gates are not waived.
   on this host. No live inference, installed tool update, runtime/host setting
   change or Metria implementation was performed by this increment.
 
-- [ ] **HSDLC-075 — Persist exact-artifact review acceptance**
+- [x] **HSDLC-075 — Persist exact-artifact review acceptance**
   Depends on: HSDLC-074.
   Acceptance:
   - A versioned review record binds run ID, actual baseline, full patch digest,
@@ -1572,6 +1572,23 @@ their own evidence exists. Existing benchmark/release gates are not waived.
   - Preserve privacy, atomic writes, retention and legacy result compatibility;
     test stale, forged/mismatched, missing and concurrent evidence handling.
   - Same-model review is labeled accordingly; no deterministic-correctness claim.
+  - Implemented (2026-10-15): explicit CLI `review record` / `review status`,
+    strict versioned decisions and separately hashed controller test receipts,
+    full raw-patch/run-record identities, fresh baseline replay, pinned-scope
+    recheck, source-preserving verification, revision CAS and retention-aware
+    locking. Missing or changed references cannot authorize acceptance. Optional
+    worker-model provenance preserves legacy results; reviewer identity remains
+    a claim. MCP execution schemas and integration behavior are unchanged.
+    See [review workflow and trust boundary](review-acceptance.md).
+  - Validation: independent worker/reviewer passes; Windows/Python 3.12 full
+    suite 969 passed / 11 skipped, 82.93% coverage with branch measurement enabled.
+    All 78 review-specific schema/replay/CLI/boundary cases passed, including
+    cleanup, pinned scope and metadata privacy. Ruff, formatting, strict mypy
+    (27 source files), documentation
+    examples/links, and isolated wheel/sdist/rebuilt-wheel CLI smoke passed.
+    Skipped host-dependent Windows Job Object, symlink and POSIX-permission
+    cases remain unverified here; the opt-in packaging skip was covered by the
+    separate distribution smoke. No live model call or source integration.
 
 - [ ] **HSDLC-076 — Maintain a user-journey verification map**
   Depends on: HSDLC-072.
