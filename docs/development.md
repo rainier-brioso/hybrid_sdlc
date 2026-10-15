@@ -153,6 +153,23 @@ Bind the stable aggregate check `CI / Required` to the protected-branch ruleset.
 The underlying quality and compatibility jobs are implementation details
 and should not be referenced individually.
 
+### User-journey evidence maintenance
+
+Update the [verification map](verification-map.md) and its checked JSON manifest
+when changing a public CLI command, MCP tool or supporting test/protocol. The
+guard in `tests/host_contracts/test_verification_map.py` compares current public
+surfaces and resolves exact test/file references without executing manifest
+entries. Run it with `uv run pytest -q tests/host_contracts/test_verification_map.py`;
+the ordinary full suite and unchanged `CI / Required` also include it.
+
+Keep documentation drift, missing harness evidence and product regressions
+separate. Fix supported failing behavior rather than weakening its criterion.
+Mock/fixture results, distribution help checks, historical live observations
+and clean-client/host proofs are different tiers; inventory coverage is not
+behavioral coverage. Refresh actual outcomes only after running the relevant
+checks, retaining skips and prerequisites. Long-task checkpoints contain concise
+decisions and artifact identities, not raw logs, prompts or private data.
+
 ## Protected `main` Workflow
 
 Direct development on `main` is disabled. Start each phase or focused task from an up-to-date

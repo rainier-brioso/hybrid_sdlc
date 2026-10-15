@@ -1590,7 +1590,7 @@ their own evidence exists. Existing benchmark/release gates are not waived.
     cases remain unverified here; the opt-in packaging skip was covered by the
     separate distribution smoke. No live model call or source integration.
 
-- [ ] **HSDLC-076 — Maintain a user-journey verification map**
+- [x] **HSDLC-076 — Maintain a user-journey verification map**
   Depends on: HSDLC-072.
   Acceptance:
   - Map public CLI/MCP operations to reproducible automated and installed/live
@@ -1599,6 +1599,40 @@ their own evidence exists. Existing benchmark/release gates are not waived.
     weaken a failing journey to make documentation appear correct.
   - Recurring mistakes gain behavior-level checks where possible. Long tasks
     keep concise decisions/evidence/outcomes, not raw transcripts or private data.
+  - Implemented (2026-10-15): [verification map](verification-map.md) and checked
+    JSON manifest cover 18 public Click leaves, 5 MCP tools and help/version
+    metadata in nine journeys. Drift guards validate current inventories, exact
+    top-level test references, confined protocol/evidence paths, dated historical
+    artifacts and explicit prerequisites/limitations. No hidden worker command
+    is invented; the visible `worker` CLI is included. Fixture behavior,
+    installed help, historical live observations and missing clean-client/host
+    proof remain distinct; the guard itself makes no execution/pass claim.
+  - Added direct real-Git `review record` CLI success/structured-error coverage
+    and an interpreter-resolution regression. Corrected installation/rehearsal
+    guidance: external test executables use trusted PATH resolution, not literal
+    external absolute argv paths; absolute `aider_python` remains separate.
+    POSIX venv symlink resolution is an explicit runtime-selection limitation.
+  - Validation: explorer/worker plus independent read-only review; 984 passed /
+    11 skipped, 83.04% coverage on Windows/Python 3.12. Ruff format/lint, strict
+    mypy (27 source files), offline documentation examples/links and diff checks
+    passed. Windows Job Object/symlink and POSIX-permission skips remain
+    unverified; the opt-in distribution install was not rerun in this slice.
+    Production behavior and CI requirements are unchanged. No live inference,
+    Docker/host operation, clean-machine rehearsal or Metria change was made.
+  - CI follow-up (2026-10-16): the [initial macOS run](https://github.com/rainier-brioso/hybrid_sdlc/actions/runs/38813140551)
+    observed no health GET in the one-second slow-drip test window, consistent
+    with cold worker startup consuming its deadline. The fixture now uses a
+    three-second configured probe deadline and requires both GETs, a partial
+    body, the path-specific timeout code, and client disconnect before the
+    twenty-second response completes. Total diagnostic time remains bounded;
+    production timeout/startup semantics and CI gates are unchanged. A separate
+    regression checks exact process/request timeout forwarding. The map links
+    both tests and distinguishes loopback HTTP evidence from real Strata.
+    Local follow-up validation: 985 passed / 11 existing environment/opt-in
+    skips, 83.04% coverage; repeated slow-drip variants, affected integration and
+    worker-unit modules, formatting/lint, strict mypy and documentation/diff
+    checks passed. Independent review found no material issue. Hosted macOS
+    confirmation requires the new CI run, not the Windows rerun.
 
 - [ ] **HSDLC-077 — Evaluate the workflow on Metria weight import**
   Depends on: HSDLC-073, HSDLC-074, HSDLC-075, HSDLC-076.

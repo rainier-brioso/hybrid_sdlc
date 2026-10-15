@@ -151,6 +151,9 @@ and outcome. Keep private content out of shared artifacts. Map important user
 journeys to automated, installed-artifact, live and host-specific verification;
 missing physical evidence remains unverified. Recurring defects should gain a
 type/boundary check or regression test rather than ever-longer agent rules.
+Use the checked [verification map](verification-map.md) to find existing tests,
+operator protocols and explicit gaps before planning new evidence. A referenced
+test or historical smoke is not a new execution or a current live pass.
 
 This design draws ideas from specification-driven task contracts and
 [pstack's planning](https://github.com/cursor/plugins/blob/1b6d44ff26d4e242f4e8f68c391e6d2f7ca16def/pstack/skills/poteto-mode/playbooks/multi-phase-plan.md)

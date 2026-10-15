@@ -16,8 +16,10 @@ inside the isolated checkout. A repository-local test executable is resolved
 again at its corresponding path there; if it is absent (for example, a
 source-local `.venv/Scripts/pytest.exe`), the run fails closed with guidance
 instead of silently testing the source checkout. Install that runtime in the
-isolated checkout, or configure a bare/external executable. An external
-executable keeps its approved absolute path and still runs with the isolated
+isolated checkout, or configure a bare executable name resolving through trusted
+`PATH` to an external installed tool. Do not put an external absolute path
+directly in the profile's `argv[0]`; command policy rejects that form. A resolved
+external executable keeps its approved absolute path and still runs with the isolated
 working directory. A commit hash is returned only when
 `run-task --commit` is explicitly requested and the final test attempt passes;
 otherwise the result has no commit hash. Async and MCP runs never commit

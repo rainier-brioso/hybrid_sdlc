@@ -144,12 +144,43 @@ same input while keeping task worktrees independent. Use the committed ignore
 rules from the [installation fixture](installation.md#2-prepare-a-disposable-first-run-repository):
 `.hybrid_sdlc/`, `__pycache__/` and local `hybrid_sdlc.toml` are ignored.
 Create the local config for each clone; never put credentials or machine paths
-in the bundle. Use profile ID `smoke` and the installed Hybrid SDLC environment's
-absolute Python for the standard-library unittest command. Do not rely on a
-source `.venv` or a global Python assumed to exist. Select the verified Aider
+in the bundle. Use profile ID `smoke` and resolve the installed Hybrid SDLC
+environment's Python through a bare command name on a controlled `PATH` for
+the standard-library unittest command. A literal external absolute path in
+`argv[0]` is rejected by command policy; the separate absolute `aider_python`
+setting is unchanged. Do not rely on a source `.venv` or a global Python assumed
+to exist. Select the verified Aider
 interpreter and a positive map budget for a map-enabled adapter run, recording
 its settings. Local configuration may differ only for required endpoint/path
 selection; record each config's digest and explain those differences.
+
+Before baseline tests and every CLI/host launch, prepend the selected installed
+tool's executable directory to that process's `PATH`, and check resolution. In
+PowerShell, using the verified variables from section 2:
+
+```powershell
+$env:PATH = "$(Split-Path -Parent $toolPython);$env:PATH"
+& $toolPython -I -c "import pathlib,shutil,sys; p=shutil.which('python'); assert p is not None; assert pathlib.Path(p).absolute() == pathlib.Path(sys.argv[1]).absolute(),p" $toolPython
+```
+
+POSIX:
+
+```sh
+export PATH="$tool_env/bin:$PATH"
+"$tool_python" -I -c 'import pathlib,shutil,sys; p=shutil.which("python"); assert p is not None; assert pathlib.Path(p).absolute() == pathlib.Path(sys.argv[1]).absolute(),p' "$tool_python"
+```
+
+Use `argv = ["python", "-m", "unittest", "discover", "-s", "tests", "-v"]`
+in each ignored fixture config. Verify both launcher path and installed
+environment origin; POSIX venv executables can symlink to a shared interpreter.
+The profile resolver follows those symlinks: record its actual resolved runtime,
+and do not claim the test process retains the tool venv's third-party packages.
+This fixture deliberately uses only the standard library; CLI/MCP installed
+module-origin checks remain separate.
+The selected executable must remain external to the target fixture so isolated
+execution does not try to remap a missing source-local runtime. A host launched
+earlier may retain a different `PATH`; check its actual environment before the
+async run. These are rehearsal-client process settings, not global PATH edits.
 
 From the producer's disposable fixture, not the toolkit checkout:
 

@@ -1,0 +1,180 @@
+{
+  "schema_version": "1.0.0",
+  "baseline_date": "2026-10-15",
+  "baseline_note": "Automated references describe repository checks, not their latest result. Installed and live entries preserve the date and limits of available observations; no current live verification is claimed.",
+  "journeys": [
+    {
+      "id": "antigravity-registration",
+      "cli_operations": ["setup antigravity"],
+      "mcp_tools": [],
+      "automated_test_nodeids": [
+        "tests/unit/test_host_setup.py::test_antigravity_setup_prepares_proposal_and_preserves_original",
+        "tests/unit/test_host_setup.py::test_antigravity_setup_is_noop_for_identical_absolute_entry",
+        "tests/unit/test_host_setup.py::test_antigravity_cli_reports_existing_config_proposal"
+      ],
+      "protocol_paths": ["docs/hosts/antigravity.md"],
+      "evidence_paths": [],
+      "installed_status": "not_run",
+      "live_status": "not_run",
+      "prerequisites": ["Antigravity installed; user-profile MCP configuration access for a live setup check."],
+      "limitations": ["Tests use temporary configuration files; they do not modify or verify a user's installed IDE configuration.", "Host discovery observation is dated 2026-10-05; current host version and reload behavior are unverified."]
+    },
+    {
+      "id": "managed-strata-runtime",
+      "cli_operations": [
+        "runtime strata configure",
+        "runtime strata start",
+        "runtime strata stop",
+        "runtime strata restart",
+        "runtime strata status",
+        "runtime strata diagnose",
+        "runtime strata logs"
+      ],
+      "mcp_tools": [],
+      "automated_test_nodeids": [
+        "tests/integration/test_runtime_strata_cli.py::test_configure_uses_packaged_assets_not_repository_compose",
+        "tests/integration/test_runtime_strata_cli.py::test_diagnose_readiness_success_reports_ready",
+        "tests/integration/test_runtime_strata_cli.py::test_diagnose_get_wall_clock_bounds_slow_drip",
+        "tests/unit/test_probe_worker.py::test_probe_worker_forwards_exact_process_and_request_deadline",
+        "tests/integration/test_runtime_strata_cli.py::test_unconfigured_actions_return_structured_failure",
+        "tests/integration/test_runtime_strata_cli.py::test_log_tail_is_forwarded_without_following",
+        "tests/unit/test_runtime_strata.py::test_start_stop_restart_use_only_owned_compose_project_and_never_build_or_pull",
+        "tests/unit/test_runtime_strata.py::test_status_and_logs_report_owned_container_and_bound_log_output"
+      ],
+      "protocol_paths": ["docs/runtime-management.md", "docs/strata-server-docker.md"],
+      "evidence_paths": [],
+      "installed_status": "not_run",
+      "live_status": "not_run",
+      "prerequisites": ["Docker Desktop or Docker Engine on a supported local context; explicit operator configuration."],
+      "limitations": ["Automated runtime tests use temporary state, fake Docker and mocked or loopback HTTP; they do not start Docker or Strata.", "The slow-drip loopback check observes partial-body delivery, probe timeout and disconnection; it is not real Strata telemetry.", "No current installed runtime or live model readiness check is recorded."]
+    },
+    {
+      "id": "endpoint-check",
+      "cli_operations": ["check"],
+      "mcp_tools": ["check_local_model"],
+      "automated_test_nodeids": [
+        "tests/integration/test_cli.py::test_cli_check_healthy",
+        "tests/integration/test_cli.py::test_cli_check_unavailable",
+        "tests/integration/test_mcp_server.py::test_expected_failures_are_tool_errors_without_tracebacks",
+        "tests/unit/test_server_probe.py::test_probe_endpoint_success"
+      ],
+      "protocol_paths": ["docs/hosts/codex.md", "docs/hosts/antigravity.md"],
+      "evidence_paths": ["benchmarks/results/strata/installed-mcp-smoke-20261004.json", "benchmarks/results/strata/antigravity-mcp-smoke-20261005.json"],
+      "installed_status": "historical_observation",
+      "live_status": "historical_observation",
+      "prerequisites": ["Configured endpoint expected to be available; an actual probe contacts that endpoint."],
+      "limitations": ["The installed SDK smoke is dated 2026-10-04 and proves one fresh-client call, not this chat transport.", "The Antigravity probe is user-reported and dated 2026-10-05; it is not a current endpoint check.", "Availability/model listing is distinct from readiness inference."]
+    },
+    {
+      "id": "synchronous-task",
+      "cli_operations": ["run-task"],
+      "mcp_tools": ["run_spec_task_sync"],
+      "automated_test_nodeids": [
+        "tests/integration/test_cli.py::test_cli_run_task_forwards_explicit_commit_and_reports_isolated_result",
+        "tests/integration/test_mcp_server.py::test_sync_tool_returns_structured_run_result",
+        "tests/e2e/test_sync_delegation.py::test_successful_delegation_produces_passing_artifacts",
+        "tests/e2e/test_sync_failures.py::test_task_timeout_produces_terminal_failure",
+        "tests/unit/test_command_profiles.py::test_external_interpreter_uses_bare_path_command_not_absolute_argv",
+        "tests/integration/test_task_policy_ingress.py::test_cli_accepts_explicit_committed_policy_and_passes_provenance",
+        "tests/integration/test_task_policy_ingress.py::test_policy_scope_rejects_candidate_and_preserves_patch_without_commit",
+        "tests/unit/test_task_scope_boundaries.py::test_exact_allowed_paths_and_empty_candidate_pass"
+      ],
+      "protocol_paths": ["skills/local-delegate/SKILL.md", "docs/planning.md"],
+      "evidence_paths": ["benchmarks/results/strata/installed-mcp-smoke-20261004.json", "benchmarks/results/strata/antigravity-mcp-smoke-20261005.json", "benchmarks/results/strata/antigravity-mcp-timeout-20261005.json"],
+      "installed_status": "historical_observation",
+      "live_status": "historical_observation",
+      "prerequisites": ["Trusted repository, committed task spec, trusted named test profile, installed Aider, and available configured model endpoint."],
+      "limitations": ["Automated end-to-end runs use fixture repositories and fake Aider; they do not establish model quality or host behavior.", "External test executables must be selected by a bare name resolved through PATH; an absolute external argv[0] is rejected. This does not change the separate aider_python setting.", "Historical live tasks are single synchronous smokes; neither proves repeatability, async survival, nor current performance."]
+    },
+    {
+      "id": "asynchronous-jobs",
+      "cli_operations": ["submit", "status", "cancel", "worker"],
+      "mcp_tools": ["submit_spec_job", "get_job_status", "cancel_spec_job"],
+      "automated_test_nodeids": [
+        "tests/integration/test_cli.py::test_cli_submit_human_and_json",
+        "tests/integration/test_cli.py::test_cli_status_by_id_waits_and_reports_missing_or_invalid_jobs",
+        "tests/integration/test_cli.py::test_cli_cancel_queued_job_json_and_invalid_id",
+        "tests/integration/test_jobs.py::test_detached_worker_continues_after_submitter_exits",
+        "tests/integration/test_mcp_server.py::test_status_and_cancel_return_structured_job_records",
+        "tests/unit/test_worker.py::test_worker_cli_passes_job_id_and_repo_root",
+        "tests/e2e/test_mcp_disconnect.py::test_submitted_worker_survives_stdio_adapter_disconnect_and_reconnects"
+      ],
+      "protocol_paths": ["docs/hosts/codex.md", "docs/hosts/antigravity.md", "docs/host-compatibility.md"],
+      "evidence_paths": [],
+      "installed_status": "not_run",
+      "live_status": "blocked",
+      "prerequisites": ["Trusted repository and profile; for Windows survival proof, a test host that permits required Job Object breakaway."],
+      "limitations": ["The public worker CLI handler has a monkeypatched unit check; that does not prove a user-launched worker command completes a real job.", "The Windows disconnect/reconnect E2E is skipped inside restrictive Job Objects; CI and the available host did not provide an accepted Windows survival proof.", "Polling and persistence do not prove host wakeup or agent-turn resumption."]
+    },
+    {
+      "id": "review-acceptance",
+      "cli_operations": ["review status", "review record"],
+      "mcp_tools": [],
+      "automated_test_nodeids": [
+        "tests/integration/test_review_acceptance.py::test_acceptance_replays_exact_patch_and_status_revalidates_evidence",
+        "tests/integration/test_review_acceptance.py::test_cli_review_status_and_policy_error_exit_code",
+        "tests/integration/test_review_cli.py::test_review_record_cli_accepts_verified_patch_and_status",
+        "tests/integration/test_review_cli.py::test_review_record_cli_reports_patch_mismatch_as_structured_error"
+      ],
+      "protocol_paths": ["docs/review-acceptance.md", "docs/task-policy.md"],
+      "evidence_paths": [],
+      "installed_status": "not_run",
+      "live_status": "not_run",
+      "prerequisites": ["Persisted run record, exact patch artifact, matching repository baseline, and a named test profile for acceptance."],
+      "limitations": ["Controller verification uses disposable Git fixtures and local test commands; it does not authenticate reviewer identity or integrate changes.", "The review record CLI had service-level coverage only before this journey was added."]
+    },
+    {
+      "id": "stdio-mcp-server",
+      "cli_operations": ["mcp"],
+      "mcp_tools": [],
+      "automated_test_nodeids": [
+        "tests/integration/test_mcp_server.py::test_stdio_entrypoint_completes_sdk_client_handshake",
+        "tests/integration/test_mcp_server.py::test_tools_are_discoverable_with_explicit_repository_and_task_schema"
+      ],
+      "protocol_paths": ["docs/hosts/codex.md", "docs/hosts/claude-code.md", "docs/hosts/antigravity.md"],
+      "evidence_paths": ["benchmarks/results/strata/installed-mcp-smoke-20261004.json"],
+      "installed_status": "historical_observation",
+      "live_status": "historical_observation",
+      "prerequisites": ["Installed package and a compatible host or MCP SDK client able to launch its stdio entry point."],
+      "limitations": ["The installed SDK client observation is dated 2026-10-04 and is not a clean-machine install rehearsal or host-session proof.", "Codex, Claude Code, and Antigravity behavior depends on host configuration, approval, and reload state."]
+    },
+    {
+      "id": "artifact-cleanup",
+      "cli_operations": ["clean"],
+      "mcp_tools": [],
+      "automated_test_nodeids": [
+        "tests/integration/test_cli.py::test_cli_clean",
+        "tests/unit/test_artifacts.py::test_clean_artifacts_retention"
+      ],
+      "protocol_paths": ["docs/development.md", "docs/review-acceptance.md"],
+      "evidence_paths": [],
+      "installed_status": "not_run",
+      "live_status": "not_run",
+      "prerequisites": ["An explicit repository root and an operator-selected retention threshold."],
+      "limitations": ["Tests use temporary artifacts; they do not inspect or remove a user's retained run data."]
+    },
+    {
+      "id": "distribution-and-meta",
+      "cli_operations": [],
+      "mcp_tools": [],
+      "meta_operations": ["--help", "--version"],
+      "automated_test_nodeids": [
+        "tests/integration/test_cli.py::test_cli_help",
+        "tests/host_contracts/test_verification_map.py::test_cli_version_flag_is_available",
+        "tests/packaging/test_distribution_smoke.py::test_built_distributions_install_outside_source_tree"
+      ],
+      "protocol_paths": ["docs/development.md", "docs/installation.md"],
+      "evidence_paths": [],
+      "installed_status": "automated_help_only",
+      "live_status": "not_run",
+      "prerequisites": ["Built wheel and source distribution plus uv for the optional isolated installation smoke."],
+      "limitations": ["The distribution installation smoke is opt-in via HYBRID_SDLC_PACKAGING_DIST; a skipped test is not installed-package evidence.", "The source tree is not a clean consumer machine."]
+    }
+  ],
+  "excluded_internal_surfaces": [],
+  "gaps": [
+    "No current clean-machine wheel/sdist installation and user-level host registration/reload rehearsal is recorded.",
+    "No current live endpoint, full host tool-use matrix, Windows background survival proof, or host wakeup proof is recorded.",
+    "Do not infer product regressions from absent harness coverage or infer passing live behavior from fixture tests."
+  ]
+}

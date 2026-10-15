@@ -314,6 +314,13 @@ def test_diagnose_get_wall_clock_bounds_slow_drip(
     import time
     from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
+    probe_timeout = 3.0
+    request_started = threading.Event()
+    body_started = threading.Event()
+    client_disconnected = threading.Event()
+    response_completed = threading.Event()
+    body_chunks_written: list[int] = []
+
     monkeypatch.setattr(server_probe, "_bounded_health_probe", _BOUNDED_HEALTH)
     monkeypatch.setattr(server_probe, "_bounded_model_probe", _BOUNDED_MODELS)
     monkeypatch.setattr(server_probe, "_bounded_readiness_probe", _BOUNDED_READINESS)
@@ -324,6 +331,7 @@ def test_diagnose_get_wall_clock_bounds_slow_drip(
         def do_GET(self) -> None:
             methods.append("GET " + self.path)
             if self.path == slow_path:
+                request_started.set()
                 self.send_response(200)
                 self.send_header("Content-Type", "application/json")
                 self.send_header("Content-Length", "200")
@@ -332,9 +340,13 @@ def test_diagnose_get_wall_clock_bounds_slow_drip(
                     for _ in range(200):
                         self.wfile.write(b" ")
                         self.wfile.flush()
+                        body_chunks_written.append(1)
+                        body_started.set()
                         time.sleep(0.1)
                 except OSError:
-                    pass
+                    client_disconnected.set()
+                    return
+                response_completed.set()
                 return
             self.send_response(200)
             self.send_header("Content-Type", "application/json")
@@ -359,11 +371,23 @@ def test_diagnose_get_wall_clock_bounds_slow_drip(
     runtime_strata.configure(port=server.server_address[1])
     started = time.monotonic()
     try:
-        report = runtime_strata.diagnose(timeout=1)
+        report = runtime_strata.diagnose(timeout=probe_timeout)
         elapsed = time.monotonic() - started
         assert report["status"] == "unknown"
-        assert elapsed < 4
+        # Each probe deadline includes isolated-worker startup. The two seconds
+        # here are only scheduler/cleanup tolerance around the two deadlines.
+        assert elapsed < (2 * probe_timeout) + 2
         assert methods == ["GET /health", "GET /v1/models"]
+        assert request_started.wait(timeout=0), "the selected slow GET never reached the server"
+        assert body_started.wait(timeout=0), "the server did not write a partial response body"
+        assert body_chunks_written
+        assert report["health_error_code"] == ("HEALTH_TIMEOUT" if slow_path == "/health" else None)
+        assert report["error_code"] == ("PROBE_TIMEOUT" if slow_path == "/v1/models" else None)
+        assert client_disconnected.wait(timeout=1), "the probe did not close the slow response"
+        assert not response_completed.is_set(), (
+            "the slow response finished despite the probe deadline"
+        )
+        assert all(method.startswith("GET ") for method in methods)
     finally:
         server.shutdown()
         server.server_close()

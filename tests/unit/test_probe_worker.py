@@ -163,3 +163,30 @@ def test_bounded_get_worker_failures_are_static(
     else:
         result = server_probe._bounded_model_probe("http://local/v1", "Qwen", 1).model_dump()
     assert "private" not in json.dumps(result)
+
+
+def test_probe_worker_forwards_exact_process_and_request_deadline(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    received: dict[str, Any] = {}
+
+    def run_bounded_subprocess(*args: Any, **kwargs: Any) -> SubprocessResult:
+        received["argv"] = args[0]
+        received["kwargs"] = kwargs
+        return SubprocessResult(
+            exit_code=-1,
+            stdout="",
+            stderr="",
+            is_truncated=False,
+            duration_seconds=3,
+            timed_out=True,
+            cancelled=False,
+        )
+
+    monkeypatch.setattr(server_probe, "run_bounded_subprocess", run_bounded_subprocess)
+    result = server_probe._run_probe_worker("health", "http://local/v1", None, 3.0)
+
+    assert result is not None and result.timed_out
+    assert received["kwargs"]["timeout_seconds"] == 3.0
+    request = json.loads(received["kwargs"]["stdin_data"].decode("utf-8"))
+    assert request["timeout"] == 3.0
