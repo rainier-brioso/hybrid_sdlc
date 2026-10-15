@@ -72,9 +72,13 @@ command -v python
 ```
 
 Use the actual absolute executable path in host registration if PATH cannot be
-made consistent. A registration does not install the package. If `python` is
-unavailable, select an existing external Python interpreter and put its absolute
-path in the test profile below; do not invent an installation path.
+made consistent. A registration does not install the package. For the test
+profile below, select an existing trusted external Python environment and put
+its executable directory first on the terminal/host's `PATH`. Use its bare
+command name (`python` or `python.exe`) in `argv[0]` and verify which interpreter
+it resolves to. Do not invent an installation path or rely on a source-local
+`.venv` being copied. Command profiles reject literal executable paths outside
+the target repository; this is separate from the absolute `aider_python` setting.
 
 ## 2. Prepare a disposable first-run repository
 

@@ -151,6 +151,19 @@ Command profiles define how tests are executed:
 - `timeout_seconds: int`: Maximum execution duration before the process tree is forcibly terminated.
 - `env_allowlist: list[str]`: List of specific environment variables passed from the parent process into the sanitized subprocess environment.
 
+For `argv[0]`, use a bare executable name resolved from trusted `PATH`, or an
+executable path confined to the target repository. Literal external absolute
+paths and paths escaping the repository are rejected. A bare command may
+resolve to an external installed tool; the resolved absolute executable is then
+reused with the isolated checkout as working directory. Source-local runtimes
+are remapped into that checkout and must exist there. This policy is separate
+from `aider_python`, which requires an absolute interpreter path. See the
+[installation guide](installation.md#path-and-executable-discovery).
+Resolution follows symlinks. In particular, a POSIX venv Python launcher can
+resolve to a shared base interpreter; do not assume that selecting its bare name
+preserves that venv's dependency environment. Verify the actual resolved runtime
+and required packages separately.
+
 ## Supported Framework Examples
 
 See [`hybrid_sdlc.example.toml`](../hybrid_sdlc.example.toml) for reference definitions including:

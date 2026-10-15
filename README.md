@@ -159,6 +159,9 @@ is recorded. Comparative benchmarks and clean-machine release rehearsals are
 still pending: this is not yet a fully validated supported release.
 The [clean-install rehearsal protocol](docs/release-rehearsal.md) and its
 unexecuted evidence template describe the Windows/POSIX checks still required.
+The checked [verification map](docs/verification-map.md) links public CLI/MCP
+journeys to automated tests, installed-artifact checks and dated live evidence,
+with remaining gaps kept explicit.
 Windows background survival requires
 a host allowing Job Object breakaway and is not proven on restrictive runners.
 See the [plan](docs/implementation_plan.md) and [tasks](docs/implementation_tasks.md)

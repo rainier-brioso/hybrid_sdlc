@@ -75,6 +75,23 @@ def test_resolve_profile_rejects_path_escape(tmp_path: Path) -> None:
     assert exc_info.value.code == "COMMAND_POLICY_PATH_ESCAPE"
 
 
+def test_external_interpreter_uses_bare_path_command_not_absolute_argv(tmp_path: Path) -> None:
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    python_path = Path(sys.executable).resolve()
+
+    absolute_profile = CommandProfile(name="pytest", argv=[str(python_path), "-m", "pytest"])
+    with pytest.raises(CommandPolicyError) as exc_info:
+        resolve_profile_executable(absolute_profile, repo_root=repo)
+    assert exc_info.value.code == "COMMAND_POLICY_PATH_ESCAPE"
+
+    path_profile = CommandProfile(name="pytest", argv=[python_path.name, "-m", "pytest"])
+    resolved = resolve_profile_executable(
+        path_profile, repo_root=repo, custom_path_env=str(python_path.parent)
+    )
+    assert resolved == python_path
+
+
 def test_resolve_profile_missing_executable(tmp_path: Path) -> None:
     profile = CommandProfile(name="nonexistent", argv=["nonexistent_cmd_xyz_123"])
     with pytest.raises(CommandPolicyError) as exc_info:

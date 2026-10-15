@@ -438,7 +438,8 @@ Their path declarations are enforced against final exports and optional scoped
 commit trees. HSDLC-075 adds explicit CLI [exact-artifact review records](review-acceptance.md)
 and independent candidate verification; scope/test success is not recorded review
 acceptance. HSDLC-076
-maintains a verification map; HSDLC-077 evaluates the workflow on the separately
+maintains a checked [verification map](verification-map.md), keeping automated,
+installed and dated live observations distinct; HSDLC-077 evaluates the workflow on the separately
 prepared Metria weight-import feature with observed failures/retries and costs.
 HSDLC-078/079 specify local role profiles and host-native subagent routing now,
 as independent opt-in configuration layers. Reuse existing user host agents;
