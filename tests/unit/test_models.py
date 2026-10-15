@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import pytest
+from pydantic import ValidationError
 
 from hybrid_sdlc.models import (
     SCHEMA_VERSION,
@@ -152,3 +153,36 @@ def test_forward_compatibility_extra_fields() -> None:
     assert loaded.code == "FOO"
     assert loaded.message == "bar"
     assert not hasattr(loaded, "some_future_field_v2")
+
+
+def test_run_result_policy_provenance_requires_complete_valid_tuple() -> None:
+    with pytest.raises(ValidationError, match="present together"):
+        RunResult.model_validate(
+            {
+                "run_id": "run_partial_policy",
+                "task_id": "TASK-1",
+                "spec_path": "spec.md",
+                "repo_root": "C:/repo",
+                "status": "success",
+                "started_at": "2026-10-14T00:00:00Z",
+                "finished_at": "2026-10-14T00:00:01Z",
+                "total_duration_seconds": 1,
+                "policy_path": "policy.json",
+            }
+        )
+
+    valid = RunResult(
+        run_id="run_policy",
+        task_id="TASK-1",
+        spec_path="spec.md",
+        repo_root="C:/repo",
+        status=RunStatus.SUCCESS,
+        started_at="2026-10-14T00:00:00Z",
+        finished_at="2026-10-14T00:00:01Z",
+        total_duration_seconds=1,
+        policy_path="policy.json",
+        policy_sha256="a" * 64,
+        spec_sha256="b" * 64,
+        policy_baseline_commit="c" * 40,
+    )
+    assert RunResult.model_validate_json(valid.model_dump_json()) == valid

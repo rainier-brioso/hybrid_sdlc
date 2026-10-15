@@ -71,46 +71,20 @@ def test_strata_worker_profile_budget_matches_supported_settings_locations() -> 
     assert profile["limits"]["reasoning_budget_tokens"] == 1024
 
 
-def test_spec_kit_templates_use_canonical_layout_and_require_contracts() -> None:
+def test_runtime_assets_are_force_included_without_legacy_spec_assets() -> None:
     root = Path(__file__).resolve().parents[2]
-    constitution = root / ".specify" / "memory" / "constitution.md"
-    templates = root / ".specify" / "templates"
-    spec = templates / "spec-template.md"
-    plan = templates / "plan-template.md"
-    tasks = templates / "tasks-template.md"
-
-    assert all(path.is_file() for path in (constitution, spec, plan, tasks))
-    assert "specs/<NNN-feature>/" in spec.read_text(encoding="utf-8")
-    assert "Acceptance Criteria" in spec.read_text(encoding="utf-8")
-    assert "Interfaces & Contracts" in plan.read_text(encoding="utf-8")
-    contents = {
-        path: path.read_text(encoding="utf-8") for path in (constitution, spec, plan, tasks)
-    }
-    assert "[command_profiles.<id>]" in contents[constitution]
-    assert "CI quality gates are validation workflows" in contents[constitution]
-    assert "command_profiles.<id>" in contents[spec]
-    assert "command_profiles.<id>" in contents[plan]
-    assert "CI quality gates are not runnable named profiles" in contents[plan]
-    assert "[command_profiles.<id>]" in contents[tasks]
-    assert "<profile-id>" in contents[tasks]
-    assert "atomic, reviewable" in contents[tasks]
-
     with (root / "pyproject.toml").open("rb") as stream:
         build_config = tomllib.load(stream)
-    force_include = build_config["tool"]["hatch"]["build"]["targets"]["wheel"]["force-include"]
-    specify_force_include = {
-        ".specify/memory/constitution.md",
-        ".specify/templates/spec-template.md",
-        ".specify/templates/plan-template.md",
-        ".specify/templates/tasks-template.md",
-    }
+    wheel = build_config["tool"]["hatch"]["build"]["targets"]["wheel"]
+    force_include = wheel["force-include"]
     runtime_force_include = {
         "src/hybrid_sdlc/_runtime/strata/compose.yaml": "hybrid_sdlc/_runtime/strata/compose.yaml",
         "src/hybrid_sdlc/_runtime/strata/worker-defaults.json": "hybrid_sdlc/_runtime/strata/worker-defaults.json",
         "src/hybrid_sdlc/_runtime/strata/startup.py": "hybrid_sdlc/_runtime/strata/startup.py",
     }
-    assert set(force_include) == set(specify_force_include) | set(runtime_force_include)
+    assert force_include == runtime_force_include
+    assert not any("specify" in path.lower() for path in force_include)
     assert all(
-        force_include[path].startswith("hybrid_sdlc/_specify/") for path in specify_force_include
+        ".specify" not in path
+        for path in build_config["tool"]["hatch"]["build"]["targets"]["sdist"]["only-include"]
     )
-    assert {path: force_include[path] for path in runtime_force_include} == runtime_force_include

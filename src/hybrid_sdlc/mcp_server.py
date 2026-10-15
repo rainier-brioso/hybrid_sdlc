@@ -28,6 +28,7 @@ from hybrid_sdlc.processes import terminate_active_processes
 from hybrid_sdlc.security import verify_repo_root
 from hybrid_sdlc.server_probe import select_active_endpoint
 from hybrid_sdlc.submission import JobSubmissionError, preflight_task_request, submit_job
+from hybrid_sdlc.task_policy import PolicyProvenance, PolicyRunOptions
 
 mcp = MCPServer("hybrid-sdlc", version=__version__)
 _StructuredResponse = dict[str, Any]
@@ -123,23 +124,45 @@ async def run_spec_task_sync(
     task_id: str,
     test_profile: str,
     ctx: Context,
+    policy_path: str | None = None,
 ) -> dict[str, Any]:
     """Run one spec task through the bounded edit and test loop, returning RunResult."""
 
     try:
-        root, relative_spec, endpoint_url, model, retries = preflight_task_request(
-            repo_root=repo_root,
-            spec_path=spec_path,
-            task_id=task_id,
-            test_profile=test_profile,
-            host_url=None,
-            model=None,
-            max_retries=None,
-        )
+        policy_provenance_out: list[PolicyProvenance | None] = []
+        if policy_path is not None:
+            root, relative_spec, endpoint_url, model, retries = preflight_task_request(
+                repo_root=repo_root,
+                spec_path=spec_path,
+                task_id=task_id,
+                test_profile=test_profile,
+                host_url=None,
+                model=None,
+                max_retries=None,
+                policy_path=policy_path,
+                _policy_provenance_out=policy_provenance_out,
+            )
+        else:
+            root, relative_spec, endpoint_url, model, retries = preflight_task_request(
+                repo_root=repo_root,
+                spec_path=spec_path,
+                task_id=task_id,
+                test_profile=test_profile,
+                host_url=None,
+                model=None,
+                max_retries=None,
+            )
         config = load_config(repo_root=root)
         profile = config.command_profiles[test_profile]
         executable = resolve_profile_executable(profile, root)
         await ctx.report_progress(0, total=1, message="Bounded task run started")
+        run_options: PolicyRunOptions = {}
+        if policy_path is not None and policy_provenance_out:
+            run_options = {
+                "policy_path": policy_path,
+                "policy_provenance": policy_provenance_out[0],
+                "test_profile": test_profile,
+            }
         result = await asyncio.to_thread(
             run_bounded_loop,
             repo_root=root,
@@ -158,6 +181,7 @@ async def run_spec_task_sync(
             aider_max_tokens=config.aider_max_tokens,
             aider_reasoning_budget_tokens=config.aider_reasoning_budget_tokens,
             aider_python=config.aider_python,
+            **run_options,
         )
         await ctx.report_progress(1, total=1, message="Bounded task run finished")
         return _safe_response(result.model_dump(mode="json"))
@@ -171,16 +195,26 @@ def submit_spec_job(
     spec_path: str,
     task_id: str,
     test_profile: str,
+    policy_path: str | None = None,
 ) -> dict[str, Any]:
     """Validate and submit one asynchronous spec task, returning its persisted job."""
 
     try:
-        record = submit_job(
-            repo_root=repo_root,
-            spec_path=spec_path,
-            task_id=task_id,
-            test_profile=test_profile,
-        )
+        if policy_path is not None:
+            record = submit_job(
+                repo_root=repo_root,
+                spec_path=spec_path,
+                task_id=task_id,
+                test_profile=test_profile,
+                policy_path=policy_path,
+            )
+        else:
+            record = submit_job(
+                repo_root=repo_root,
+                spec_path=spec_path,
+                task_id=task_id,
+                test_profile=test_profile,
+            )
         return _safe_response(record.model_dump(mode="json"))
     except Exception as exc:
         _raise_tool_error(exc)

@@ -17,6 +17,7 @@ from filelock import FileLock, Timeout
 from hybrid_sdlc.artifacts import redact_secrets
 from hybrid_sdlc.errors import RepositoryError, WorktreeDirtyError, WorktreeLockError
 from hybrid_sdlc.models import DiffSummary
+from hybrid_sdlc.task_policy import TaskScope, validate_task_scope_paths
 from hybrid_sdlc.worktrees import (
     WorktreeRecord,
     _index_has_gitlinks,
@@ -38,6 +39,7 @@ def create_scoped_commit(
     commit_requested: bool,
     tests_passed: bool,
     policy_passed: bool,
+    task_scope: TaskScope | None = None,
 ) -> str | None:
     """Create a gated commit while holding the same lock used by rollback."""
     if not commit_requested:
@@ -50,6 +52,7 @@ def create_scoped_commit(
             commit_requested=commit_requested,
             tests_passed=tests_passed,
             policy_passed=policy_passed,
+            task_scope=task_scope,
         )
 
 
@@ -61,6 +64,7 @@ def _create_scoped_commit_locked(
     commit_requested: bool,
     tests_passed: bool,
     policy_passed: bool,
+    task_scope: TaskScope | None = None,
 ) -> str | None:
     """Commit changes from one verified isolated checkout after all gates pass.
 
@@ -130,11 +134,30 @@ def _create_scoped_commit_locked(
         if _index_has_gitlinks(checkout):
             raise RepositoryError("Scoped commits do not support submodules")
 
-        changed = git("diff", "--cached", "--name-only", "-z", record.baseline_commit)
-        for raw_path in changed.stdout.split("\0"):
-            if not raw_path:
+        changed_result = subprocess.run(
+            [
+                "git",
+                "-C",
+                str(checkout),
+                "diff",
+                "--cached",
+                "--no-renames",
+                "--name-only",
+                "-z",
+                record.baseline_commit,
+            ],
+            capture_output=True,
+            check=True,
+        )
+        changed_paths = [
+            os.fsdecode(raw_path) for raw_path in changed_result.stdout.split(b"\0") if raw_path
+        ]
+        if task_scope is not None:
+            validate_task_scope_paths(task_scope, changed_paths)
+        for changed_path in changed_paths:
+            if not changed_path:
                 continue
-            relative = Path(raw_path)
+            relative = Path(changed_path)
             if relative.is_absolute() or any(part in ("", ".", "..") for part in relative.parts):
                 raise RepositoryError("Git returned a path outside the isolated checkout")
             candidate = checkout / relative
@@ -153,7 +176,7 @@ def _create_scoped_commit_locked(
                         "Scoped commit path escapes the isolated checkout"
                     ) from exc
 
-        if not changed.stdout:
+        if not changed_paths:
             raise RepositoryError("There are no isolated changes to commit")
         if git("diff", "--quiet").returncode != 0:
             raise RepositoryError("Could not stage all isolated changes")
@@ -165,6 +188,28 @@ def _create_scoped_commit_locked(
         tree = git("write-tree").stdout.strip()
         if not re.fullmatch(r"[0-9a-fA-F]{40,64}", tree):
             raise RepositoryError("Git returned an invalid isolated tree identifier")
+        if task_scope is not None:
+            tree_paths = subprocess.run(
+                [
+                    "git",
+                    "-C",
+                    str(checkout),
+                    "diff-tree",
+                    "--no-commit-id",
+                    "-r",
+                    "--no-renames",
+                    "--name-only",
+                    "-z",
+                    record.baseline_commit,
+                    tree,
+                ],
+                capture_output=True,
+                check=True,
+            ).stdout
+            validate_task_scope_paths(
+                task_scope,
+                [os.fsdecode(raw_path) for raw_path in tree_paths.split(b"\0") if raw_path],
+            )
         commit = git("commit-tree", tree, "-p", record.baseline_commit, "-m", commit_message)
         commit_hash = commit.stdout.strip()
         if not re.fullmatch(r"[0-9a-fA-F]{40,64}", commit_hash):

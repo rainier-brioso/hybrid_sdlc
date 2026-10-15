@@ -30,6 +30,7 @@ from hybrid_sdlc.security import (
     verify_repo_root,
 )
 from hybrid_sdlc.server_probe import select_active_endpoint
+from hybrid_sdlc.task_policy import PolicyProvenance, validate_task_policy
 
 _TASK_ID_PATTERN = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$")
 _DEFAULT_STARTUP_TIMEOUT_SECONDS = 10.0
@@ -136,6 +137,8 @@ def preflight_task_request(
     host_url: str | None,
     model: str | None,
     max_retries: int | None,
+    policy_path: str | Path | None = None,
+    _policy_provenance_out: list[PolicyProvenance | None] | None = None,
 ) -> tuple[Path, str, str, str, int]:
     """Validate every request policy input before writing a queued job."""
 
@@ -162,6 +165,17 @@ def preflight_task_request(
     retries = max_retries if max_retries is not None else config.max_retries
     if isinstance(retries, bool) or not isinstance(retries, int) or not 1 <= retries <= 10:
         raise ValueError("max_retries must be between 1 and 10")
+    provenance = validate_task_policy(
+        repo_root=verified_root,
+        policy_path=policy_path,
+        spec_path=relative_spec,
+        task_id=task_id,
+        test_profile=test_profile,
+        max_retries=retries,
+        config=config,
+    )
+    if _policy_provenance_out is not None:
+        _policy_provenance_out.append(provenance)
     target_model = model if model is not None else config.selected_model
     if (
         not isinstance(target_model, str)
@@ -242,6 +256,7 @@ def submit_job(
     host_url: str | None = None,
     model: str | None = None,
     max_retries: int | None = None,
+    policy_path: str | Path | None = None,
     startup_timeout_seconds: float = _DEFAULT_STARTUP_TIMEOUT_SECONDS,
     _worker_command_factory: _WorkerCommandFactory | None = None,
 ) -> JobRecord:
@@ -257,15 +272,31 @@ def submit_job(
         or not 0 < startup_timeout_seconds <= 60
     ):
         raise ValueError("startup_timeout_seconds must be greater than 0 and at most 60")
-    verified_root, relative_spec, endpoint_url, target_model, retries = preflight_task_request(
-        repo_root=repo_root,
-        spec_path=spec_path,
-        task_id=task_id,
-        test_profile=test_profile,
-        host_url=host_url,
-        model=model,
-        max_retries=max_retries,
-    )
+    policy_provenance_out: list[PolicyProvenance | None] = []
+    if policy_path is not None:
+        verified = preflight_task_request(
+            repo_root=repo_root,
+            spec_path=spec_path,
+            task_id=task_id,
+            test_profile=test_profile,
+            host_url=host_url,
+            model=model,
+            max_retries=max_retries,
+            policy_path=policy_path,
+            _policy_provenance_out=policy_provenance_out,
+        )
+    else:
+        verified = preflight_task_request(
+            repo_root=repo_root,
+            spec_path=spec_path,
+            task_id=task_id,
+            test_profile=test_profile,
+            host_url=host_url,
+            model=model,
+            max_retries=max_retries,
+        )
+    verified_root, relative_spec, endpoint_url, target_model, retries = verified
+    provenance = policy_provenance_out[0] if policy_provenance_out else None
     _verify_windows_worker_breakaway()
     manager = JobManager(verified_root)
     job = reserve_async_task(
@@ -278,6 +309,16 @@ def submit_job(
             host_url=endpoint_url,
             model=target_model,
             max_retries=retries,
+            **(
+                {
+                    "policy_path": provenance.policy_path,
+                    "policy_sha256": provenance.policy_sha256,
+                    "spec_sha256": provenance.spec_sha256,
+                    "policy_baseline_commit": provenance.baseline_commit,
+                }
+                if provenance is not None
+                else {}
+            ),
             job_id=reserved_job_id,
         ),
     )

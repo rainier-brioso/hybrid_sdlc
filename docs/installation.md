@@ -285,12 +285,13 @@ Avoid duplicate plugin/manual registration, preserve unrelated servers, and
 reload/start a new host session to discover tools. Do not print diagnostics to
 the MCP stdout protocol stream.
 
-## 5. Optional initialization and runtime ownership
+## 5. Planning and optional runtime ownership
 
-`hybrid-sdlc init --target-dir . --dry-run` previews optional Spec Kit template
-installation. It requires an already installed compatible `specify` CLI and
-does not install it. Existing custom files are preserved; review the
-[initializer/backup rules](spec-kit.md) before using `--force`.
+Write a short committed task contract for a fast modification, or a dependency
+plan with one contract per task for a larger change. See
+[planning and migration](planning.md). There is no root `hybrid-sdlc init`
+command or `specify` requirement. Existing user planning files and old
+initializer backups remain untouched. Runtime initialization is independent.
 
 For manual model deployment, read [Strata Docker setup](strata-server-docker.md)
 or the retained [llama.cpp setup](llama-server-docker.md). For separately owned

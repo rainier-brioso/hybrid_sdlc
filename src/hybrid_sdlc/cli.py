@@ -35,11 +35,8 @@ from hybrid_sdlc.runtime_strata import status as strata_runtime_status
 from hybrid_sdlc.runtime_strata import stop as stop_strata_runtime
 from hybrid_sdlc.security import resolve_confined_path, verify_repo_root
 from hybrid_sdlc.server_probe import probe_endpoint, select_active_endpoint
-from hybrid_sdlc.spec_initializer import (
-    InitializationError,
-    initialize_spec_kit,
-)
 from hybrid_sdlc.submission import JobSubmissionError, submit_job
+from hybrid_sdlc.task_policy import PolicyRunOptions, validate_task_policy
 from hybrid_sdlc.worker import run_worker
 
 
@@ -255,81 +252,6 @@ def runtime_strata_logs_cmd(tail: int, json_mode: bool) -> None:
     _runtime_result(result, json_mode=json_mode)
 
 
-@cli.command("init")
-@click.option(
-    "--target-dir",
-    type=click.Path(path_type=Path, file_okay=False, dir_okay=True),
-    default=None,
-    help="Existing Git repository to initialize (defaults to the current directory).",
-)
-@click.option("--dry-run", is_flag=True, help="Show the initialization plan without writing files.")
-@click.option("--force", is_flag=True, help="Back up and replace customized managed templates.")
-@click.option("--json", "json_mode", is_flag=True, help="Output machine-readable JSON.")
-def init_cmd(target_dir: Path | None, dry_run: bool, force: bool, json_mode: bool) -> None:
-    """Install Hybrid SDLC's canonical Spec Kit templates in a Git repository."""
-    try:
-        verified_root = verify_repo_root(target_dir or Path.cwd())
-        result = initialize_spec_kit(verified_root, force=force, dry_run=dry_run)
-    except HybridSDLCError as exc:
-        if json_mode:
-            click.echo(json.dumps(exc.to_failure_record().model_dump(mode="json"), indent=2))
-        else:
-            click.echo(f"Error [{exc.code}]: {exc.message}", err=True)
-        sys.exit(exc.exit_code)
-    except (InitializationError, ValueError, OSError) as exc:
-        if json_mode:
-            click.echo(
-                json.dumps(
-                    {"code": "SPEC_INITIALIZATION_FAILED", "message": str(exc), "details": {}},
-                    indent=2,
-                )
-            )
-        else:
-            click.echo(f"Initialization failed: {exc}", err=True)
-        sys.exit(ExitCode.POLICY_ERROR)
-
-    files = [
-        {
-            "path": item.path,
-            "action": ("would_" + item.action.value) if dry_run else item.action.value,
-            "backup_path": item.backup_path,
-        }
-        for item in result.files
-    ]
-    if json_mode:
-        click.echo(
-            json.dumps(
-                {
-                    "repository": str(verified_root),
-                    "dry_run": dry_run,
-                    "files": files,
-                    "manifest_path": result.manifest_path,
-                    "spec_kit": {
-                        "executable": result.spec_kit.executable,
-                        "version": result.spec_kit.version,
-                        "compatible": result.spec_kit.compatible,
-                        "features": {
-                            feature.name: feature.enabled for feature in result.spec_kit.features
-                        },
-                    },
-                },
-                indent=2,
-            )
-        )
-        return
-    verb = "Would initialize" if dry_run else "Initialized"
-    click.echo(f"{verb} Spec Kit files in {verified_root}:")
-    for item in result.files:
-        action = item.action.value
-        if dry_run:
-            action = "would " + action
-        click.echo(f"  {item.path}: {action}")
-        if item.backup_path:
-            click.echo(f"    backup: {item.backup_path}")
-    if not result.spec_kit.compatible:
-        click.echo(result.spec_kit.guidance, err=True)
-
-
 @cli.command("check")
 @click.option("--host-url", help="Explicit inference host URL to check.")
 @click.option("--probe-all", is_flag=True, help="Probe all configured candidate server endpoints.")
@@ -438,6 +360,7 @@ def check_cmd(
 @click.option("--host-url", help="Override inference host URL.")
 @click.option("--model", help="Override target model name.")
 @click.option("--max-retries", type=int, help="Override maximum edit attempts.")
+@click.option("--policy-file", type=click.Path(path_type=Path), help="Committed task policy JSON.")
 @click.option(
     "--aider-max-tokens", type=int, help="Override Aider's per-request output token limit."
 )
@@ -466,6 +389,7 @@ def run_task_cmd(
     host_url: str | None,
     model: str | None,
     max_retries: int | None,
+    policy_file: Path | None,
     aider_max_tokens: int | None,
     aider_reasoning_budget_tokens: int | None,
     commit_requested: bool,
@@ -521,6 +445,15 @@ def run_task_cmd(
     try:
         resolved_spec = resolve_confined_path(spec_file, verified_root, must_exist=True)
         validate_committed_path(verified_root, resolved_spec.relative_to(verified_root).as_posix())
+        policy_provenance = validate_task_policy(
+            repo_root=verified_root,
+            policy_path=policy_file,
+            spec_path=resolved_spec.relative_to(verified_root).as_posix(),
+            task_id=task_id,
+            test_profile=test_profile,
+            max_retries=retries,
+            config=config,
+        )
         validate_aider_target_files(
             verified_root, resolved_spec, [Path(path) for path in config.aider_edit_files]
         )
@@ -558,6 +491,13 @@ def run_task_cmd(
         sys.exit(e.exit_code)
 
     try:
+        run_options: PolicyRunOptions = {}
+        if policy_file is not None:
+            run_options = {
+                "policy_path": policy_file.as_posix(),
+                "policy_provenance": policy_provenance,
+                "test_profile": test_profile,
+            }
         result = run_bounded_loop(
             repo_root=verified_root,
             spec_path=spec_file,
@@ -577,6 +517,7 @@ def run_task_cmd(
             aider_max_tokens=config.aider_max_tokens,
             aider_reasoning_budget_tokens=config.aider_reasoning_budget_tokens,
             aider_python=config.aider_python,
+            **run_options,
         )
     except HybridSDLCError as e:
         if json_mode:
@@ -657,6 +598,7 @@ def _emit_job(record: JobRecord, *, json_mode: bool) -> None:
 @click.option("--host-url", help="Override inference host URL.")
 @click.option("--model", help="Override target model name.")
 @click.option("--max-retries", type=int, help="Override maximum edit attempts.")
+@click.option("--policy-file", type=click.Path(path_type=Path), help="Committed task policy JSON.")
 @click.option("--json", "json_mode", is_flag=True, help="Output only the persisted job record.")
 def submit_cmd(
     spec_file: Path,
@@ -666,20 +608,33 @@ def submit_cmd(
     host_url: str | None,
     model: str | None,
     max_retries: int | None,
+    policy_file: Path | None,
     json_mode: bool,
 ) -> None:
     """Validate, queue, and start an asynchronous spec task."""
 
     try:
-        record = submit_job(
-            spec_path=spec_file,
-            repo_root=repo_root,
-            task_id=task_id,
-            test_profile=test_profile,
-            host_url=host_url,
-            model=model,
-            max_retries=max_retries,
-        )
+        if policy_file is not None:
+            record = submit_job(
+                spec_path=spec_file,
+                repo_root=repo_root,
+                task_id=task_id,
+                test_profile=test_profile,
+                host_url=host_url,
+                model=model,
+                max_retries=max_retries,
+                policy_path=policy_file.as_posix(),
+            )
+        else:
+            record = submit_job(
+                spec_path=spec_file,
+                repo_root=repo_root,
+                task_id=task_id,
+                test_profile=test_profile,
+                host_url=host_url,
+                model=model,
+                max_retries=max_retries,
+            )
     except JobSubmissionError as exc:
         _async_error(
             str(exc),

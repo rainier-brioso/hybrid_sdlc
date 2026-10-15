@@ -7,6 +7,9 @@ editing and testing to Aider through an OpenAI-compatible inference endpoint.
 Start with `docs/implementation_plan.md` and `docs/implementation_tasks.md` for
 scope and acceptance criteria; use `docs/development.md` for contributor setup
 and `docs/configuration.md` for runtime configuration.
+Use `docs/planning.md` for fast/planned task routing, bounded contracts and
+review/integration boundaries. Spec Kit initialization is no longer part of
+the product; generic committed task files remain supported.
 
 - Implement package behavior in `src/hybrid_sdlc/`.
 - Keep regression coverage in `tests/unit/`, `tests/integration/`, and `tests/e2e/`.

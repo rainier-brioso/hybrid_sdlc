@@ -15,6 +15,25 @@ Optional [managed Strata lifecycle](runtime-management.md) settings are separate
 user-level Docker service state. Configuring that service does not change this
 repository configuration or select its endpoint for tasks automatically.
 
+## Optional task policies
+
+Select a committed [task execution policy](task-policy.md) with
+`--policy-file docs/tasks/task.policy.json` on `run-task` or `submit`, or pass
+optional `policy_path` to either MCP execution tool. No policy file is
+auto-discovered. Calls without one retain existing behavior.
+
+The policy confirms the task ID, contract path, test-profile name and execution
+limit ceilings. It does not override TOML/CLI settings. Effective configured
+values above a ceiling are rejected; finite token ceilings also reject unset
+request values because a server default cannot be verified locally. This does
+not guarantee total elapsed time or token cost: the existing runner checks and
+the test profile's separate subprocess timeout retain their existing semantics.
+With a selected policy, intended/excluded paths are checked against the final
+exported patch and any optional scoped-commit tree. This rejects out-of-scope
+results; it does not prevent repository commands from writing files. Ignored
+untracked files remain outside the export. See the policy guide for failure
+evidence, rename handling and the remaining sandbox/review boundaries.
+
 ## Credential-free endpoint URLs and instruction privacy
 
 Inference endpoints must use HTTP(S) URLs without userinfo, query strings or

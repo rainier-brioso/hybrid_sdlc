@@ -16,10 +16,11 @@ from collections.abc import Callable, Iterator
 from contextlib import contextmanager
 from datetime import UTC, datetime
 from pathlib import Path
+from types import SimpleNamespace
 
 from hybrid_sdlc.artifacts import atomic_save_json, redact_secrets
 from hybrid_sdlc.command_profiles import CommandProfile, resolve_profile_executable
-from hybrid_sdlc.config import normalize_aider_edit_files, validate_endpoint_url
+from hybrid_sdlc.config import load_config, normalize_aider_edit_files, validate_endpoint_url
 from hybrid_sdlc.errors import (
     AiderAdapterError,
     BaselineTestFailureError,
@@ -30,6 +31,7 @@ from hybrid_sdlc.errors import (
     RetryExhaustedError,
     StuckLoopError,
     TaskExecutionError,
+    TaskScopeViolationError,
     TaskTimeoutError,
 )
 from hybrid_sdlc.git_tools import (
@@ -50,6 +52,13 @@ from hybrid_sdlc.models import (
 from hybrid_sdlc.processes import SubprocessResult, run_bounded_subprocess
 from hybrid_sdlc.runtime_strata import reserve_managed_endpoint
 from hybrid_sdlc.security import build_sanitized_environment, resolve_confined_path
+from hybrid_sdlc.task_policy import (
+    PolicyProvenance,
+    TaskScope,
+    load_task_scope,
+    validate_task_policy,
+    validate_task_scope_paths,
+)
 from hybrid_sdlc.worktrees import (
     WorktreeRecord,
     create_worktree,
@@ -420,6 +429,7 @@ def _run_bounded_loop_in_checkout(
     aider_reasoning_budget_tokens: int | None = None,
     aider_python: Path | None = None,
     repo_map_cache_dir: Path | None = None,
+    policy_provenance: PolicyProvenance | None = None,
 ) -> RunResult:
     """Execute the bounded editing and testing state machine."""
     validate_aider_token_budgets(aider_max_tokens, aider_reasoning_budget_tokens)
@@ -494,6 +504,12 @@ def _run_bounded_loop_in_checkout(
                 finished_at=datetime.now(UTC).isoformat(),
                 total_duration_seconds=total_dur,
                 baseline_commit=baseline_commit,
+                policy_path=policy_provenance.policy_path if policy_provenance else None,
+                policy_sha256=policy_provenance.policy_sha256 if policy_provenance else None,
+                spec_sha256=policy_provenance.spec_sha256 if policy_provenance else None,
+                policy_baseline_commit=policy_provenance.baseline_commit
+                if policy_provenance
+                else None,
                 initial_status="clean",
                 attempts=[],
                 final_diff=None,
@@ -699,6 +715,10 @@ def _run_bounded_loop_in_checkout(
             finished_at=datetime.now(UTC).isoformat(),
             total_duration_seconds=total_dur,
             baseline_commit=baseline_commit,
+            policy_path=policy_provenance.policy_path if policy_provenance else None,
+            policy_sha256=policy_provenance.policy_sha256 if policy_provenance else None,
+            spec_sha256=policy_provenance.spec_sha256 if policy_provenance else None,
+            policy_baseline_commit=policy_provenance.baseline_commit if policy_provenance else None,
             initial_status="clean",
             attempts=attempts,
             final_diff=final_diff,
@@ -752,6 +772,22 @@ def _isolated_test_executable(
     )
 
 
+def _scope_failure_result(result: RunResult, error: TaskScopeViolationError) -> RunResult:
+    """Represent an out-of-scope candidate as a failed, inspectable run."""
+    details = dict(error.details)
+    if result.failure is not None:
+        details["prior_failure"] = result.failure.model_dump(mode="json")
+        details["prior_status"] = result.status.value
+    failure = error.to_failure_record().model_copy(update={"details": details})
+    return result.model_copy(
+        update={
+            "status": RunStatus.FAILURE,
+            "failure": failure,
+            "commit_hash": None,
+        }
+    )
+
+
 def _parse_aider_adapter_error(stderr: str) -> tuple[str, str] | None:
     """Extract a structured failure emitted before Aider starts editing."""
     for line in stderr.splitlines():
@@ -800,7 +836,7 @@ def _validate_aider_python(aider_python: Path | None, aider_cmd: list[str] | str
 
 
 @reserve_managed_endpoint
-def run_bounded_loop(
+def _run_bounded_loop_reserved(
     repo_root: Path,
     spec_path: Path | str,
     task_id: str,
@@ -823,6 +859,9 @@ def run_bounded_loop(
     aider_max_tokens: int | None = None,
     aider_reasoning_budget_tokens: int | None = None,
     aider_python: Path | None = None,
+    policy_path: str | None = None,
+    policy_provenance: PolicyProvenance | None = None,
+    test_profile: str | None = None,
 ) -> RunResult:
     """Run the bounded workflow in a detached worktree based on source HEAD."""
     validate_aider_token_budgets(aider_max_tokens, aider_reasoning_budget_tokens)
@@ -838,8 +877,30 @@ def run_bounded_loop(
         Path(path.relative_to(source_root).as_posix()) for path in source_target_files
     ]
 
+    task_scope: TaskScope | None = None
+    if policy_provenance is not None:
+        task_scope = load_task_scope(source_root, policy_provenance)
+
     record: WorktreeRecord = create_worktree(source_root)
     try:
+        if policy_provenance is not None:
+            if policy_path is None or test_profile is None:
+                raise RepositoryError("Pinned task policy metadata is incomplete")
+            validate_task_policy(
+                repo_root=record.path,
+                policy_path=policy_path,
+                spec_path=relative_spec,
+                task_id=task_id,
+                test_profile=test_profile,
+                max_retries=max_retries,
+                config=SimpleNamespace(
+                    task_timeout_seconds=task_timeout_seconds,
+                    attempt_timeout_seconds=attempt_timeout_seconds,
+                    aider_max_tokens=aider_max_tokens,
+                    aider_reasoning_budget_tokens=aider_reasoning_budget_tokens,
+                ),
+                expected=policy_provenance,
+            )
         repo_map_cache_dir: Path | None = None
         if aider_python is not None:
             repo_map_cache_dir = record.record_path.parent / "aider-cache"
@@ -896,19 +957,44 @@ def run_bounded_loop(
             aider_reasoning_budget_tokens=aider_reasoning_budget_tokens,
             aider_python=aider_python,
             repo_map_cache_dir=repo_map_cache_dir,
+            policy_provenance=policy_provenance,
         )
 
         commit_hash = None
+        exported = export_worktree_result(record) if task_scope is not None else None
+        if task_scope is not None:
+            assert exported is not None
+            try:
+                validate_task_scope_paths(task_scope, exported.changed_paths)
+            except TaskScopeViolationError as exc:
+                result = _scope_failure_result(result, exc)
+
         if commit_requested and result.status == RunStatus.SUCCESS:
-            commit_hash = create_scoped_commit(
-                record,
-                task_id,
-                f"Implement {task_id}",
-                commit_requested=True,
-                tests_passed=bool(result.attempts and result.attempts[-1].test_passed),
-                policy_passed=True,
-            )
-        exported = export_worktree_result(record, scoped_commit_hash=commit_hash)
+            try:
+                commit_hash = create_scoped_commit(
+                    record,
+                    task_id,
+                    f"Implement {task_id}",
+                    commit_requested=True,
+                    tests_passed=bool(result.attempts and result.attempts[-1].test_passed),
+                    policy_passed=True,
+                    task_scope=task_scope,
+                )
+            except TaskScopeViolationError as exc:
+                # The locked commit check is authoritative. Re-export after the
+                # failure so the exact late candidate remains available to review.
+                exported = export_worktree_result(record)
+                result = _scope_failure_result(result, exc)
+        if commit_hash is not None or exported is None:
+            exported = export_worktree_result(record, scoped_commit_hash=commit_hash)
+        if commit_hash is not None:
+            assert exported is not None
+            if task_scope is not None:
+                try:
+                    validate_task_scope_paths(task_scope, exported.changed_paths)
+                except TaskScopeViolationError as exc:
+                    result = _scope_failure_result(result, exc)
+        assert exported is not None
         if rollback_on_failure and result.status != RunStatus.SUCCESS:
             rollback_worktree(record)
     except HybridSDLCError as exc:
@@ -933,7 +1019,26 @@ def run_bounded_loop(
             },
         ) from exc
     final_diff = result.final_diff
-    if final_diff is not None:
+    if task_scope is not None:
+        patch_bytes = exported.patch_path.read_bytes()
+        patch_lines = patch_bytes.splitlines()
+        final_diff = DiffSummary(
+            diff_hash=hashlib.sha256(patch_bytes).hexdigest(),
+            changed_files=list(exported.changed_paths),
+            additions=sum(
+                line.startswith(b"+") and not line.startswith(b"+++") for line in patch_lines
+            ),
+            deletions=sum(
+                line.startswith(b"-") and not line.startswith(b"---") for line in patch_lines
+            ),
+            patch_file=str(exported.patch_path),
+            is_empty=not exported.changed_paths,
+            is_binary=(final_diff.is_binary if final_diff else False)
+            or b"GIT binary patch" in patch_bytes
+            or b"Binary files " in patch_bytes,
+            is_truncated=False,
+        )
+    elif final_diff is not None:
         final_diff = final_diff.model_copy(
             update={
                 "patch_file": str(exported.patch_path),
@@ -983,3 +1088,113 @@ def run_bounded_loop(
         repo_root=result_repo_root,
     )
     return result
+
+
+def run_bounded_loop(
+    repo_root: Path,
+    spec_path: Path | str,
+    task_id: str,
+    profile: CommandProfile,
+    endpoint_url: str,
+    model_name: str,
+    max_retries: int = 3,
+    task_timeout_seconds: float = 600.0,
+    attempt_timeout_seconds: float = 180.0,
+    buffer_cap_bytes: int = 500 * 1024,
+    aider_cmd: list[str] | str = "aider",
+    task_instruction: str = "",
+    resolved_test_executable: Path | None = None,
+    cancel_event: threading.Event | None = None,
+    process_observer: Callable[[int, datetime | None], None] | None = None,
+    commit_requested: bool = False,
+    rollback_on_failure: bool = False,
+    repo_map_tokens: int | None = None,
+    target_files: list[Path] | None = None,
+    aider_max_tokens: int | None = None,
+    aider_reasoning_budget_tokens: int | None = None,
+    aider_python: Path | None = None,
+    policy_path: str | None = None,
+    policy_provenance: PolicyProvenance | None = None,
+    test_profile: str | None = None,
+) -> RunResult:
+    """Validate selected policy before endpoint lease and worktree mutation."""
+
+    if policy_path is not None:
+        if test_profile is None:
+            raise RepositoryError("A test profile is required with a task policy")
+        source_root = repo_root.resolve()
+        source_spec = resolve_confined_path(spec_path, source_root, must_exist=True)
+        relative_spec = source_spec.relative_to(source_root).as_posix()
+        configured_profile = load_config(repo_root=source_root).command_profiles.get(test_profile)
+        if profile.name != test_profile or configured_profile != profile:
+            raise RepositoryError("Selected task policy requires the configured named test profile")
+        policy_provenance = validate_task_policy(
+            repo_root=source_root,
+            policy_path=policy_path,
+            spec_path=relative_spec,
+            task_id=task_id,
+            test_profile=test_profile,
+            max_retries=max_retries,
+            config=SimpleNamespace(
+                task_timeout_seconds=task_timeout_seconds,
+                attempt_timeout_seconds=attempt_timeout_seconds,
+                aider_max_tokens=aider_max_tokens,
+                aider_reasoning_budget_tokens=aider_reasoning_budget_tokens,
+            ),
+            expected=policy_provenance,
+        )
+    elif policy_provenance is not None:
+        raise RepositoryError("Pinned task policy metadata is incomplete")
+
+    if policy_path is not None:
+        return _run_bounded_loop_reserved(
+            repo_root=repo_root,
+            spec_path=spec_path,
+            task_id=task_id,
+            profile=profile,
+            endpoint_url=endpoint_url,
+            model_name=model_name,
+            max_retries=max_retries,
+            task_timeout_seconds=task_timeout_seconds,
+            attempt_timeout_seconds=attempt_timeout_seconds,
+            buffer_cap_bytes=buffer_cap_bytes,
+            aider_cmd=aider_cmd,
+            task_instruction=task_instruction,
+            resolved_test_executable=resolved_test_executable,
+            cancel_event=cancel_event,
+            process_observer=process_observer,
+            commit_requested=commit_requested,
+            rollback_on_failure=rollback_on_failure,
+            repo_map_tokens=repo_map_tokens,
+            target_files=target_files,
+            aider_max_tokens=aider_max_tokens,
+            aider_reasoning_budget_tokens=aider_reasoning_budget_tokens,
+            aider_python=aider_python,
+            policy_path=policy_path,
+            policy_provenance=policy_provenance,
+            test_profile=test_profile,
+        )
+    return _run_bounded_loop_reserved(
+        repo_root=repo_root,
+        spec_path=spec_path,
+        task_id=task_id,
+        profile=profile,
+        endpoint_url=endpoint_url,
+        model_name=model_name,
+        max_retries=max_retries,
+        task_timeout_seconds=task_timeout_seconds,
+        attempt_timeout_seconds=attempt_timeout_seconds,
+        buffer_cap_bytes=buffer_cap_bytes,
+        aider_cmd=aider_cmd,
+        task_instruction=task_instruction,
+        resolved_test_executable=resolved_test_executable,
+        cancel_event=cancel_event,
+        process_observer=process_observer,
+        commit_requested=commit_requested,
+        rollback_on_failure=rollback_on_failure,
+        repo_map_tokens=repo_map_tokens,
+        target_files=target_files,
+        aider_max_tokens=aider_max_tokens,
+        aider_reasoning_budget_tokens=aider_reasoning_budget_tokens,
+        aider_python=aider_python,
+    )

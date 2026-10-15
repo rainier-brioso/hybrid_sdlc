@@ -6,8 +6,11 @@ tests in an isolated Git worktree; you review its patch before integrating it.
 
 The host-native CLI and MCP server support synchronous tasks and persisted
 asynchronous jobs, bounded retries/timeouts, cancellation, named test profiles,
-and atomic run artifacts. Spec Kit templates support specification and task
-planning; they do not replace the execution or review workflow.
+and atomic run artifacts. A [lightweight planning workflow](docs/planning.md)
+distinguishes fast modifications from dependent changes, with concise committed
+task contracts and risk-based review. No Spec Kit installation is required.
+Optional committed [task policies](docs/task-policy.md) check identity and limit
+ceilings, then reject out-of-scope exported patches before scoped commits.
 
 ## Install and configure
 
@@ -45,7 +48,8 @@ hybrid-sdlc check --repo-root . --json
 hybrid-sdlc run-task spec.md --repo-root . --task-id TASK-001 --test-profile tests --json
 ```
 
-Use a task ID from your spec. Model availability is not inference readiness.
+Use one committed contract per task; the task ID is a label, not a section parser.
+Model availability is not inference readiness.
 The result identifies the isolated checkout and review patch; passing tests
 does not automatically apply it to the source checkout. Review the exact diff.
 For the complete step-by-step workflow, including Windows/POSIX paths,
@@ -150,6 +154,8 @@ Packaging, managed lifecycle, guarded runtime diagnostics and the bounded
 [security review](docs/security.md) are implemented; one controlled idle cycle
 is recorded. Comparative benchmarks and clean-machine release rehearsals are
 still pending: this is not yet a fully validated supported release.
+The [clean-install rehearsal protocol](docs/release-rehearsal.md) and its
+unexecuted evidence template describe the Windows/POSIX checks still required.
 Windows background survival requires
 a host allowing Job Object breakaway and is not proven on restrictive runners.
 See the [plan](docs/implementation_plan.md) and [tasks](docs/implementation_tasks.md)

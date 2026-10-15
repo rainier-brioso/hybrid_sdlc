@@ -1,0 +1,136 @@
+{
+  "schema_version": 1,
+  "type": "clean_install_rehearsal",
+  "status": "template_unexecuted",
+  "record_id": null,
+  "os": {
+    "family": null,
+    "release": null,
+    "architecture": null
+  },
+  "rehearsal": {
+    "started_at_utc": null,
+    "finished_at_utc": null,
+    "clean_account_or_vm": null,
+    "fresh_environment": null,
+    "working_directory_alias": null,
+    "verified_commit": null
+  },
+  "prerequisite_gate_evidence_ref": null,
+  "artifact": {
+    "filename": null,
+    "sha256": null,
+    "same_wheel_as_other_os": null,
+    "sdist_filename": null,
+    "sdist_sha256": null,
+    "python_version": null,
+    "uv_version": null,
+    "hybrid_sdlc_version": null,
+    "aider_version": null,
+    "mcp_version": null,
+    "aider_python_alias": null
+  },
+  "fixture": {
+    "fixture_id": null,
+    "source_baseline_commit": null,
+    "baseline_tree_oid": null,
+    "spec_blob_oid": null,
+    "bundle_sha256": null,
+    "source_status_before": null,
+    "source_status_after": null,
+    "config_sha256": null,
+    "test_executable_alias": null,
+    "profile_id": null,
+    "endpoint_id": null,
+    "model_id": null
+  },
+  "phases": {
+    "artifact_install": {
+      "status": "not_run",
+      "evidence_ref": null,
+      "notes": null
+    },
+    "import_origins": {
+      "status": "not_run",
+      "evidence_ref": null,
+      "origins_aliases": [],
+      "environment_leak_check": null,
+      "notes": null
+    },
+    "availability": {
+      "status": "not_run",
+      "health_check_non_generating": null,
+      "evidence_ref": null,
+      "notes": null
+    },
+    "sync_delegation": {
+      "status": "not_run",
+      "real_endpoint": null,
+      "run_id": null,
+      "run_status": null,
+      "test_exit_code": null,
+      "independent_test_exit_code": null,
+      "review_patch_sha256": null,
+      "changed_files": [],
+      "patch_reviewed": null,
+      "case_tests_passed": null,
+      "source_unchanged": null,
+      "evidence_ref": null,
+      "notes": null
+    },
+    "async_disconnect_reconnect": {
+      "status": "not_run",
+      "host_id": null,
+      "host_version": null,
+      "adapter_before_id": null,
+      "adapter_before_pid_alias": null,
+      "job_id": null,
+      "observed_running_before_disconnect": null,
+      "disconnect_method": null,
+      "disconnected_at_utc": null,
+      "adapter_exited": null,
+      "adapter_after_id": null,
+      "adapter_after_pid_alias": null,
+      "reconnected_at_utc": null,
+      "worker_before_identity_ref": null,
+      "worker_after_identity_ref": null,
+      "worker_identity_continued": null,
+      "terminal_status": null,
+      "host_refusal_code": null,
+      "no_job_allocated_on_refusal": null,
+      "run_id": null,
+      "real_endpoint": null,
+      "independent_test_exit_code": null,
+      "review_patch_sha256": null,
+      "changed_files": [],
+      "source_unchanged": null,
+      "patch_reviewed": null,
+      "case_tests_passed": null,
+      "evidence_ref": null,
+      "notes": null
+    },
+    "cleanup": {
+      "status": "not_run",
+      "all_jobs_terminal": null,
+      "remote_processing_finished": null,
+      "dry_run_reviewed": null,
+      "known_artifact_count": null,
+      "removed_artifact_ids": [],
+      "deletion_verified": null,
+      "source_unchanged": null,
+      "evidence_ref": null,
+      "notes": null
+    },
+    "uninstall": {
+      "status": "not_run",
+      "host_closed": null,
+      "hybrid_sdlc_absent": null,
+      "cli_entrypoint_absent": null,
+      "aider_preserved": null,
+      "evidence_ref": null,
+      "notes": null
+    }
+  },
+  "evidence_location_alias": null,
+  "limitations": []
+}
