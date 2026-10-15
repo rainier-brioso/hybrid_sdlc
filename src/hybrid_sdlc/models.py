@@ -97,6 +97,7 @@ class RunResult(BaseSchemaModel):
     finished_at: str
     total_duration_seconds: float
     baseline_commit: str | None = None
+    worker_model: str | None = None
     policy_path: str | None = None
     policy_sha256: str | None = None
     spec_sha256: str | None = None

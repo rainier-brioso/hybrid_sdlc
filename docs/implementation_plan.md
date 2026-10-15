@@ -149,8 +149,9 @@ observable uncertainty. Workers receive bounded context, not full histories.
 Review checks the exact patch; integration is a distinct authorized action.
 
 Allowed paths and role labels in Markdown are currently review guidance.
-Checked execution policy, patch-scope enforcement and persisted acceptance
-records are planned follow-ups, not implemented sandbox/capability claims.
+Checked execution policy and patch-scope enforcement validate explicit policy
+inputs and final candidates. Persisted acceptance is a separate explicit CLI
+operation; none of these checks is an OS sandbox or role-capability boundary.
 Use one local worker at a time, reassess scope when assumptions fail, and
 never silently expand retries or switch to a paid provider. Existing user
 `.specify/` and committed specs remain untouched and usable.
@@ -434,8 +435,9 @@ HSDLC-071–074 are complete: initializer coupling is removed, fast/planned
 contracts and the shipped delegation workflow are published, and explicitly
 selected task policies check identity, limit ceilings and committed provenance.
 Their path declarations are enforced against final exports and optional scoped
-commit trees. HSDLC-075's exact-artifact acceptance record remains unimplemented;
-scope/test success is not recorded review acceptance. HSDLC-076
+commit trees. HSDLC-075 adds explicit CLI [exact-artifact review records](review-acceptance.md)
+and independent candidate verification; scope/test success is not recorded review
+acceptance. HSDLC-076
 maintains a verification map; HSDLC-077 evaluates the workflow on the separately
 prepared Metria weight-import feature with observed failures/retries and costs.
 HSDLC-078/079 specify local role profiles and host-native subagent routing now,

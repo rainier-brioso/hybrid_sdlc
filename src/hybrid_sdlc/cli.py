@@ -25,6 +25,7 @@ from hybrid_sdlc.git_tools import validate_committed_path
 from hybrid_sdlc.host_setup import HostSetupError, setup_antigravity
 from hybrid_sdlc.job_manager import InvalidJobTransitionError, JobManager, JobRecord, JobStatus
 from hybrid_sdlc.models import ProbeResult, RunStatus
+from hybrid_sdlc.review import read_review_status, record_review
 from hybrid_sdlc.runtime_strata import RuntimeManagementError
 from hybrid_sdlc.runtime_strata import configure as configure_strata_runtime
 from hybrid_sdlc.runtime_strata import diagnose as diagnose_strata_runtime
@@ -144,7 +145,8 @@ def _runtime_error(exc: RuntimeManagementError, *, json_mode: bool) -> NoReturn:
             err=True,
         )
         raise click.exceptions.Exit(int(exc.exit_code)) from exc
-    raise click.ClickException(exc.message) from exc
+    click.echo(f"Error: {exc.message}", err=True)
+    raise click.exceptions.Exit(int(exc.exit_code)) from exc
 
 
 @runtime_strata_group.command("configure")
@@ -823,6 +825,98 @@ def worker_cmd(job_id: str, repo_root: Path | None, json_mode: bool) -> None:
         if record.failure_reason:
             click.echo(f"  Failure: {record.failure_reason}")
     sys.exit(ExitCode.SUCCESS if record.status is JobStatus.COMPLETED else ExitCode.TASK_FAILED)
+
+
+@cli.group("review")
+def review_group() -> None:
+    """Record or inspect human/model review of one exact run artifact."""
+
+
+def _review_error(exc: HybridSDLCError, *, json_mode: bool) -> NoReturn:
+    if json_mode:
+        click.echo(
+            json.dumps(
+                {"error": {"code": exc.code, "message": exc.message, "details": exc.details}},
+                indent=2,
+            ),
+            err=True,
+        )
+        raise click.exceptions.Exit(int(exc.exit_code)) from exc
+    click.echo(f"Error: {exc.message}", err=True)
+    raise click.exceptions.Exit(int(exc.exit_code)) from exc
+
+
+@review_group.command("status")
+@click.argument("run_record", type=click.Path(path_type=Path))
+@click.option("--repo-root", type=click.Path(path_type=Path), required=True)
+@click.option("--json", "json_mode", is_flag=True)
+def review_status_cmd(run_record: Path, repo_root: Path, json_mode: bool) -> None:
+    """Check current review state for one explicitly selected run record."""
+    try:
+        result = read_review_status(run_record=run_record, repo_root=repo_root)
+    except HybridSDLCError as exc:
+        _review_error(exc, json_mode=json_mode)
+    if json_mode:
+        click.echo(result.model_dump_json(indent=2))
+    else:
+        state = result.judgment if result.current else "not current"
+        click.echo(f"Run {result.run_id}: {state} (revision {result.revision})")
+        click.echo(f"  baseline: {result.baseline_commit}")
+        click.echo(f"  patch SHA-256: {result.patch_sha256}")
+        if result.reason:
+            click.echo(f"  reason: {result.reason}")
+
+
+@review_group.command("record")
+@click.argument("run_record", type=click.Path(path_type=Path))
+@click.option("--repo-root", type=click.Path(path_type=Path), required=True)
+@click.option("--expected-baseline", required=True)
+@click.option("--expected-patch-sha256", required=True)
+@click.option("--expected-revision", type=click.IntRange(min=0), required=True)
+@click.option("--reviewer", required=True)
+@click.option("--reviewer-kind", type=click.Choice(["human", "model"]), required=True)
+@click.option("--reviewer-model", default=None)
+@click.option("--decision", type=click.Choice(["accepted", "rejected", "blocked"]), required=True)
+@click.option("--test-profile", "profile_name", default=None)
+@click.option("--json", "json_mode", is_flag=True)
+def review_record_cmd(
+    run_record: Path,
+    repo_root: Path,
+    expected_baseline: str,
+    expected_patch_sha256: str,
+    expected_revision: int,
+    reviewer: str,
+    reviewer_kind: str,
+    reviewer_model: str | None,
+    decision: str,
+    profile_name: str | None,
+    json_mode: bool,
+) -> None:
+    """Record a judgment and run the named test profile before accepting."""
+    try:
+        result = record_review(
+            run_record=run_record,
+            repo_root=repo_root,
+            expected_baseline=expected_baseline,
+            expected_patch_sha256=expected_patch_sha256,
+            expected_revision=expected_revision,
+            reviewer_kind=reviewer_kind,  # type: ignore[arg-type]
+            reviewer=reviewer,
+            reviewer_model=reviewer_model,
+            judgment=decision,  # type: ignore[arg-type]
+            profile_name=profile_name,
+        )
+    except HybridSDLCError as exc:
+        _review_error(exc, json_mode=json_mode)
+    if json_mode:
+        click.echo(result.model_dump_json(indent=2))
+    else:
+        click.echo(f"Run {result.run_id}: {result.judgment.upper()} (revision {result.revision})")
+        click.echo(f"  reviewer: {result.reviewer} ({result.reviewer_kind})")
+        if result.evidence is not None:
+            click.echo(
+                f"  independent tests: exit {result.evidence.exit_code}, unchanged={result.evidence.unchanged}"
+            )
 
 
 @cli.command("mcp")
