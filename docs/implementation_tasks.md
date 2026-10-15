@@ -1619,6 +1619,20 @@ their own evidence exists. Existing benchmark/release gates are not waived.
     unverified; the opt-in distribution install was not rerun in this slice.
     Production behavior and CI requirements are unchanged. No live inference,
     Docker/host operation, clean-machine rehearsal or Metria change was made.
+  - CI follow-up (2026-10-16): the [initial macOS run](https://github.com/rainier-brioso/hybrid_sdlc/actions/runs/38813140551)
+    observed no health GET in the one-second slow-drip test window, consistent
+    with cold worker startup consuming its deadline. The fixture now uses a
+    three-second configured probe deadline and requires both GETs, a partial
+    body, the path-specific timeout code, and client disconnect before the
+    twenty-second response completes. Total diagnostic time remains bounded;
+    production timeout/startup semantics and CI gates are unchanged. A separate
+    regression checks exact process/request timeout forwarding. The map links
+    both tests and distinguishes loopback HTTP evidence from real Strata.
+    Local follow-up validation: 985 passed / 11 existing environment/opt-in
+    skips, 83.04% coverage; repeated slow-drip variants, affected integration and
+    worker-unit modules, formatting/lint, strict mypy and documentation/diff
+    checks passed. Independent review found no material issue. Hosted macOS
+    confirmation requires the new CI run, not the Windows rerun.
 
 - [ ] **HSDLC-077 — Evaluate the workflow on Metria weight import**
   Depends on: HSDLC-073, HSDLC-074, HSDLC-075, HSDLC-076.

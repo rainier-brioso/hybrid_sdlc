@@ -34,6 +34,8 @@
       "automated_test_nodeids": [
         "tests/integration/test_runtime_strata_cli.py::test_configure_uses_packaged_assets_not_repository_compose",
         "tests/integration/test_runtime_strata_cli.py::test_diagnose_readiness_success_reports_ready",
+        "tests/integration/test_runtime_strata_cli.py::test_diagnose_get_wall_clock_bounds_slow_drip",
+        "tests/unit/test_probe_worker.py::test_probe_worker_forwards_exact_process_and_request_deadline",
         "tests/integration/test_runtime_strata_cli.py::test_unconfigured_actions_return_structured_failure",
         "tests/integration/test_runtime_strata_cli.py::test_log_tail_is_forwarded_without_following",
         "tests/unit/test_runtime_strata.py::test_start_stop_restart_use_only_owned_compose_project_and_never_build_or_pull",
@@ -44,7 +46,7 @@
       "installed_status": "not_run",
       "live_status": "not_run",
       "prerequisites": ["Docker Desktop or Docker Engine on a supported local context; explicit operator configuration."],
-      "limitations": ["Automated runtime tests use fake Docker/process/network boundaries; they do not start Docker or Strata.", "No current installed runtime or live model readiness check is recorded."]
+      "limitations": ["Automated runtime tests use temporary state, fake Docker and mocked or loopback HTTP; they do not start Docker or Strata.", "The slow-drip loopback check observes partial-body delivery, probe timeout and disconnection; it is not real Strata telemetry.", "No current installed runtime or live model readiness check is recorded."]
     },
     {
       "id": "endpoint-check",
