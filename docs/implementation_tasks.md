@@ -1691,6 +1691,122 @@ their own evidence exists. Existing benchmark/release gates are not waived.
   implementing setup automation first. No host settings or model service was
   changed by this clarification.
 
+## Experimental host continuation
+
+Decision (2026-10-17): HSDLC-080–082 below are completed historical experiments.
+Their App Server transport and options are superseded by HSDLC-083's queue-only
+bridge. Keep their dated evidence; do not interpret their old acceptance criteria
+as the current CLI contract.
+
+- [x] **HSDLC-080 — Add an opt-in CLI Codex completion bridge**
+  Acceptance:
+  - Expose `hybrid-sdlc bridge codex` for one existing job, locally observing
+    terminal state without model-driven status polls. Keep MCP APIs unchanged.
+  - Own a new App Server connection/thread only; never attach to existing
+    desktop chats. Host-model continuation is explicit and may incur usage.
+  - Deliver allowlisted metadata as tool output, await a matching host turn,
+    bound protocol/time/output, deny unexpected permissions, and clean up only
+    owned processes. Do not imply patch acceptance or source integration.
+  - Persist a confined, locked delivery intent before sending; fail closed on
+    duplicate or uncertain delivery. Retention must preserve replay guards.
+  - Cover delayed completion, terminal failure/cancellation, duplicates,
+    malformed/unsupported/disconnected/timed-out host responses, confidentiality,
+    confinement and cleanup with synthetic jobs and a fake App Server.
+  - Record automated results separately from an authorized installed/live host
+    rehearsal. No real Codex generation or Strata request follows from tests.
+  Design note (2026-10-16): native MCP logging receipt did not establish host
+  wakeup. This experimental adapter starts a new outcome-reporting thread; it
+  does not yet resume an analyst's earlier planning turn or implement a full
+  orchestration controller. See [bridge protocol](codex-completion-bridge.md).
+  Validation (2026-10-16): 1,015 passed / 12 environment or opt-in skips,
+  82.72% coverage on Windows/Python 3.12; formatting/lint, strict mypy on 28
+  source files, offline documentation references/examples and diff checks passed.
+  Independent review found POSIX orphan cleanup and parser-limit error handling
+  issues; both were fixed with regressions and the follow-up found no remaining
+  material issue. Windows Job Object breakaway, directory symlinks, POSIX
+  permissions and opt-in installed distribution validation remain separate.
+  Synthetic fake-host tests do not establish live Codex generation or desktop
+  session wakeup. No real host-model, Strata or Docker operation was performed.
+
+- [x] **HSDLC-081 — Rehearse the bridge with an installed Codex host**
+  Depends on: HSDLC-080.
+  Rehearsal 2026-10-17: the initial inherited-MCP block was resolved with
+  explicit per-thread disabling and strict disabled-inventory validation.
+  One authorized synthetic result reached an owned Codex thread as tool output;
+  matching completion and receipt-based replay refusal were observed. See
+  [sanitized evidence](evidence/codex-bridge-rehearsal-20261017.md). Usage was
+  unavailable. This was the source CLI plus installed Codex host, not a clean
+  wheel install, original desktop-chat wakeup or full-spec orchestration.
+  Acceptance:
+  - Obtain explicit authorization for one synthetic host-model continuation;
+    record the Hybrid SDLC build, Codex version/provider and effective limits.
+    Do not submit real application work or use member data for this rehearsal.
+  - Observe one new bridge-owned thread and matching completed turn after a
+    synthetic job reaches terminal state, with no model-issued status polling.
+    Confirm the delivered result remains tool output, not a new user command.
+  - Verify the receipt prevents replay; retain ambiguous failures without
+    automatic resend. Report actual observed usage or unavailable usage.
+  - Keep this outcome-only rehearsal distinct from resuming an earlier analyst
+    planning turn, existing desktop-chat wakeup and whole-feature orchestration.
+    Do not start Strata, install packages or rewrite host settings to fill a gap.
+
+- [x] **HSDLC-082 — Continue an explicitly selected saved planner thread**
+  Depends on: HSDLC-080, HSDLC-081.
+  Live synthetic rehearsal 2026-10-17: the selected thread ID and earlier seed
+  turn were retained; the continued model recalled a checkpoint absent from
+  the completion payload. Delivery was standalone tool output, and the durable
+  receipt refused a duplicate. See [evidence](evidence/codex-saved-thread-rehearsal-20261017.md).
+  Usage unavailable. This is saved-thread context continuation with integrations
+  disabled and a read-only turn, not open-desktop wakeup or full orchestration.
+  Validation: 1,045 passed / 12 environment or opt-in skips, 82.86% coverage;
+  lint/format, source typing, documentation checks and independent review passed.
+  Open-desktop follow-up 2026-10-17: a separate diagnostic (not the exclusive-owner
+  CLI) was rejected at resume with `-32600`, thread already has an active writer.
+  No model turn was requested. See [evidence](evidence/codex-open-desktop-rehearsal-20261017.md).
+  HSDLC-083 selects the supported queue command for the desktop handoff instead.
+  Acceptance:
+  - Expose CLI thread selection plus exclusive-owner acknowledgment; validate
+    before host access. Never infer the target or fall back to creating a thread.
+  - Resume the selected history without replacing its instructions, cwd,
+    model/provider; narrow integrations and completion permissions explicitly.
+  - Reject active/unknown/error states and target mismatches; use a cooperative
+    per-repository thread lock and preserve durable job/target replay guards.
+  - Demonstrate a synthetic earlier-turn checkpoint is recalled after a
+    completion delivered as standalone tool output, absent from that payload.
+    Record host/build/provider, exact matching IDs, replay refusal and actual
+    usage or unavailable usage. Do not use real project or member data.
+  - Keep cross-App-Server races, desktop UI wakeup, active-turn handoff and
+    full planner/tool orchestration explicitly outside the proven boundary.
+
+- [x] **HSDLC-083 — Add an explicit queued-message completion transport**
+  Depends on: HSDLC-080, HSDLC-082.
+  Research 2026-10-17: one installed `codex queue` message caused an automatic
+  visible ACK in the already-open idle disposable chat, confirmed by the user
+  before any refresh/history read and then verified against the same thread's
+  completed turn. See [evidence](evidence/codex-queue-desktop-rehearsal-20261017.md).
+  Scope decision: replace the experimental App Server runtime transport with
+  queue delivery; retain the investigation and dated observations in docs.
+  Acceptance:
+  - Make `bridge codex` queue-only and bind an authorized exact thread UUID.
+    Remove unused App Server RPC, fixtures and new/saved-thread options; keep
+    dated historical evidence. Do not infer or create a target conversation.
+  - Keep local job waiting outside model calls, bounded command execution,
+    minimized data, and durable at-most-one-attempt receipt protection.
+  - Distinguish queue acceptance, model-turn completion and desktop visibility;
+    text delivery must not claim to be structured tool output or active-turn resume.
+  - Test failure/timeout/uncertain delivery without resend, target validation,
+    CLI contracts, confinement, privacy, concurrency and old-receipt replay refusal.
+  - Describe the selected chat's existing context/permissions and distinguish
+    the direct queue desktop probe from installed integrated-CLI validation.
+  Validation (2026-10-17): queue-only implementation and fixture replace the
+  unused App Server runtime client. Focused regressions: 16 passed / 1 Windows
+  symlink privilege skip. Required full suite: 1,002 passed / 12 environment or
+  opt-in skips, 82.91% coverage on Windows/Python 3.12. Formatting, lint, strict
+  source typing, documentation inventory and independent review passed. No new
+  real Codex message, model call or installed-package rehearsal was performed.
+  Cross-repository queue concurrency and repeated desktop reliability remain
+  unverified; the earlier dated direct queue observation is retained separately.
+
 ## Deferred Work — Not Required for the Initial Release
 
 - [ ] **HSDLC-D06 — Evaluate an optional fully local persona workflow** after Strata endpoint and task compatibility are validated.

@@ -76,6 +76,17 @@ codex mcp remove hybrid-sdlc
 These commands manage the Codex user's MCP configuration. `remove` deletes the
 named registration from that configuration.
 
+## Optional CLI completion bridge
+
+The experimental [completion bridge](../codex-completion-bridge.md) is separate
+from MCP registration. `hybrid-sdlc bridge codex` watches an existing job and
+queues its terminal metadata with `codex queue`, requiring the exact target chat
+UUID through `--thread-id` and an explicit `--allow-model-continuation` flag.
+The selected chat keeps its existing context, permissions and integrations;
+host inference may incur usage. The bridge reports queue acceptance and does
+not wait for a model response. The dated desktop probe and the limits of that
+observation are recorded in the bridge documentation.
+
 ## Smoke test
 
 After restarting or refreshing Codex so it loads the new server, confirm that

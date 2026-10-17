@@ -13,6 +13,12 @@ can run or resume a task.
 
 ## Shared MCP API surface
 
+The separate experimental [CLI completion bridge](codex-completion-bridge.md)
+does not change this MCP host matrix. It queues terminal metadata to an explicitly
+selected existing Codex chat, requires host-model continuation approval, and
+reports queue acceptance. A dated synthetic desktop response is documented
+separately from automated checks and integrated installed-package validation.
+
 The server exposes `check_local_model`, `run_spec_task_sync`,
 `submit_spec_job`, `get_job_status`, and `cancel_spec_job`. Synchronous calls
 can report start and finish progress through MCP. Asynchronous work is

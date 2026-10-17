@@ -154,6 +154,33 @@
       "limitations": ["Tests use temporary artifacts; they do not inspect or remove a user's retained run data."]
     },
     {
+      "id": "codex-completion-bridge",
+      "cli_operations": ["bridge codex"],
+      "mcp_tools": [],
+      "automated_test_nodeids": [
+        "tests/integration/test_bridge_cli.py::test_bridge_queues_allowlisted_message_and_reports_acceptance_only",
+        "tests/integration/test_bridge_cli.py::test_bridge_waits_for_terminal_job_before_queueing_and_does_not_cancel_job",
+        "tests/integration/test_bridge_cli.py::test_wait_timeout_does_not_queue_or_cancel_job",
+        "tests/integration/test_bridge_cli.py::test_terminal_failure_and_cancellation_messages_use_safe_reason_vocabulary",
+        "tests/integration/test_bridge_cli.py::test_ambiguous_queue_result_is_persisted_and_never_retried",
+        "tests/integration/test_bridge_cli.py::test_job_receipt_prevents_retargeting_after_acceptance",
+        "tests/integration/test_bridge_cli.py::test_existing_or_malformed_receipt_blocks_invocation",
+        "tests/integration/test_bridge_cli.py::test_failed_accepted_receipt_persistence_leaves_replay_blocking_intent",
+        "tests/integration/test_bridge_cli.py::test_concurrent_queue_to_same_thread_fails_before_writing_intent",
+        "tests/integration/test_bridge_cli.py::test_cli_requires_thread_and_opt_in_and_help_describes_queue_boundary",
+        "tests/unit/test_codex_bridge.py::test_queue_requires_explicit_opt_in_and_uuid_before_invoking_codex",
+        "tests/unit/test_codex_bridge.py::test_payload_contains_only_allowlisted_terminal_metadata",
+        "tests/unit/test_codex_bridge.py::test_cancelled_queue_result_is_ambiguous_and_intent_is_preserved",
+        "tests/unit/test_artifacts.py::test_clean_preserves_codex_bridge_replay_guards"
+      ],
+      "protocol_paths": ["docs/codex-completion-bridge.md", "docs/hosts/codex.md"],
+      "evidence_paths": ["docs/evidence/codex-bridge-rehearsal-20261017.md", "docs/evidence/codex-saved-thread-rehearsal-20261017.md", "docs/evidence/codex-open-desktop-rehearsal-20261017.md", "docs/evidence/codex-queue-desktop-rehearsal-20261017.md"],
+      "installed_status": "not_run",
+      "live_status": "historical_observation",
+      "prerequisites": ["Existing persisted trusted job; installed/authenticated Codex CLI supporting queue; exact target chat UUID and explicit host-model continuation approval."],
+      "limitations": ["The dated direct codex queue probe produced an automatic desktop response; it does not verify the integrated CLI from an installed package or repeated reliability.", "Queue acceptance does not prove model completion or desktop visibility; the bridge does not collect model replies or token usage.", "The selected chat retains its context, permissions and integrations; this CLI handoff is not an MCP Tasks notification or a whole-feature controller.", "An uncertain delivery is not automatically retried; receipt removal defeats replay protection. Earlier App Server records describe a removed experimental transport.", "Per-thread advisory locks coordinate bridge calls within one repository; concurrent queueing from different repositories remains unverified."]
+    },
+    {
       "id": "distribution-and-meta",
       "cli_operations": [],
       "mcp_tools": [],
@@ -174,7 +201,7 @@
   "excluded_internal_surfaces": [],
   "gaps": [
     "No current clean-machine wheel/sdist installation and user-level host registration/reload rehearsal is recorded.",
-    "No current live endpoint, full host tool-use matrix, Windows background survival proof, or host wakeup proof is recorded.",
+    "No current live endpoint, full host tool-use matrix, or Windows background survival proof is recorded; the dated direct codex queue wakeup observation is not an installed-package rehearsal of the integrated bridge.",
     "Do not infer product regressions from absent harness coverage or infer passing live behavior from fixture tests."
   ]
 }

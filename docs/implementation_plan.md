@@ -19,6 +19,15 @@ committed-task execution, isolated worktrees, bounded retries and explicit
 review/integration. [Planning](planning.md) defines fast versus planned work;
 runtime enhancements have separate acceptance tasks and are not assumed done.
 
+The optional experimental [Codex completion bridge](codex-completion-bridge.md)
+adds a CLI-only outcome handoff for one existing job. Local waiting precedes an
+explicitly authorized `codex queue` message to a selected existing chat UUID.
+The bridge records queue acceptance, not model-turn completion. The chat retains
+its own history, permissions and integrations. A dated synthetic desktop probe
+observed an automatic response; installed/live acceptance of this CLI integration
+remains separate from fixture tests. The App Server investigation is retained as
+historical evidence; its unused runtime transport has been removed.
+
 ---
 
 ## 1. Architectural Decisions & Resolution of Review Findings

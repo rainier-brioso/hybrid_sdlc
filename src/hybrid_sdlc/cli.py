@@ -13,6 +13,7 @@ import click
 from hybrid_sdlc import __version__
 from hybrid_sdlc.aider_runner import run_bounded_loop, validate_aider_target_files
 from hybrid_sdlc.artifacts import clean_artifacts
+from hybrid_sdlc.codex_bridge import run_codex_bridge
 from hybrid_sdlc.command_profiles import resolve_profile_executable
 from hybrid_sdlc.config import ServerCandidateConfig, load_config, validate_endpoint_url
 from hybrid_sdlc.errors import (
@@ -917,6 +918,87 @@ def review_record_cmd(
             click.echo(
                 f"  independent tests: exit {result.evidence.exit_code}, unchanged={result.evidence.unchanged}"
             )
+
+
+@cli.group("bridge")
+def bridge_group() -> None:
+    """Experimental, explicitly authorized host-continuation adapters."""
+
+
+@bridge_group.command("codex")
+@click.argument("job_id")
+@click.option("--repo-root", type=click.Path(path_type=Path), required=True)
+@click.option(
+    "--allow-model-continuation",
+    is_flag=True,
+    help="Authorize queueing one terminal job summary into the selected Codex conversation.",
+)
+@click.option(
+    "--thread-id",
+    required=True,
+    help="UUID of the existing Codex conversation that should receive the queued message.",
+)
+@click.option("--codex-executable", default="codex", show_default=True)
+@click.option("--wait-timeout", type=click.FloatRange(0, 86400), default=1800.0, show_default=True)
+@click.option("--queue-timeout", type=click.FloatRange(0.1, 3600), default=30.0, show_default=True)
+@click.option("--poll-interval", type=click.FloatRange(0.01, 5), default=0.5, show_default=True)
+@click.option("--json", "json_mode", is_flag=True, help="Output a compact bridge receipt or error.")
+def bridge_codex_cmd(
+    job_id: str,
+    repo_root: Path,
+    allow_model_continuation: bool,
+    thread_id: str,
+    codex_executable: str,
+    wait_timeout: float,
+    queue_timeout: float,
+    poll_interval: float,
+    json_mode: bool,
+) -> None:
+    """Wait for an existing job and queue its bounded status summary into a Codex chat.
+
+    Queue acceptance does not prove the chat responded. The opt-in can incur usage with your
+    configured Codex provider. This command does not accept patches or integrate changes.
+    """
+    if not allow_model_continuation:
+        _async_error(
+            "Queue delivery requires --allow-model-continuation; the queued message may trigger model usage.",
+            code="BRIDGE_OPT_IN_REQUIRED",
+            exit_code=ExitCode.POLICY_ERROR,
+            json_mode=json_mode,
+        )
+    try:
+        result = run_codex_bridge(
+            repo_root,
+            job_id,
+            allow_model_continuation=allow_model_continuation,
+            thread_id=thread_id,
+            codex_executable=codex_executable,
+            wait_timeout_seconds=wait_timeout,
+            queue_timeout_seconds=queue_timeout,
+            poll_interval_seconds=poll_interval,
+        )
+    except HybridSDLCError as exc:
+        _async_error(exc.message, code=exc.code, exit_code=exc.exit_code, json_mode=json_mode)
+    except OSError:
+        _async_error(
+            "Bridge I/O failed; inspect the delivery receipt before any further action.",
+            code="BRIDGE_IO_ERROR",
+            exit_code=ExitCode.INTERNAL_ERROR,
+            json_mode=json_mode,
+        )
+    except KeyboardInterrupt:
+        _async_error(
+            "Bridge interrupted; the underlying job was not cancelled. "
+            "If delivery had started, inspect its receipt before any further action.",
+            code="BRIDGE_INTERRUPTED",
+            exit_code=ExitCode.CANCELLED,
+            json_mode=json_mode,
+        )
+    if json_mode:
+        click.echo(json.dumps(result, indent=2))
+    else:
+        click.echo("Codex bridge finished; this is not job or patch acceptance.")
+        click.echo(json.dumps(result, indent=2))
 
 
 @cli.command("mcp")

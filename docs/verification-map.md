@@ -40,6 +40,7 @@ inventory. Several journeys share safeguards and supporting tests.
 | Journey | Automated/installed evidence | Remaining installed/live boundary |
 | --- | --- | --- |
 | Install and launch | Distribution archive checks, isolated wheel/sdist/rebuilt-wheel imports and help | Clean Windows and POSIX client rehearsal remains HSDLC-069 |
+| Codex completion bridge | Queue CLI contracts and synthetic job/command tests; dated direct queue desktop response and earlier App Server investigations | Queue acceptance does not prove a response; integrated installed-package rehearsal, repeated reliability and full orchestration remain unverified |
 | Endpoint availability/readiness | CLI/MCP request validation and mocked probe outcomes | Historical Strata fixture observations only; readiness generates and needs operator approval |
 | Synchronous delegation and policy | CLI/MCP handlers, fake-Aider E2E, real Git isolation, committed-policy/scope checks | Dated installed-SDK and Antigravity smoke records are not current-build or real-project proof |
 | Submit, poll and cancel | Persisted transitions, bounded waits, process cleanup and SDK tests | Supported-host real adapter survival is separate; restrictive Windows hosts fail closed |
