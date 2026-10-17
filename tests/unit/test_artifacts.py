@@ -123,6 +123,26 @@ def test_clean_artifacts_retention(tmp_path: Path) -> None:
     assert lock_file.exists()
 
 
+def test_clean_preserves_codex_bridge_replay_guards(tmp_path: Path) -> None:
+    import os
+
+    receipt = tmp_path / ".hybrid_sdlc" / "bridges" / "codex" / "job-fixture.json"
+    receipt.parent.mkdir(parents=True)
+    receipt.write_text('{"delivery_status": "delivery_unknown"}', encoding="utf-8")
+    old_log = tmp_path / ".hybrid_sdlc" / "runs" / "expired.json"
+    old_log.parent.mkdir()
+    old_log.write_text("{}", encoding="utf-8")
+    expired = time.time() - 1000
+    os.utime(receipt, (expired, expired))
+    os.utime(old_log, (expired, expired))
+
+    for dry_run in (True, False):
+        result = clean_artifacts(tmp_path, older_than_seconds=500, dry_run=dry_run)
+        assert ".hybrid_sdlc/runs/expired.json" in result.deleted
+        assert all("bridges/codex" not in path for path in result.deleted)
+        assert receipt.is_file()
+
+
 def test_atomic_save_json_no_partial_reads(tmp_path: Path) -> None:
     """Readers must never observe partial JSON during concurrent writes (HSDLC-015).
 

@@ -15,6 +15,12 @@ Explicit [review records](docs/review-acceptance.md) bind a decision to the exac
 patch and baseline, with independently executed named-profile tests. Acceptance
 does not apply the patch, create a commit, or merge it.
 
+An experimental [Codex completion bridge](docs/codex-completion-bridge.md) watches
+an existing job locally and queues its outcome to an explicitly selected Codex
+chat, without model-driven status polling. It requires explicit host-model
+authorization. Queue acceptance is reported separately from a chat response or
+patch acceptance; the selected chat retains its existing context and permissions.
+
 ## Install and configure
 
 Prerequisites: Python 3.11–3.13, [uv](https://docs.astral.sh/uv/), Git, Aider,
