@@ -1807,6 +1807,19 @@ as the current CLI contract.
   Cross-repository queue concurrency and repeated desktop reliability remain
   unverified; the earlier dated direct queue observation is retained separately.
 
+- [ ] **HSDLC-086 — Make bounded readiness usable with Strata reasoning**
+  Depends on: HSDLC-085.
+  Evidence: [installed workflow/runtime setup](evidence/installed-workflow-runtime-20261018.md).
+  The current five-token probe exhausted its output while Strata was thinking;
+  one separate request with bounded output/reasoning produced an answer.
+  Acceptance:
+  - Correct the managed Strata readiness request without silently changing
+    backend-neutral requests, repository budgets or service defaults.
+  - Preserve finite request limits, activity coordination, conservative failure
+    classification and no automatic restart or retry of uncertain requests.
+  - Cover actual request parameters and malformed/empty/truncated responses;
+    verify one installed managed readiness call and record its exact outcome.
+
 - [x] **HSDLC-085 — Make the shipped skill orchestrate a feature from its spec**
   Depends on: HSDLC-075, HSDLC-083.
   Acceptance:
