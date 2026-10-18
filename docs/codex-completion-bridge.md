@@ -5,6 +5,18 @@ This CLI adapter waits locally for one existing Hybrid SDLC job, then uses
 existing Codex chat. It does not require model-driven status polling. The five
 MCP tools remain unchanged; this bridge is a separate foreground CLI command.
 
+This is the required notification component of the Codex async workflow and
+the currently verified delivery route, not an optional add-on within that
+workflow. It is still host-specific and explicitly authorized: arrange the
+target chat, continuation permission and a supported way to keep this bounded
+command running before submission, then launch it with the returned job ID.
+Neither submission nor MCP registration starts the bridge automatically. If
+these prerequisites are unavailable, disclose the limitation and agree on
+synchronous execution or manual status inspection; neither provides an async
+chat notification. Do not promise process survival that has not been verified
+on the selected host. Antigravity notification remains planned investigation,
+not a supported adapter.
+
 ## Setup and use
 
 Install and authenticate a Codex CLI that supports `codex queue` with `--thread`

@@ -75,8 +75,16 @@ paths and exclusions, checked against the complete final exported patch.
 4. Reviewer inspects the exact exported patch against the contract and source.
 5. Human or explicitly authorized integrator accepts and integrates it.
 
-For async runs, poll the same job until terminal; MCP provides no universal
-wakeup guarantee. An accepted patch is not automatically applied or merged.
+For Codex's notification-backed async workflow, arrange the exact authorized
+target chat, continuation permission and a supported bridge-process lifetime
+before submission. After obtaining the job ID, launch the separate
+[completion bridge](codex-completion-bridge.md) for that job before handing off
+the turn. The bridge is required for automatic notification, not an optional
+extra; MCP submission does not launch it. If prerequisites cannot be met, report
+the limitation and offer synchronous work or an explicitly agreed manual-status
+workflow. Bounded status waits remain for inspection/recovery, not automatic
+wakeup. Other hosts have no verified notification adapter; Antigravity research
+is tracked as HSDLC-087. An accepted patch is not automatically applied or merged.
 Dependent tasks start from a fresh committed baseline containing accepted
 prerequisites. Independent writers require separate worktrees and ownership;
 their combined change still needs integration checks. Serialize local inference

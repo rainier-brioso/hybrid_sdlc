@@ -1807,6 +1807,30 @@ as the current CLI contract.
   Cross-repository queue concurrency and repeated desktop reliability remain
   unverified; the earlier dated direct queue observation is retained separately.
 
+- [ ] **HSDLC-087 — Investigate Antigravity completion notification and continuation**
+  Depends on: HSDLC-083, HSDLC-084.
+  Scope: research and a separately authorized synthetic host probe, not a
+  notification adapter implementation or permission to message an arbitrary chat.
+  Acceptance:
+  - Inspect current official host documentation and supported local interfaces;
+    record host/build, sources and whether an existing chat can receive a
+    completion as model-visible input and start a follow-up response.
+  - Identify a safe, explicit target-chat selection method, continuation
+    authorization, command/process lifetime and payload trust boundary. Do not
+    infer Codex queue compatibility, invent thread IDs, bypass host ownership
+    or equate an MCP logging notification with delivery to the model.
+  - With separate approval, test one synthetic completion in the exact existing
+    idle chat. Distinguish command acceptance, notification receipt, model-visible
+    input, automatic response and resumption of a waiting turn; preserve negative
+    results and avoid source, secrets, member data and unrelated chat history.
+  - Assess minimized payloads, durable replay protection, uncertain delivery,
+    cancellation, busy/closed targets, timeout bounds and process survival.
+    Do not add retries or broaden host permissions to make a probe succeed.
+  - Document a supported CLI adapter proposal only if evidence warrants it;
+    otherwise record the unavailable capability and an honest synchronous or
+    manual-status fallback. No automatic Antigravity notification is claimed
+    until verified; implementing an adapter requires a separate bounded task.
+
 - [x] **HSDLC-086 — Make bounded readiness usable with Strata reasoning**
   Depends on: HSDLC-085.
   Evidence: [installed workflow/runtime setup](evidence/installed-workflow-runtime-20261018.md).
