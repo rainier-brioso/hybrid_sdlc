@@ -5,6 +5,14 @@ Kit installation, special directory layout, planning daemon or new MCP tool is
 required. The runner accepts an ordinary committed task file. These workflow
 rules guide the host; they are not a new runtime contract parser.
 
+The shipped `local-delegate` skill is the host-facing entrypoint for this full
+workflow, including taking a raw feature spec, preparing bounded contracts and
+configuration, managing an already configured Strata prerequisite, and reviewing
+each local result before dependent work. Its installed copies are self-contained:
+they must not depend on this development checkout or a bespoke handoff prompt.
+CLI/MCP installation alone does not load a skill into a host. Follow the host
+installation guide and verify the selected Hybrid SDLC skill in a fresh chat.
+
 ## Choose the planning path
 
 | Path | Use when | Planning artifact |

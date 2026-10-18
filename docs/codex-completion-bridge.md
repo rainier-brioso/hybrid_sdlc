@@ -43,8 +43,10 @@ or resumption of a suspended MCP call.
 An installed synthetic probe on 2026-10-17 produced an automatic response in an
 already-open idle desktop chat. The user observed it before any refresh or
 history read, and the matching completed turn was verified afterwards. This
-single observation is documented separately from automated tests and is not an
-installed-package rehearsal of this integrated CLI command.
+single observation is documented separately from automated tests. A later
+[installed-wheel rehearsal](evidence/codex-installed-queue-rehearsal-20261017.md)
+also delivered through this CLI, produced an observed automatic desktop response,
+and refused replay. Both are bounded observations, not repeated reliability proof.
 
 ## Bounds and interruption
 
@@ -97,6 +99,9 @@ selected workflow. Its results remain documented as historical experiments:
   the separate App Server was rejected because the desktop held an active writer.
 - [Queue desktop probe](evidence/codex-queue-desktop-rehearsal-20261017.md): one
   ordinary queued message produced the observed automatic desktop response.
+- [Installed queue bridge rehearsal](evidence/codex-installed-queue-rehearsal-20261017.md):
+  the installed wheel delivered one synthetic job completion into the same
+  visible chat, and its receipt prevented a duplicate.
 
 Commands and source hashes in historical records describe the tested revisions,
 not the current CLI. No App Server RPC client, new-thread mode, saved-thread

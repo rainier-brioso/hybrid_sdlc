@@ -34,6 +34,22 @@ conversation to load the installed skill and MCP tools. Confirm the skill is
 available and that the `hybrid-sdlc` MCP server exposes its tools before
 submitting a task.
 
+The installed skill covers host-led feature planning, task contracts,
+repository/profile preparation, managed Strata startup, local execution and
+exact-patch review. A user can request: "Use Hybrid SDLC to plan this feature
+and implement its tasks locally." The host remains the orchestrator; this is
+not a new autonomous CLI planning daemon. It follows repository approval rules
+and asks only for decisions or authority it cannot establish from inspection.
+Starting an already configured stopped runtime for authorized work is distinct
+from creating a runtime, migrating a manual deployment or restarting it.
+
+Installing the Python CLI or registering MCP alone does not install this skill.
+Verify the loaded skill belongs to `hybrid-sdlc` rather than an unrelated plugin
+with a similarly named delegation skill. After updating the plugin, use a fresh
+chat and confirm the revised workflow is loaded; an existing chat or MCP process
+may retain older instructions or imports. Installing new files alone is not
+evidence that a fresh-chat whole-feature trial has passed.
+
 To uninstall the plugin and remove the local marketplace registration:
 
 ```sh

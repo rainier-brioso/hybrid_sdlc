@@ -71,6 +71,14 @@ bounded snapshot, not an indefinite follow stream. Status and logs do not run
 inference, build an image, or initiate a model download. Container running or
 health status is distinct from measured inference readiness.
 
+A host following the installed delegation skill can issue `start` as a normal
+prerequisite for authorized local implementation when this managed runtime is
+already configured, stopped and matches the intended endpoint. This does not
+add automatic recovery to the CLI or diagnostics. New setup, model downloads,
+manual-container migration and disruptive restart remain separate decisions;
+ownership/activity refusals must never be bypassed. A running container with an
+unavailable endpoint is not simply a stopped service.
+
 ## Availability and readiness diagnostics
 
 The managed runtime's configured endpoint can be inspected without selecting a

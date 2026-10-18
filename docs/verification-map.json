@@ -174,11 +174,11 @@
         "tests/unit/test_artifacts.py::test_clean_preserves_codex_bridge_replay_guards"
       ],
       "protocol_paths": ["docs/codex-completion-bridge.md", "docs/hosts/codex.md"],
-      "evidence_paths": ["docs/evidence/codex-bridge-rehearsal-20261017.md", "docs/evidence/codex-saved-thread-rehearsal-20261017.md", "docs/evidence/codex-open-desktop-rehearsal-20261017.md", "docs/evidence/codex-queue-desktop-rehearsal-20261017.md"],
-      "installed_status": "not_run",
+      "evidence_paths": ["docs/evidence/codex-bridge-rehearsal-20261017.md", "docs/evidence/codex-saved-thread-rehearsal-20261017.md", "docs/evidence/codex-open-desktop-rehearsal-20261017.md", "docs/evidence/codex-queue-desktop-rehearsal-20261017.md", "docs/evidence/codex-installed-queue-rehearsal-20261017.md"],
+      "installed_status": "historical_observation",
       "live_status": "historical_observation",
       "prerequisites": ["Existing persisted trusted job; installed/authenticated Codex CLI supporting queue; exact target chat UUID and explicit host-model continuation approval."],
-      "limitations": ["The dated direct codex queue probe produced an automatic desktop response; it does not verify the integrated CLI from an installed package or repeated reliability.", "Queue acceptance does not prove model completion or desktop visibility; the bridge does not collect model replies or token usage.", "The selected chat retains its context, permissions and integrations; this CLI handoff is not an MCP Tasks notification or a whole-feature controller.", "An uncertain delivery is not automatically retried; receipt removal defeats replay protection. Earlier App Server records describe a removed experimental transport.", "Per-thread advisory locks coordinate bridge calls within one repository; concurrent queueing from different repositories remains unverified."]
+      "limitations": ["The dated direct queue probe and later installed-wheel bridge rehearsal each produced an observed automatic desktop response. Neither establishes clean-machine installation, repeated reliability or real implementation-job orchestration.", "Queue acceptance alone does not prove model completion or desktop visibility; the bridge does not collect model replies or token usage. The rehearsal verified human observation and matching history separately.", "The selected chat retains its context, permissions and integrations; this CLI handoff is not an MCP Tasks notification or a whole-feature controller.", "An uncertain delivery is not automatically retried; receipt removal defeats replay protection. Earlier App Server records describe a removed experimental transport.", "Per-thread advisory locks coordinate bridge calls within one repository; concurrent queueing from different repositories remains unverified."]
     },
     {
       "id": "distribution-and-meta",
@@ -201,7 +201,7 @@
   "excluded_internal_surfaces": [],
   "gaps": [
     "No current clean-machine wheel/sdist installation and user-level host registration/reload rehearsal is recorded.",
-    "No current live endpoint, full host tool-use matrix, or Windows background survival proof is recorded; the dated direct codex queue wakeup observation is not an installed-package rehearsal of the integrated bridge.",
+    "No current live endpoint, full host tool-use matrix, or Windows background survival proof is recorded; the dated installed queue-bridge rehearsal uses a synthetic lifecycle, not real editing or worker survival.",
     "Do not infer product regressions from absent harness coverage or infer passing live behavior from fixture tests."
   ]
 }

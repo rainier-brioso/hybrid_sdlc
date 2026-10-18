@@ -1807,6 +1807,50 @@ as the current CLI contract.
   Cross-repository queue concurrency and repeated desktop reliability remain
   unverified; the earlier dated direct queue observation is retained separately.
 
+- [x] **HSDLC-085 — Make the shipped skill orchestrate a feature from its spec**
+  Depends on: HSDLC-075, HSDLC-083.
+  Acceptance:
+  - Ship self-contained planning, configuration, per-task execution, exact-patch
+    review and dependency integration guidance in all mirrored skill packages.
+  - Inspect endpoint/model/profile facts before asking the user; guide routine
+    startup of an already provisioned, stopped managed Strata service for
+    authorized work, without adopting manual deployments or bypassing guards.
+  - Preserve explicit boundaries for commits, new runtime setup/downloads,
+    disruptive restarts, queue delivery and integration; correct stale claims
+    about task policies and persisted acceptance.
+  - Check package parity and independently exercise instruction scenarios.
+    Record a later fresh installed-skill real feature trial separately: a
+    bespoke handoff or static scenario pass is not end-to-end runtime evidence.
+  Validation (2026-10-18): self-contained canonical/plugin/workspace skill
+  copies and mirrored plugin descriptions updated. Package parity and checked
+  documentation references: 15 passed. Skill frontmatter validation and
+  `git diff --check` passed. Independent read-only scenario review covered
+  provisioned stopped managed service, unreachable manual service, scope failure
+  despite passing tests, Windows async refusal and first-use model download.
+  No Strata start, inference, Metria edits, installed plugin update or fresh-chat
+  feature execution was performed; HSDLC-077 remains the real-task validation.
+
+- [x] **HSDLC-084 — Rehearse the installed queue bridge**
+  Depends on: HSDLC-083.
+  Acceptance:
+  - Install a wheel from merged main outside the source checkout and deliver
+    one authorized synthetic job completion to the exact visible idle chat.
+  - Record queue acceptance separately from the user's automatic-response
+    observation, then verify the matching job/message/turn in the same chat.
+  - Confirm the retained receipt refuses resend; do not claim real editing,
+    worker survival, clean-machine setup or repeated reliability from this test.
+  Evidence (2026-10-17): installed wheel from `9c2b127`, Codex
+  `0.162.0-alpha.17.2`, Windows/Python 3.12.14. Queue accepted in 4.609 seconds
+  including delayed local completion; the user observed an automatic reply
+  before history verification. The new completed turn acknowledged the exact
+  synthetic job, and replay was refused. Usage unavailable. See
+  [installed rehearsal](evidence/codex-installed-queue-rehearsal-20261017.md).
+  Existing MCP processes blocked the first global force-update; in-place wheel
+  and dependency restoration repaired the CLI without stopping them. Live
+  delivery used a separate installed environment. Metria HSDLC-077 remains next,
+  with proposal/baseline reconciliation, date-only design and offline profile
+  prerequisites retained.
+
 ## Deferred Work — Not Required for the Initial Release
 
 - [ ] **HSDLC-D06 — Evaluate an optional fully local persona workflow** after Strata endpoint and task compatibility are validated.

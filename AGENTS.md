@@ -28,8 +28,10 @@ the product; generic committed task files remain supported.
   worktree execution, secret redaction, and atomic artifact persistence.
 - Repository commands are trusted inputs; MCP access and advisory locks are
   not an OS sandbox. Passing tests still requires reviewing the exact patch.
-- Async jobs require status polling until terminal. Claim host wakeup or
-  background survival only when supported by recorded evidence.
+- Async jobs require terminal-state tracking. Use bounded status waits or the
+  explicitly authorized, host-specific completion bridge; MCP alone provides no
+  universal wakeup. Claim host wakeup or background survival only when supported
+  by recorded evidence.
 - Keep model endpoints configurable. Host registration must be explicit and
   preserve existing user configuration. Model weights, secrets, local runtime
   overrides, and temporary artifacts must stay out of commits.
