@@ -34,6 +34,22 @@ conversation to load the installed skill and MCP tools. Confirm the skill is
 available and that the `hybrid-sdlc` MCP server exposes its tools before
 submitting a task.
 
+The installed skill covers host-led feature planning, task contracts,
+repository/profile preparation, managed Strata startup, local execution and
+exact-patch review. A user can request: "Use Hybrid SDLC to plan this feature
+and implement its tasks locally." The host remains the orchestrator; this is
+not a new autonomous CLI planning daemon. It follows repository approval rules
+and asks only for decisions or authority it cannot establish from inspection.
+Starting an already configured stopped runtime for authorized work is distinct
+from creating a runtime, migrating a manual deployment or restarting it.
+
+Installing the Python CLI or registering MCP alone does not install this skill.
+Verify the loaded skill belongs to `hybrid-sdlc` rather than an unrelated plugin
+with a similarly named delegation skill. After updating the plugin, use a fresh
+chat and confirm the revised workflow is loaded; an existing chat or MCP process
+may retain older instructions or imports. Installing new files alone is not
+evidence that a fresh-chat whole-feature trial has passed.
+
 To uninstall the plugin and remove the local marketplace registration:
 
 ```sh
@@ -76,10 +92,16 @@ codex mcp remove hybrid-sdlc
 These commands manage the Codex user's MCP configuration. `remove` deletes the
 named registration from that configuration.
 
-## Optional CLI completion bridge
+## Completion bridge for the Codex async workflow
 
-The experimental [completion bridge](../codex-completion-bridge.md) is separate
-from MCP registration. `hybrid-sdlc bridge codex` watches an existing job and
+The experimental [completion bridge](../codex-completion-bridge.md) is a required
+orchestration component for automatic notification in the Codex async workflow,
+not an automatically enabled part of MCP registration or task submission.
+Arrange authorization, the exact target chat and a supported process lifetime
+before submitting; launch the bridge for the returned job ID before yielding.
+If this cannot be arranged, report it and offer synchronous or explicitly agreed
+manual-status operation instead of promising notification.
+`hybrid-sdlc bridge codex` watches an existing job and
 queues its terminal metadata with `codex queue`, requiring the exact target chat
 UUID through `--thread-id` and an explicit `--allow-model-continuation` flag.
 The selected chat keeps its existing context, permissions and integrations;

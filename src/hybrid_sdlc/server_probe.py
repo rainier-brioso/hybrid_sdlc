@@ -22,6 +22,9 @@ from hybrid_sdlc.security import build_sanitized_environment
 DEFAULT_PROBE_TIMEOUT_SECONDS = 3.0
 READINESS_PROMPT = "ping"
 READINESS_MAX_TOKENS = 5
+STRATA_READINESS_PROMPT = "Reply only OK."
+STRATA_READINESS_MAX_TOKENS = 256
+STRATA_READINESS_REASONING_BUDGET_TOKENS = 32
 
 
 def _get_models_url(base_url: str) -> str:
@@ -102,9 +105,13 @@ def probe_readiness(
 
     display_url = redact_secrets(url)
     try:
-        with managed_readiness_guard(url):
+        with managed_readiness_guard(url) as managed_strata:
             readiness = _bounded_readiness_probe(
-                url, required_model or availability.matched_model, timeout_seconds, availability
+                url,
+                required_model or availability.matched_model,
+                timeout_seconds,
+                availability,
+                managed_strata=managed_strata,
             )
     except RuntimeManagementError as exc:
         return ProbeResult(
@@ -136,10 +143,13 @@ def _bounded_readiness_probe(
     required_model: str | None,
     timeout_seconds: float,
     availability: ProbeResult,
+    *,
+    managed_strata: bool = False,
 ) -> ProbeResult:
     """Run managed readiness in a process with a hard wall-clock deadline."""
     started = time.perf_counter()
-    child = _run_probe_worker("readiness", url, required_model, timeout_seconds)
+    action = "strata-readiness" if managed_strata else "readiness"
+    child = _run_probe_worker(action, url, required_model, timeout_seconds)
     if child is None:
         return ProbeResult(
             url=availability.url,
@@ -284,6 +294,7 @@ def _probe_endpoint_direct(
     check_readiness: bool = False,
     timeout_seconds: float = DEFAULT_PROBE_TIMEOUT_SECONDS,
     readiness_started: Callable[[], None] | None = None,
+    managed_strata: bool = False,
 ) -> ProbeResult:
     """Probe an OpenAI-compatible /v1/models endpoint and test readiness if requested."""
     if not math.isfinite(timeout_seconds) or timeout_seconds <= 0:
@@ -396,26 +407,73 @@ def _probe_endpoint_direct(
             readiness_passed = False
             if check_readiness:
                 chat_url = _get_chat_url(url)
-                payload = {
+                payload: dict[str, Any] = {
                     "model": matched_model,
-                    "messages": [{"role": "user", "content": READINESS_PROMPT}],
-                    "max_tokens": READINESS_MAX_TOKENS,
+                    "messages": [
+                        {
+                            "role": "user",
+                            "content": STRATA_READINESS_PROMPT
+                            if managed_strata
+                            else READINESS_PROMPT,
+                        }
+                    ],
+                    "max_tokens": STRATA_READINESS_MAX_TOKENS
+                    if managed_strata
+                    else READINESS_MAX_TOKENS,
                     "temperature": 0.0,
                 }
+                if managed_strata:
+                    payload["reasoning_budget_tokens"] = STRATA_READINESS_REASONING_BUDGET_TOKENS
+                    payload["reasoning_effort"] = "low"
                 try:
                     if readiness_started is not None:
                         readiness_started()
                     chat_resp = client.post(chat_url, json=payload, timeout=timeout_seconds)
                     if chat_resp.status_code == 200:
-                        chat_data = chat_resp.json()
+                        try:
+                            chat_data = chat_resp.json()
+                        except Exception:
+                            if not managed_strata:
+                                raise
+                            return ProbeResult(
+                                url=display_url,
+                                available=True,
+                                models=model_ids,
+                                matched_model=matched_model,
+                                readiness_tested=True,
+                                readiness_passed=False,
+                                latency_ms=elapsed_ms,
+                                error=FailureRecord(
+                                    code="READINESS_INVALID_RESPONSE",
+                                    message="Inference readiness check returned an invalid response",
+                                ),
+                            )
                         choices = chat_data.get("choices") if isinstance(chat_data, dict) else None
-                        if (
-                            isinstance(choices, list)
+                        first_choice = (
+                            choices[0]
+                            if isinstance(choices, list)
                             and choices
                             and isinstance(choices[0], dict)
-                            and isinstance(choices[0].get("message"), dict)
-                            and isinstance(choices[0]["message"].get("content"), str)
-                            and bool(choices[0]["message"]["content"].strip())
+                            else None
+                        )
+                        message = first_choice.get("message") if first_choice is not None else None
+                        content = message.get("content") if isinstance(message, dict) else None
+                        managed_response_ok = not managed_strata or (
+                            first_choice is not None
+                            and first_choice.get("finish_reason") == "stop"
+                            and isinstance(message, dict)
+                            and message.get("role") == "assistant"
+                            and not message.get("tool_calls")
+                            and not message.get("function_call")
+                            and isinstance(content, str)
+                            and bool(content.strip())
+                        )
+                        if (
+                            first_choice is not None
+                            and isinstance(message, dict)
+                            and isinstance(content, str)
+                            and bool(content.strip())
+                            and managed_response_ok
                         ):
                             readiness_passed = True
                         else:

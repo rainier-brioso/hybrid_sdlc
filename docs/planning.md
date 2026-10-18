@@ -5,6 +5,14 @@ Kit installation, special directory layout, planning daemon or new MCP tool is
 required. The runner accepts an ordinary committed task file. These workflow
 rules guide the host; they are not a new runtime contract parser.
 
+The shipped `local-delegate` skill is the host-facing entrypoint for this full
+workflow, including taking a raw feature spec, preparing bounded contracts and
+configuration, managing an already configured Strata prerequisite, and reviewing
+each local result before dependent work. Its installed copies are self-contained:
+they must not depend on this development checkout or a bespoke handoff prompt.
+CLI/MCP installation alone does not load a skill into a host. Follow the host
+installation guide and verify the selected Hybrid SDLC skill in a fresh chat.
+
 ## Choose the planning path
 
 | Path | Use when | Planning artifact |
@@ -67,8 +75,16 @@ paths and exclusions, checked against the complete final exported patch.
 4. Reviewer inspects the exact exported patch against the contract and source.
 5. Human or explicitly authorized integrator accepts and integrates it.
 
-For async runs, poll the same job until terminal; MCP provides no universal
-wakeup guarantee. An accepted patch is not automatically applied or merged.
+For Codex's notification-backed async workflow, arrange the exact authorized
+target chat, continuation permission and a supported bridge-process lifetime
+before submission. After obtaining the job ID, launch the separate
+[completion bridge](codex-completion-bridge.md) for that job before handing off
+the turn. The bridge is required for automatic notification, not an optional
+extra; MCP submission does not launch it. If prerequisites cannot be met, report
+the limitation and offer synchronous work or an explicitly agreed manual-status
+workflow. Bounded status waits remain for inspection/recovery, not automatic
+wakeup. Other hosts have no verified notification adapter; Antigravity research
+is tracked as HSDLC-087. An accepted patch is not automatically applied or merged.
 Dependent tasks start from a fresh committed baseline containing accepted
 prerequisites. Independent writers require separate worktrees and ownership;
 their combined change still needs integration checks. Serialize local inference

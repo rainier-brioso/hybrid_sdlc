@@ -94,8 +94,12 @@ until the job reaches a terminal state. MCP waits are bounded to 60 seconds;
 poll again when the job remains queued or running. Treat cancellation as a
 request and check status until termination is confirmed.
 
-Reactive wakeup is unverified and remains experimental. Keep polling explicitly
-for completion; do not rely on automatic resume or cross-session notifications.
+Automatic completion notification is not implemented or verified for Antigravity.
+HSDLC-087 in the [implementation tasks](../implementation_tasks.md) investigates
+supported delivery and continuation interfaces before an adapter is proposed.
+Until then, use synchronous execution or explicitly agreed manual status
+inspection; polling is not a notification mechanism. Do not assume the Codex
+queue bridge works here or promise automatic resume/cross-session notifications.
 Follow the [local delegation skill](../../skills/local-delegate/SKILL.md) to
 validate a task before submission and review the final patch and test evidence.
 

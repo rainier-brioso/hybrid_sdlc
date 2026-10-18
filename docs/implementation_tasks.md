@@ -1807,6 +1807,101 @@ as the current CLI contract.
   Cross-repository queue concurrency and repeated desktop reliability remain
   unverified; the earlier dated direct queue observation is retained separately.
 
+- [ ] **HSDLC-087 — Investigate Antigravity completion notification and continuation**
+  Depends on: HSDLC-083, HSDLC-084.
+  Scope: research and a separately authorized synthetic host probe, not a
+  notification adapter implementation or permission to message an arbitrary chat.
+  Acceptance:
+  - Inspect current official host documentation and supported local interfaces;
+    record host/build, sources and whether an existing chat can receive a
+    completion as model-visible input and start a follow-up response.
+  - Identify a safe, explicit target-chat selection method, continuation
+    authorization, command/process lifetime and payload trust boundary. Do not
+    infer Codex queue compatibility, invent thread IDs, bypass host ownership
+    or equate an MCP logging notification with delivery to the model.
+  - With separate approval, test one synthetic completion in the exact existing
+    idle chat. Distinguish command acceptance, notification receipt, model-visible
+    input, automatic response and resumption of a waiting turn; preserve negative
+    results and avoid source, secrets, member data and unrelated chat history.
+  - Assess minimized payloads, durable replay protection, uncertain delivery,
+    cancellation, busy/closed targets, timeout bounds and process survival.
+    Do not add retries or broaden host permissions to make a probe succeed.
+  - Document a supported CLI adapter proposal only if evidence warrants it;
+    otherwise record the unavailable capability and an honest synchronous or
+    manual-status fallback. No automatic Antigravity notification is claimed
+    until verified; implementing an adapter requires a separate bounded task.
+
+- [x] **HSDLC-086 — Make bounded readiness usable with Strata reasoning**
+  Depends on: HSDLC-085.
+  Evidence: [installed workflow/runtime setup](evidence/installed-workflow-runtime-20261018.md).
+  The current five-token probe exhausted its output while Strata was thinking;
+  one separate request with bounded output/reasoning produced an answer.
+  Acceptance:
+  - Correct the managed Strata readiness request without silently changing
+    backend-neutral requests, repository budgets or service defaults.
+  - Preserve finite request limits, activity coordination, conservative failure
+    classification and no automatic restart or retry of uncertain requests.
+  - Cover actual request parameters and malformed/empty/truncated responses;
+    verify one installed managed readiness call and record its exact outcome.
+  Validation (2026-10-18): the managed guard selects a fixed bounded Strata
+  request, while unmanaged requests remain unchanged. Managed readiness rejects
+  incomplete, malformed, reasoning-only and tool-call results. Focused probe
+  and runtime CLI regressions: 89 passed; formatting, lint, strict source typing
+  and independent review passed. An isolated installed wheel reported ready in
+  5.377 seconds; after a package-only tool update, the normal installed CLI
+  reported ready with its default timeout in 3.136 seconds. No model restart
+  or persisted budget change was needed. See
+  [installed readiness evidence](evidence/strata-managed-readiness-20261018.md).
+  Required full suite: 1,010 passed / 12 environment or opt-in skips, 83.04%
+  coverage on Windows/Python 3.12.14. Package/documentation parity checks also
+  passed; skipped Windows breakaway/symlink/POSIX and opt-in packaging behavior
+  is not promoted to verified behavior.
+  This does not complete the fresh-chat Metria feature trial (HSDLC-077).
+
+- [x] **HSDLC-085 — Make the shipped skill orchestrate a feature from its spec**
+  Depends on: HSDLC-075, HSDLC-083.
+  Acceptance:
+  - Ship self-contained planning, configuration, per-task execution, exact-patch
+    review and dependency integration guidance in all mirrored skill packages.
+  - Inspect endpoint/model/profile facts before asking the user; guide routine
+    startup of an already provisioned, stopped managed Strata service for
+    authorized work, without adopting manual deployments or bypassing guards.
+  - Preserve explicit boundaries for commits, new runtime setup/downloads,
+    disruptive restarts, queue delivery and integration; correct stale claims
+    about task policies and persisted acceptance.
+  - Check package parity and independently exercise instruction scenarios.
+    Record a later fresh installed-skill real feature trial separately: a
+    bespoke handoff or static scenario pass is not end-to-end runtime evidence.
+  Validation (2026-10-18): self-contained canonical/plugin/workspace skill
+  copies and mirrored plugin descriptions updated. Package parity and checked
+  documentation references: 15 passed. Skill frontmatter validation and
+  `git diff --check` passed. Independent read-only scenario review covered
+  provisioned stopped managed service, unreachable manual service, scope failure
+  despite passing tests, Windows async refusal and first-use model download.
+  No Strata start, inference, Metria edits, installed plugin update or fresh-chat
+  feature execution was performed; HSDLC-077 remains the real-task validation.
+
+- [x] **HSDLC-084 — Rehearse the installed queue bridge**
+  Depends on: HSDLC-083.
+  Acceptance:
+  - Install a wheel from merged main outside the source checkout and deliver
+    one authorized synthetic job completion to the exact visible idle chat.
+  - Record queue acceptance separately from the user's automatic-response
+    observation, then verify the matching job/message/turn in the same chat.
+  - Confirm the retained receipt refuses resend; do not claim real editing,
+    worker survival, clean-machine setup or repeated reliability from this test.
+  Evidence (2026-10-17): installed wheel from `9c2b127`, Codex
+  `0.162.0-alpha.17.2`, Windows/Python 3.12.14. Queue accepted in 4.609 seconds
+  including delayed local completion; the user observed an automatic reply
+  before history verification. The new completed turn acknowledged the exact
+  synthetic job, and replay was refused. Usage unavailable. See
+  [installed rehearsal](evidence/codex-installed-queue-rehearsal-20261017.md).
+  Existing MCP processes blocked the first global force-update; in-place wheel
+  and dependency restoration repaired the CLI without stopping them. Live
+  delivery used a separate installed environment. Metria HSDLC-077 remains next,
+  with proposal/baseline reconciliation, date-only design and offline profile
+  prerequisites retained.
+
 ## Deferred Work — Not Required for the Initial Release
 
 - [ ] **HSDLC-D06 — Evaluate an optional fully local persona workflow** after Strata endpoint and task compatibility are validated.

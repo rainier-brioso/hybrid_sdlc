@@ -32,7 +32,7 @@ def main() -> int:
             or not isinstance(timeout, (int, float))
             or not math.isfinite(timeout)
             or timeout <= 0
-            or action not in {"health", "models", "readiness"}
+            or action not in {"health", "models", "readiness", "strata-readiness"}
         ):
             return 2
         if action == "health":
@@ -76,9 +76,12 @@ def main() -> int:
         probe_result = _probe_endpoint_direct(
             url,
             required_model=model,
-            check_readiness=action == "readiness",
+            check_readiness=action in {"readiness", "strata-readiness"},
             timeout_seconds=float(timeout),
-            readiness_started=_mark_readiness_started if action == "readiness" else None,
+            readiness_started=_mark_readiness_started
+            if action in {"readiness", "strata-readiness"}
+            else None,
+            managed_strata=action == "strata-readiness",
         )
         print("RESULT:" + probe_result.model_dump_json(), flush=True)
         return 0

@@ -71,6 +71,14 @@ bounded snapshot, not an indefinite follow stream. Status and logs do not run
 inference, build an image, or initiate a model download. Container running or
 health status is distinct from measured inference readiness.
 
+A host following the installed delegation skill can issue `start` as a normal
+prerequisite for authorized local implementation when this managed runtime is
+already configured, stopped and matches the intended endpoint. This does not
+add automatic recovery to the CLI or diagnostics. New setup, model downloads,
+manual-container migration and disruptive restart remain separate decisions;
+ownership/activity refusals must never be bypassed. A running container with an
+unavailable endpoint is not simply a stopped service.
+
 ## Availability and readiness diagnostics
 
 The managed runtime's configured endpoint can be inspected without selecting a
@@ -102,6 +110,17 @@ the whole diagnostic take longer than one timeout interval. This is not an
 overall command deadline. Ordinary non-generating `check` and MCP availability
 checks retain their existing HTTP connection/read timeouts. Only a successful
 readiness response reports `ready`.
+
+For an endpoint identified by the managed-runtime guard as this user's Strata
+service, readiness uses a fixed diagnostic request: 256 maximum output tokens,
+a 32-token reasoning budget, low reasoning effort and a short answer prompt.
+The former five-token probe could exhaust its output while still thinking.
+These request-local limits do not change task budgets or persisted service
+defaults, and the reasoning budget remains a wrap-up threshold, not an exact
+token cap. Only a nonempty answer with a completed stop is accepted; truncated,
+reasoning-only or malformed responses remain unverified. Other endpoints keep
+the backend-neutral readiness request; a model name or port alone never opts
+an endpoint into Strata-specific fields. Neither path retries automatically.
 
 Managed readiness requests coordinate through the same cross-client activity
 gate as task submission and synchronous execution. A queued/running task or

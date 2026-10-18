@@ -255,7 +255,15 @@ above forbids committing, so do not add that flag to this smoke.
 
 ## 4. Asynchronous jobs and MCP
 
-Where the host supports detached workers:
+For the Codex async notification workflow, arrange continuation authorization,
+the exact existing chat and a supported bridge-process lifetime before
+submission, then launch the [completion bridge](codex-completion-bridge.md)
+with the returned job ID. The bridge is a required orchestration step for
+automatic notification; submission does not launch it automatically.
+
+The following is the explicit manual-status workflow, also useful for inspection
+and recovery. It does not notify or wake a chat. Use it only when that mode has
+been agreed and the host supports detached workers:
 
 ```sh
 hybrid-sdlc submit spec.md --repo-root . --task-id SMOKE-001 --test-profile smoke --json
@@ -279,7 +287,8 @@ hybrid-sdlc status ACTUAL_JOB_ID --repo-root . --wait --json
 Poll to a terminal state. Client-side cancellation/timeout does not prove the
 remote inference request ended. On restrictive Windows Job Object hosts,
 background submission fails closed; use synchronous execution. Supported-host
-Windows survival and host wakeup remain unverified; see
+Windows survival remains unverified; Codex queue notification has separate dated
+observations, while Antigravity notification remains planned investigation. See
 [host compatibility](host-compatibility.md).
 
 The host-native stdio server is `hybrid-sdlc mcp`. Registration is explicit and

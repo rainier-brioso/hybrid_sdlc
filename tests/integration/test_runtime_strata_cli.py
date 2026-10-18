@@ -73,7 +73,14 @@ def test_explicit_timeout_evidence_is_advisory_not_automatic_recovery(
             raise httpx.ReadTimeout("private-provider-body")
         if mode == "malformed":
             return httpx.Response(200, json={"choices": []})
-        return httpx.Response(200, json={"choices": [{"message": {"content": "ok"}}]})
+        return httpx.Response(
+            200,
+            json={
+                "choices": [
+                    {"message": {"role": "assistant", "content": "ok"}, "finish_reason": "stop"}
+                ]
+            },
+        )
 
     monkeypatch.setattr(
         httpx,
@@ -178,9 +185,20 @@ def inline_readiness_worker(monkeypatch: pytest.MonkeyPatch) -> None:
             url, required_model=model, timeout_seconds=timeout
         )
 
-    def direct(url: str, model: str | None, timeout: float, availability: Any) -> Any:
+    def direct(
+        url: str,
+        model: str | None,
+        timeout: float,
+        availability: Any,
+        *,
+        managed_strata: bool = False,
+    ) -> Any:
         return server_probe._probe_endpoint_direct(
-            url, required_model=model, check_readiness=True, timeout_seconds=timeout
+            url,
+            required_model=model,
+            check_readiness=True,
+            timeout_seconds=timeout,
+            managed_strata=managed_strata,
         )
 
     monkeypatch.setattr(server_probe, "_bounded_health_probe", health)
@@ -266,7 +284,14 @@ def test_diagnose_readiness_success_reports_ready(
             return httpx.Response(200, json={"loaded": True})
         if request.url.path.endswith("/models"):
             return httpx.Response(200, json={"data": [{"id": "qwen3.8-flash-next-coder-iq1_m"}]})
-        return httpx.Response(200, json={"choices": [{"message": {"content": "ok"}}]})
+        return httpx.Response(
+            200,
+            json={
+                "choices": [
+                    {"message": {"role": "assistant", "content": "ok"}, "finish_reason": "stop"}
+                ]
+            },
+        )
 
     transport = httpx.MockTransport(handler)
     monkeypatch.setattr(
@@ -424,7 +449,14 @@ def test_diagnose_reports_managed_busy_without_readiness_post(
             return httpx.Response(200, json={"loaded": True})
         if request.url.path.endswith("/models"):
             return httpx.Response(200, json={"data": [{"id": "qwen3.8-flash-next-coder-iq1_m"}]})
-        return httpx.Response(200, json={"choices": [{"message": {"content": "ok"}}]})
+        return httpx.Response(
+            200,
+            json={
+                "choices": [
+                    {"message": {"role": "assistant", "content": "ok"}, "finish_reason": "stop"}
+                ]
+            },
+        )
 
     transport = httpx.MockTransport(handler)
     monkeypatch.setattr(
@@ -509,7 +541,14 @@ def test_diagnose_reconciles_terminal_async_activity_before_classifying(
             return httpx.Response(200, json={"loaded": True})
         if request.url.path.endswith("/models"):
             return httpx.Response(200, json={"data": [{"id": "qwen3.8-flash-next-coder-iq1_m"}]})
-        return httpx.Response(200, json={"choices": [{"message": {"content": "ok"}}]})
+        return httpx.Response(
+            200,
+            json={
+                "choices": [
+                    {"message": {"role": "assistant", "content": "ok"}, "finish_reason": "stop"}
+                ]
+            },
+        )
 
     transport = httpx.MockTransport(handler)
     monkeypatch.setattr(

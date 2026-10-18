@@ -4,6 +4,52 @@ Hybrid SDLC (`hybrid-sdlc`) lets a cloud or host agent delegate a bounded coding
 task to Aider and an OpenAI-compatible local model. The local worker edits and
 tests in an isolated Git worktree; you review its patch before integrating it.
 
+## How it works
+
+```mermaid
+flowchart LR
+    Chat["Your chat + Hybrid SDLC skill<br/>Plan the spec into bounded tasks"]
+    Runner["Hybrid SDLC CLI / MCP<br/>Validate and isolate"]
+    Worker["Aider + local model, e.g. Strata<br/>Edit code and run tests"]
+    Result["Saved result<br/>Patch + test evidence"]
+    Bridge["Codex async completion bridge<br/>Wait locally, then codex queue"]
+    Review["Chat reviews the exact patch<br/>Integrate only when authorized"]
+
+    Chat --> Runner --> Worker --> Result
+    Result -->|"Synchronous result"| Chat
+    Result -.->|"Codex async workflow, authorized"| Bridge
+    Bridge -.->|"Completion message to the selected chat"| Chat
+    Chat --> Review
+```
+
+For synchronous work, the waiting chat receives the result directly. For the
+**Codex async workflow**, the [completion bridge](docs/codex-completion-bridge.md)
+is part of orchestration and required for automatic chat notification. It is
+our only verified notification mechanism today: it watches saved job status
+locally, then sends a completion message to an explicitly selected existing chat
+using `codex queue`. The host can start a follow-up response without repeated
+model calls to check status. Before submitting, arrange continuation authorization,
+the target chat and a supported way to keep the bridge running. After submission,
+launch the bridge separately for that exact job; submission alone does not do it.
+The message carries compact job metadata, not source code or the patch; the chat
+inspects the saved local artifacts before accepting the change.
+
+If the bridge cannot be arranged, report that limitation and use synchronous
+execution or an explicitly agreed manual-status workflow—not a promise of
+automatic notification. Bounded status waits remain useful for inspection and
+recovery; they are not a notification mechanism. Standard MCP alone does not
+guarantee chat wakeup. On restrictive Windows hosts where safe async launch is
+refused, use synchronous execution instead. A completion message
+is a cue to inspect the result, **not** approval to apply or merge the patch.
+Queue acceptance and an actual chat response are distinct; the bridge reports
+the former, not proof of the latter.
+
+Antigravity automatic notification is not implemented or verified. Its
+host-specific delivery/continuation investigation is planned as HSDLC-087 in the
+[implementation tasks](docs/implementation_tasks.md).
+
+## What the toolkit provides
+
 The host-native CLI and MCP server support synchronous tasks and persisted
 asynchronous jobs, bounded retries/timeouts, cancellation, named test profiles,
 and atomic run artifacts. A [lightweight planning workflow](docs/planning.md)
@@ -14,12 +60,6 @@ ceilings, then reject out-of-scope exported patches before scoped commits.
 Explicit [review records](docs/review-acceptance.md) bind a decision to the exact
 patch and baseline, with independently executed named-profile tests. Acceptance
 does not apply the patch, create a commit, or merge it.
-
-An experimental [Codex completion bridge](docs/codex-completion-bridge.md) watches
-an existing job locally and queues its outcome to an explicitly selected Codex
-chat, without model-driven status polling. It requires explicit host-model
-authorization. Queue acceptance is reported separately from a chat response or
-patch acceptance; the selected chat retains its existing context and permissions.
 
 ## Install and configure
 
@@ -62,7 +102,7 @@ Model availability is not inference readiness.
 The result identifies the isolated checkout and review patch; passing tests
 does not automatically apply it to the source checkout. Review the exact diff.
 For the complete step-by-step workflow, including Windows/POSIX paths,
-async polling, cleanup and uninstall, see [installation](docs/installation.md).
+manual-status async operation, cleanup and uninstall, see [installation](docs/installation.md).
 For failures, see [troubleshooting](docs/troubleshooting.md).
 See [configuration](docs/configuration.md), the
 [example profiles](hybrid_sdlc.example.toml), and [development](docs/development.md).
@@ -77,8 +117,11 @@ outside the checkout; see the configuration guide before enabling it.
 
 The stdio server is launched with `hybrid-sdlc mcp` and exposes five tools:
 `check_local_model`, `run_spec_task_sync`, `submit_spec_job`, `get_job_status`,
-and `cancel_spec_job`. Async clients must poll to a terminal state; there is no
-guaranteed cross-session wakeup or resume.
+and `cancel_spec_job`. In Codex's notification-backed async workflow, arrange the
+completion bridge shown above; use bounded status waits for inspection/recovery
+or explicitly agreed manual operation, not as a wakeup substitute. MCP
+registration alone does not provide cross-session wakeup or resume. Install the
+host skill as well as the CLI/MCP to load the planning and delegation workflow.
 
 Use the setup guide for [Codex](docs/hosts/codex.md),
 [Antigravity](docs/hosts/antigravity.md), or [Claude Code](docs/hosts/claude-code.md).

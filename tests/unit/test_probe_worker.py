@@ -43,7 +43,7 @@ def test_worker_rejects_invalid_input_without_output(
     assert capsys.readouterr().out == ""
 
 
-@pytest.mark.parametrize("action", ["models", "readiness"])
+@pytest.mark.parametrize("action", ["models", "readiness", "strata-readiness"])
 def test_worker_dispatch_and_readiness_marker(
     monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str], action: str
 ) -> None:
@@ -52,7 +52,8 @@ def test_worker_dispatch_and_readiness_marker(
     def probe(url: str, **kwargs: Any) -> ProbeResult:
         assert url == "http://local/v1"
         assert kwargs["required_model"] == "Qwen"
-        assert kwargs["check_readiness"] == (action == "readiness")
+        assert kwargs["check_readiness"] == (action in {"readiness", "strata-readiness"})
+        assert kwargs["managed_strata"] == (action == "strata-readiness")
         callback = kwargs["readiness_started"]
         if callback is not None:
             callback()
@@ -61,7 +62,7 @@ def test_worker_dispatch_and_readiness_marker(
     monkeypatch.setattr(probe_worker, "_probe_endpoint_direct", probe)
     assert probe_worker.main() == 0
     output = capsys.readouterr().out
-    assert ("READINESS_STARTED\n" in output) == (action == "readiness")
+    assert ("READINESS_STARTED\n" in output) == (action in {"readiness", "strata-readiness"})
     assert "RESULT:" in output
 
 

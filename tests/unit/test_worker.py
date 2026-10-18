@@ -123,8 +123,11 @@ else:
     assert outputs.count("rejected") == 1
 
 
+@pytest.mark.parametrize("observer_delay_seconds", [0.0, 0.5])
 def test_worker_executes_claim_and_persists_result_while_ignoring_artifacts(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    observer_delay_seconds: float,
 ) -> None:
     _init_repo(tmp_path)
     (tmp_path / "context.py").write_text("value = 1\n", encoding="utf-8")
@@ -151,12 +154,25 @@ def test_worker_executes_claim_and_persists_result_while_ignoring_artifacts(
     )
 
     observed_children: list[tuple[int, datetime | None, datetime | None, int | None]] = []
+    release_child = tmp_path / ".hybrid_sdlc" / "test-child-release"
+    child_script = "\n".join(
+        [
+            "import pathlib, sys, time",
+            "release = pathlib.Path(sys.argv[1])",
+            "deadline = time.monotonic() + 10",
+            "while not release.exists() and time.monotonic() < deadline:",
+            "    time.sleep(0.01)",
+            "sys.exit(0 if release.exists() else 2)",
+        ]
+    )
 
     def fake_run_loop(**kwargs: object) -> RunResult:
         observer = kwargs["process_observer"]
         assert callable(observer)
 
         def capture_observer(pid: int, created_at: datetime | None) -> None:
+            if created_at is not None and observer_delay_seconds:
+                time.sleep(observer_delay_seconds)
             observer(pid, created_at)
             if created_at is not None:
                 record = manager.get(job.job_id)
@@ -168,12 +184,13 @@ def test_worker_executes_claim_and_persists_result_while_ignoring_artifacts(
                         record.child_pid,
                     )
                 )
+                release_child.touch()
 
         child_result = run_bounded_subprocess(
-            [sys.executable, "-c", "import time; time.sleep(0.2)"],
+            [sys.executable, "-c", child_script, str(release_child)],
             cwd=tmp_path,
             env=dict(os.environ),
-            timeout_seconds=5,
+            timeout_seconds=15,
             process_observer=capture_observer,
         )
         assert child_result.exit_code == 0

@@ -40,13 +40,13 @@ inventory. Several journeys share safeguards and supporting tests.
 | Journey | Automated/installed evidence | Remaining installed/live boundary |
 | --- | --- | --- |
 | Install and launch | Distribution archive checks, isolated wheel/sdist/rebuilt-wheel imports and help | Clean Windows and POSIX client rehearsal remains HSDLC-069 |
-| Codex completion bridge | Queue CLI contracts and synthetic job/command tests; dated direct queue desktop response and earlier App Server investigations | Queue acceptance does not prove a response; integrated installed-package rehearsal, repeated reliability and full orchestration remain unverified |
+| Codex completion bridge | Queue CLI contracts and synthetic job/command tests; dated direct queue and installed-wheel desktop responses plus replay refusal | Queue acceptance alone does not prove a response; clean-machine installation, repeated reliability and full orchestration remain unverified |
 | Endpoint availability/readiness | CLI/MCP request validation and mocked probe outcomes | Historical Strata fixture observations only; readiness generates and needs operator approval |
 | Synchronous delegation and policy | CLI/MCP handlers, fake-Aider E2E, real Git isolation, committed-policy/scope checks | Dated installed-SDK and Antigravity smoke records are not current-build or real-project proof |
 | Submit, poll and cancel | Persisted transitions, bounded waits, process cleanup and SDK tests | Supported-host real adapter survival is separate; restrictive Windows hosts fail closed |
 | Review and acceptance | Exact-patch replay, independent profile execution, stale/missing evidence, revision races and CLI handlers | Installed help is covered; current installed real-task review is still unverified |
 | Artifact cleanup | Dry-run/deletion, confinement and active-lock/receipt invalidation tests | Cleanup/uninstall in a clean-client rehearsal is not yet recorded; external worktrees/model volumes are not recursive cleanup targets |
-| Managed Strata runtime | Ownership/configuration/lifecycle/diagnostic tests with fake Docker and temporary assets | No automated live installed-CLI/Docker/GPU lifecycle proof |
+| Managed Strata runtime | Ownership/lifecycle tests, bounded-child request regression, dated managed startup and installed-wheel readiness observation | One observed readiness response is not clean-machine setup, sustained reliability or whole-feature execution |
 | Host setup and MCP transport | Temporary Antigravity config/proposal safety, shipped-host contracts, SDK handshake/discovery | Actual host reload, permissions, continuation and reconnect require host-specific observations |
 
 Historical evidence remains dated and limited:

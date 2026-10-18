@@ -19,14 +19,24 @@ committed-task execution, isolated worktrees, bounded retries and explicit
 review/integration. [Planning](planning.md) defines fast versus planned work;
 runtime enhancements have separate acceptance tasks and are not assumed done.
 
-The optional experimental [Codex completion bridge](codex-completion-bridge.md)
-adds a CLI-only outcome handoff for one existing job. Local waiting precedes an
+The experimental [Codex completion bridge](codex-completion-bridge.md) is the
+required notification component of the Codex async workflow. It provides a
+CLI-only outcome handoff for one existing job. Local waiting precedes an
 explicitly authorized `codex queue` message to a selected existing chat UUID.
 The bridge records queue acceptance, not model-turn completion. The chat retains
 its own history, permissions and integrations. A dated synthetic desktop probe
 observed an automatic response; installed/live acceptance of this CLI integration
 remains separate from fixture tests. The App Server investigation is retained as
 historical evidence; its unused runtime transport has been removed.
+
+The host orchestrator must arrange explicit continuation authority, the exact
+existing target chat and a supported bridge-process lifetime before submitting,
+then launch the bridge for the returned job ID. This is a workflow requirement,
+not automatic launch by the current CLI/MCP. Synchronous execution and agreed
+manual status inspection remain fallback modes, not alternative notification
+transports. Automatic Antigravity notification is unimplemented/unverified;
+HSDLC-087 investigates a supported host-specific delivery and continuation
+mechanism before any adapter is claimed or implemented.
 
 ---
 
@@ -56,7 +66,8 @@ Standard MCP does not define agent turn suspension or background resume. To ensu
 | :--- | :--- | :--- |
 | **Antigravity IDE** | Synchronous or asynchronous with polling | Native reactive wakeup remains unverified; poll job status until an end-to-end host test proves resume behavior. |
 | **Claude Code** | Synchronous Tool | Blocking tool execution with MCP progress notifications; or background terminal command with notification. |
-| **Codex CLI / Cursor** | Synchronous or Polling | Synchronous tool execution, or asynchronous job with explicit polling fallback (`hybrid-sdlc status <job_id>`). |
+| **Codex CLI** | Synchronous or notification-backed async | The async notification workflow requires the separately launched, explicitly authorized Codex queue bridge; submission alone does not arrange it. |
+| **Cursor** | Synchronous or manual status inspection | Automatic completion notification remains unverified; do not assume the Codex adapter works here. |
 | **Headless CI / CLI** | Synchronous | Direct CLI exit code (`hybrid-sdlc run-task ...`). |
 
 #### Job State Persistence & Schema
