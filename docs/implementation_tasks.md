@@ -1807,7 +1807,7 @@ as the current CLI contract.
   Cross-repository queue concurrency and repeated desktop reliability remain
   unverified; the earlier dated direct queue observation is retained separately.
 
-- [ ] **HSDLC-086 — Make bounded readiness usable with Strata reasoning**
+- [x] **HSDLC-086 — Make bounded readiness usable with Strata reasoning**
   Depends on: HSDLC-085.
   Evidence: [installed workflow/runtime setup](evidence/installed-workflow-runtime-20261018.md).
   The current five-token probe exhausted its output while Strata was thinking;
@@ -1819,6 +1819,20 @@ as the current CLI contract.
     classification and no automatic restart or retry of uncertain requests.
   - Cover actual request parameters and malformed/empty/truncated responses;
     verify one installed managed readiness call and record its exact outcome.
+  Validation (2026-10-18): the managed guard selects a fixed bounded Strata
+  request, while unmanaged requests remain unchanged. Managed readiness rejects
+  incomplete, malformed, reasoning-only and tool-call results. Focused probe
+  and runtime CLI regressions: 89 passed; formatting, lint, strict source typing
+  and independent review passed. An isolated installed wheel reported ready in
+  5.377 seconds; after a package-only tool update, the normal installed CLI
+  reported ready with its default timeout in 3.136 seconds. No model restart
+  or persisted budget change was needed. See
+  [installed readiness evidence](evidence/strata-managed-readiness-20261018.md).
+  Required full suite: 1,010 passed / 12 environment or opt-in skips, 83.04%
+  coverage on Windows/Python 3.12.14. Package/documentation parity checks also
+  passed; skipped Windows breakaway/symlink/POSIX and opt-in packaging behavior
+  is not promoted to verified behavior.
+  This does not complete the fresh-chat Metria feature trial (HSDLC-077).
 
 - [x] **HSDLC-085 — Make the shipped skill orchestrate a feature from its spec**
   Depends on: HSDLC-075, HSDLC-083.

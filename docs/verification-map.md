@@ -46,7 +46,7 @@ inventory. Several journeys share safeguards and supporting tests.
 | Submit, poll and cancel | Persisted transitions, bounded waits, process cleanup and SDK tests | Supported-host real adapter survival is separate; restrictive Windows hosts fail closed |
 | Review and acceptance | Exact-patch replay, independent profile execution, stale/missing evidence, revision races and CLI handlers | Installed help is covered; current installed real-task review is still unverified |
 | Artifact cleanup | Dry-run/deletion, confinement and active-lock/receipt invalidation tests | Cleanup/uninstall in a clean-client rehearsal is not yet recorded; external worktrees/model volumes are not recursive cleanup targets |
-| Managed Strata runtime | Ownership/configuration/lifecycle/diagnostic tests with fake Docker and temporary assets | No automated live installed-CLI/Docker/GPU lifecycle proof |
+| Managed Strata runtime | Ownership/lifecycle tests, bounded-child request regression, dated managed startup and installed-wheel readiness observation | One observed readiness response is not clean-machine setup, sustained reliability or whole-feature execution |
 | Host setup and MCP transport | Temporary Antigravity config/proposal safety, shipped-host contracts, SDK handshake/discovery | Actual host reload, permissions, continuation and reconnect require host-specific observations |
 
 Historical evidence remains dated and limited:

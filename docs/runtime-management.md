@@ -111,6 +111,17 @@ overall command deadline. Ordinary non-generating `check` and MCP availability
 checks retain their existing HTTP connection/read timeouts. Only a successful
 readiness response reports `ready`.
 
+For an endpoint identified by the managed-runtime guard as this user's Strata
+service, readiness uses a fixed diagnostic request: 256 maximum output tokens,
+a 32-token reasoning budget, low reasoning effort and a short answer prompt.
+The former five-token probe could exhaust its output while still thinking.
+These request-local limits do not change task budgets or persisted service
+defaults, and the reasoning budget remains a wrap-up threshold, not an exact
+token cap. Only a nonempty answer with a completed stop is accepted; truncated,
+reasoning-only or malformed responses remain unverified. Other endpoints keep
+the backend-neutral readiness request; a model name or port alone never opts
+an endpoint into Strata-specific fields. Neither path retries automatically.
+
 Managed readiness requests coordinate through the same cross-client activity
 gate as task submission and synchronous execution. A queued/running task or
 unresolved lifecycle operation prevents diagnostic inference; a readiness

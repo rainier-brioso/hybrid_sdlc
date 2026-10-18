@@ -2,8 +2,10 @@
 
 from __future__ import annotations
 
+import json
 import threading
 import time
+from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 
 import httpx
@@ -46,10 +48,13 @@ def test_probe_endpoint_success(monkeypatch: pytest.MonkeyPatch) -> None:
 
 
 def test_probe_endpoint_readiness(monkeypatch: pytest.MonkeyPatch) -> None:
+    posted: list[dict[str, object]] = []
+
     def handler(request: httpx.Request) -> httpx.Response:
         if request.url.path.endswith("/v1/models"):
             return httpx.Response(200, json={"data": [{"id": "Qwen"}]})
         if request.url.path.endswith("/v1/chat/completions"):
+            posted.append(json.loads(request.content))
             return httpx.Response(200, json={"choices": [{"message": {"content": "pong"}}]})
         return httpx.Response(404)
 
@@ -62,6 +67,167 @@ def test_probe_endpoint_readiness(monkeypatch: pytest.MonkeyPatch) -> None:
     assert result.available
     assert result.readiness_tested
     assert result.readiness_passed
+    assert posted == [
+        {
+            "model": "Qwen",
+            "messages": [{"role": "user", "content": "ping"}],
+            "max_tokens": 5,
+            "temperature": 0.0,
+        }
+    ]
+
+
+def test_unmanaged_strata_named_model_keeps_generic_readiness_payload(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    posted: list[dict[str, object]] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        if request.url.path.endswith("/models"):
+            return httpx.Response(200, json={"data": [{"id": "qwen3.8-flash-next-coder-iq1_m"}]})
+        posted.append(json.loads(request.content))
+        return httpx.Response(200, json={"choices": [{"message": {"content": "ok"}}]})
+
+    transport = httpx.MockTransport(handler)
+    monkeypatch.setattr(
+        httpx, "Client", lambda **kwargs: _orig_client(transport=transport, **kwargs)
+    )
+    result = probe_endpoint(
+        "http://127.0.0.1:8090/v1",
+        required_model="qwen3.8-flash-next-coder-iq1_m",
+        check_readiness=True,
+    )
+    assert result.readiness_passed
+    assert posted == [
+        {
+            "model": "qwen3.8-flash-next-coder-iq1_m",
+            "messages": [{"role": "user", "content": "ping"}],
+            "max_tokens": 5,
+            "temperature": 0.0,
+        }
+    ]
+
+
+@pytest.mark.parametrize(
+    "response",
+    [
+        {
+            "choices": [
+                {"message": {"content": "  ", "reasoning_content": "done"}, "finish_reason": "stop"}
+            ]
+        },
+        {"choices": [{"message": {"content": "OK"}, "finish_reason": "length"}]},
+        {"choices": [{"message": {"role": "user", "content": "OK"}, "finish_reason": "stop"}]},
+        {
+            "choices": [
+                {
+                    "message": {"content": "OK", "tool_calls": [{"id": "call"}]},
+                    "finish_reason": "stop",
+                }
+            ]
+        },
+    ],
+)
+def test_managed_readiness_rejects_incomplete_answers(
+    monkeypatch: pytest.MonkeyPatch, response: dict[str, object]
+) -> None:
+    def handler(request: httpx.Request) -> httpx.Response:
+        if request.url.path.endswith("/models"):
+            return httpx.Response(200, json={"data": [{"id": "qwen3.8-flash-next-coder-iq1_m"}]})
+        assert request.method == "POST"
+        payload = json.loads(request.content)
+        assert payload["messages"] == [{"role": "user", "content": "Reply only OK."}]
+        assert payload["max_tokens"] == 256
+        assert payload["reasoning_budget_tokens"] == 32
+        assert payload["reasoning_effort"] == "low"
+        return httpx.Response(200, json=response)
+
+    transport = httpx.MockTransport(handler)
+    monkeypatch.setattr(
+        httpx, "Client", lambda **kwargs: _orig_client(transport=transport, **kwargs)
+    )
+    result = server_probe._probe_endpoint_direct(
+        "http://127.0.0.1:8090/v1",
+        check_readiness=True,
+        managed_strata=True,
+    )
+    assert result.available
+    assert not result.readiness_passed
+    assert result.error is not None
+
+
+def test_managed_readiness_rejects_malformed_success_body(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    def handler(request: httpx.Request) -> httpx.Response:
+        if request.url.path.endswith("/models"):
+            return httpx.Response(200, json={"data": [{"id": "Qwen"}]})
+        return httpx.Response(200, text="not-json")
+
+    transport = httpx.MockTransport(handler)
+    monkeypatch.setattr(
+        httpx, "Client", lambda **kwargs: _orig_client(transport=transport, **kwargs)
+    )
+    result = server_probe._probe_endpoint_direct(
+        "http://127.0.0.1:8090/v1", check_readiness=True, managed_strata=True
+    )
+    assert result.available
+    assert not result.readiness_passed
+    assert result.error is not None
+    assert result.error.code == "READINESS_INVALID_RESPONSE"
+
+
+def test_managed_probe_worker_receives_fixed_strata_request() -> None:
+    posted: list[dict[str, object]] = []
+
+    class Handler(BaseHTTPRequestHandler):
+        def do_GET(self) -> None:
+            self.send_response(200)
+            self.send_header("Content-Type", "application/json")
+            self.end_headers()
+            self.wfile.write(b'{"data":[{"id":"qwen3.8-flash-next-coder-iq1_m"}]}')
+
+        def do_POST(self) -> None:
+            posted.append(json.loads(self.rfile.read(int(self.headers["Content-Length"]))))
+            response = b'{"choices":[{"message":{"role":"assistant","content":"OK"},"finish_reason":"stop"}]}'
+            self.send_response(200)
+            self.send_header("Content-Type", "application/json")
+            self.send_header("Content-Length", str(len(response)))
+            self.end_headers()
+            self.wfile.write(response)
+
+        def log_message(self, format: str, *args: object) -> None:
+            pass
+
+    server = ThreadingHTTPServer(("127.0.0.1", 0), Handler)
+    server.daemon_threads = True
+    thread = threading.Thread(target=server.serve_forever, daemon=True)
+    thread.start()
+    port = server.server_address[1]
+    runtime_strata.configure(port=port)
+    try:
+        result = probe_endpoint(
+            f"http://127.0.0.1:{port}/v1",
+            required_model="qwen3.8-flash-next-coder-iq1_m",
+            check_readiness=True,
+            timeout_seconds=5,
+        )
+    finally:
+        server.shutdown()
+        server.server_close()
+        thread.join(timeout=2)
+    assert result.available
+    assert result.readiness_passed
+    assert posted == [
+        {
+            "model": "qwen3.8-flash-next-coder-iq1_m",
+            "messages": [{"role": "user", "content": "Reply only OK."}],
+            "max_tokens": 256,
+            "temperature": 0.0,
+            "reasoning_budget_tokens": 32,
+            "reasoning_effort": "low",
+        }
+    ]
 
 
 def test_readiness_failure_keeps_endpoint_available_and_rejects_malformed_choices(

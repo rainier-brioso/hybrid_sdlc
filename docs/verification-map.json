@@ -36,17 +36,19 @@
         "tests/integration/test_runtime_strata_cli.py::test_diagnose_readiness_success_reports_ready",
         "tests/integration/test_runtime_strata_cli.py::test_diagnose_get_wall_clock_bounds_slow_drip",
         "tests/unit/test_probe_worker.py::test_probe_worker_forwards_exact_process_and_request_deadline",
+        "tests/unit/test_server_probe.py::test_managed_probe_worker_receives_fixed_strata_request",
+        "tests/unit/test_server_probe.py::test_unmanaged_strata_named_model_keeps_generic_readiness_payload",
         "tests/integration/test_runtime_strata_cli.py::test_unconfigured_actions_return_structured_failure",
         "tests/integration/test_runtime_strata_cli.py::test_log_tail_is_forwarded_without_following",
         "tests/unit/test_runtime_strata.py::test_start_stop_restart_use_only_owned_compose_project_and_never_build_or_pull",
         "tests/unit/test_runtime_strata.py::test_status_and_logs_report_owned_container_and_bound_log_output"
       ],
       "protocol_paths": ["docs/runtime-management.md", "docs/strata-server-docker.md"],
-      "evidence_paths": [],
-      "installed_status": "not_run",
-      "live_status": "not_run",
+      "evidence_paths": ["docs/evidence/installed-workflow-runtime-20261018.md", "docs/evidence/strata-managed-readiness-20261018.md"],
+      "installed_status": "historical_observation",
+      "live_status": "historical_observation",
       "prerequisites": ["Docker Desktop or Docker Engine on a supported local context; explicit operator configuration."],
-      "limitations": ["Automated runtime tests use temporary state, fake Docker and mocked or loopback HTTP; they do not start Docker or Strata.", "The slow-drip loopback check observes partial-body delivery, probe timeout and disconnection; it is not real Strata telemetry.", "No current installed runtime or live model readiness check is recorded."]
+      "limitations": ["Automated runtime tests use temporary state, fake Docker and mocked or loopback HTTP; they do not start Docker or Strata.", "The slow-drip loopback check observes partial-body delivery, probe timeout and disconnection; it is not real Strata telemetry.", "The dated installed-wheel managed readiness observation verifies one successful response, not repeated reliability, clean-machine provisioning or whole-feature execution."]
     },
     {
       "id": "endpoint-check",
