@@ -34,13 +34,23 @@ existing target chat and a supported bridge-process lifetime before submitting,
 then launch the bridge for the returned job ID. This is a workflow requirement,
 not automatic launch by the current CLI/MCP. Synchronous execution and agreed
 manual status inspection remain fallback modes, not alternative notification
-transports. Automatic Antigravity notification is unimplemented/unverified;
-HSDLC-087 investigates a supported host-specific delivery and continuation
-mechanism before any adapter is claimed or implemented.
+transports. HSDLC-087 records a successful synthetic App sidecar transport probe
+with user-observed automatic response. HSDLC-088 adds an explicitly authorized
+[Antigravity App bridge](antigravity-completion-bridge.md), initially gated to
+Windows App 2.24.0; installed real-job verification remains separate. This does
+not establish IDE compatibility, repeated reliability or waiting-turn resumption.
 
 ---
 
 ## 1. Architectural Decisions & Resolution of Review Findings
+
+Managed Strata context selection is explicit (`runtime strata configure
+--context-size`), defaulting to 16384 and preserving existing selections when
+omitted. HSDLC-089 adds stopped/idle migration, container recreation and saved
+model configuration synchronization. The 2026-10-30 installed runtime loaded
+65536 and passed bounded readiness; the 4096 output default remains unchanged.
+See [65K evidence and limits](evidence/strata-context-65k-20261030.md); this does
+not establish full-context coding performance or change historical 16K results.
 
 ### 1.1 Job Lifecycle & Execution Model ([P0])
 

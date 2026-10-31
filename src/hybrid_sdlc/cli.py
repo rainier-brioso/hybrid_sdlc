@@ -12,6 +12,8 @@ import click
 
 from hybrid_sdlc import __version__
 from hybrid_sdlc.aider_runner import run_bounded_loop, validate_aider_target_files
+from hybrid_sdlc.antigravity_bridge import run_antigravity_bridge
+from hybrid_sdlc.antigravity_sidecar import AntigravitySidecarError, prepare_antigravity_sidecar
 from hybrid_sdlc.artifacts import clean_artifacts
 from hybrid_sdlc.codex_bridge import run_codex_bridge
 from hybrid_sdlc.command_profiles import resolve_profile_executable
@@ -153,16 +155,26 @@ def _runtime_error(exc: RuntimeManagementError, *, json_mode: bool) -> NoReturn:
 @runtime_strata_group.command("configure")
 @click.option("--port", type=click.IntRange(1, 65535), default=8080, show_default=True)
 @click.option(
+    "--context-size",
+    type=click.IntRange(16384, 131072),
+    default=None,
+    help="Context window in tokens (default for a new runtime: 16384).",
+)
+@click.option(
     "--reuse-model-volume",
     "model_volume",
     help="Explicitly reuse an existing Docker volume by name for model files.",
 )
 @click.option("--json", "json_mode", is_flag=True, help="Output machine-readable JSON.")
-def runtime_strata_configure(port: int, model_volume: str | None, json_mode: bool) -> None:
-    """Write the managed runtime definition; this does not contact Docker or start it."""
+def runtime_strata_configure(
+    port: int, context_size: int | None, model_volume: str | None, json_mode: bool
+) -> None:
+    """Prepare managed settings; changing context reads Docker state but never starts service."""
 
     try:
-        result = configure_strata_runtime(port=port, model_volume=model_volume)
+        result = configure_strata_runtime(
+            port=port, model_volume=model_volume, context_size=context_size
+        )
     except RuntimeManagementError as exc:
         _runtime_error(exc, json_mode=json_mode)
     _runtime_result(result, json_mode=json_mode)
@@ -999,6 +1011,156 @@ def bridge_codex_cmd(
     else:
         click.echo("Codex bridge finished; this is not job or patch acceptance.")
         click.echo(json.dumps(result, indent=2))
+
+
+def _antigravity_options(function: Callable[..., object]) -> Callable[..., object]:
+    """Use identical explicit target/budget options for direct and sidecar delivery."""
+    options = [
+        click.argument("job_id"),
+        click.option("--repo-root", type=click.Path(path_type=Path), required=True),
+        click.option(
+            "--conversation-id", required=True, help="Exact authorized existing App chat UUID."
+        ),
+        click.option(
+            "--app-executable",
+            type=click.Path(path_type=Path),
+            required=True,
+            help="Trusted absolute path to the supported Antigravity App executable.",
+        ),
+        click.option(
+            "--allow-model-continuation",
+            is_flag=True,
+            help="Authorize a completion message that may trigger model usage in this App chat.",
+        ),
+        click.option(
+            "--wait-timeout", type=click.FloatRange(0, 86400), default=1800.0, show_default=True
+        ),
+        click.option(
+            "--send-timeout", type=click.FloatRange(0.1, 3600), default=30.0, show_default=True
+        ),
+        click.option("--json", "json_mode", is_flag=True),
+    ]
+    for option in reversed(options):
+        function = option(function)
+    return function
+
+
+@bridge_group.command("antigravity")
+@_antigravity_options
+@click.option("--poll-interval", type=click.FloatRange(0.01, 5), default=0.5, show_default=True)
+def bridge_antigravity_cmd(
+    job_id: str,
+    repo_root: Path,
+    conversation_id: str,
+    app_executable: Path,
+    allow_model_continuation: bool,
+    wait_timeout: float,
+    send_timeout: float,
+    poll_interval: float,
+    json_mode: bool,
+) -> None:
+    """Wait locally and send one terminal summary to an existing Antigravity App chat.
+
+    Experimental Windows App adapter. Command acceptance is not a model reply or
+    patch approval. This does not submit a job or configure a sidecar.
+    """
+    if not allow_model_continuation:
+        _async_error(
+            "App delivery requires --allow-model-continuation and may trigger model usage.",
+            code="BRIDGE_OPT_IN_REQUIRED",
+            exit_code=ExitCode.POLICY_ERROR,
+            json_mode=json_mode,
+        )
+    try:
+        result = run_antigravity_bridge(
+            repo_root,
+            job_id,
+            conversation_id=conversation_id,
+            app_executable=app_executable,
+            allow_model_continuation=allow_model_continuation,
+            wait_timeout_seconds=wait_timeout,
+            send_timeout_seconds=send_timeout,
+            poll_interval_seconds=poll_interval,
+        )
+    except HybridSDLCError as exc:
+        _async_error(exc.message, code=exc.code, exit_code=exc.exit_code, json_mode=json_mode)
+    except OSError:
+        _async_error(
+            "Bridge I/O failed; inspect its receipt before further action.",
+            code="BRIDGE_IO_ERROR",
+            exit_code=ExitCode.INTERNAL_ERROR,
+            json_mode=json_mode,
+        )
+    except KeyboardInterrupt:
+        _async_error(
+            "Bridge interrupted; the job was not cancelled. Delivery may be uncertain.",
+            code="BRIDGE_INTERRUPTED",
+            exit_code=ExitCode.CANCELLED,
+            json_mode=json_mode,
+        )
+    click.echo(json.dumps(result, indent=2))
+
+
+@bridge_group.command("antigravity-sidecar")
+@_antigravity_options
+@click.option("--dry-run", is_flag=True, help="Preview paths and action without writing files.")
+@click.option(
+    "--remove", is_flag=True, help="Remove only this owned manifest; propose config removal."
+)
+def bridge_antigravity_sidecar_cmd(
+    job_id: str,
+    repo_root: Path,
+    conversation_id: str,
+    app_executable: Path,
+    allow_model_continuation: bool,
+    wait_timeout: float,
+    send_timeout: float,
+    json_mode: bool,
+    dry_run: bool,
+    remove: bool,
+) -> None:
+    """Explicitly prepare or remove one job's Antigravity App sidecar.
+
+    Existing global configuration is never overwritten: review and manually
+    merge the private proposal. Never blindly replace a concurrently changed file.
+    Removal does not cancel a job or retract a message. No host restart is performed.
+    """
+    if not remove and not allow_model_continuation:
+        _async_error(
+            "App sidecar setup requires --allow-model-continuation and may trigger model usage.",
+            code="BRIDGE_OPT_IN_REQUIRED",
+            exit_code=ExitCode.POLICY_ERROR,
+            json_mode=json_mode,
+        )
+    try:
+        result = prepare_antigravity_sidecar(
+            repo_root,
+            job_id,
+            conversation_id=conversation_id,
+            app_executable=app_executable,
+            allow_model_continuation=allow_model_continuation,
+            dry_run=dry_run,
+            remove=remove,
+            wait_timeout_seconds=wait_timeout,
+            send_timeout_seconds=send_timeout,
+        )
+    except HybridSDLCError as exc:
+        _async_error(exc.message, code=exc.code, exit_code=exc.exit_code, json_mode=json_mode)
+    except AntigravitySidecarError as exc:
+        _async_error(
+            str(exc),
+            code="ANTIGRAVITY_SIDECAR_FAILED",
+            exit_code=ExitCode.CONFIG_ERROR,
+            json_mode=json_mode,
+        )
+    except (HostSetupError, OSError, ValueError):
+        _async_error(
+            "Cannot safely prepare the sidecar. Check selected paths, ownership and configuration; no automatic overwrite is performed.",
+            code="ANTIGRAVITY_SIDECAR_FAILED",
+            exit_code=ExitCode.CONFIG_ERROR,
+            json_mode=json_mode,
+        )
+    click.echo(json.dumps(result, indent=2))
 
 
 @cli.command("mcp")

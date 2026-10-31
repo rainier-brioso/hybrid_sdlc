@@ -1807,8 +1807,22 @@ as the current CLI contract.
   Cross-repository queue concurrency and repeated desktop reliability remain
   unverified; the earlier dated direct queue observation is retained separately.
 
-- [ ] **HSDLC-087 — Investigate Antigravity completion notification and continuation**
+- [x] **HSDLC-087 — Investigate Antigravity completion notification and continuation**
   Depends on: HSDLC-083, HSDLC-084.
+  Research checkpoint (2026-10-19): current official App sidecar documentation
+  exposes `agentapi send-message` for an existing conversation. The user supplied
+  IDE 2.5.5 Help/About details (VSCode OSS base 1.107.0); IDE sidecar capability
+  remains unverified. The subsequent App probe is separate from IDE support
+  and production adapter implementation. See the
+  [research and bounded probe proposal](evidence/antigravity-notification-investigation-20261019.md).
+  Follow-up: the user installed App (binary metadata 2.24.0), confirmed sidecars
+  and approved temporary configuration plus one synthetic completion to the
+  disposable test chat. The user supplied the exact target UUID. One synthetic
+  send command succeeded; replay was refused and the temporary sidecar was
+  removed. Eight offline probe checks and independent review passed. The user
+  confirmed the matching ACK appeared automatically without refresh/reopening.
+  This is one user-observed App response, not independent transcript verification,
+  repeated reliability, waiting-turn resumption or an installed real-job bridge.
   Scope: research and a separately authorized synthetic host probe, not a
   notification adapter implementation or permission to message an arbitrary chat.
   Acceptance:
@@ -1828,8 +1842,44 @@ as the current CLI contract.
     Do not add retries or broaden host permissions to make a probe succeed.
   - Document a supported CLI adapter proposal only if evidence warrants it;
     otherwise record the unavailable capability and an honest synchronous or
-    manual-status fallback. No automatic Antigravity notification is claimed
-    until verified; implementing an adapter requires a separate bounded task.
+    manual-status fallback. Distinguish a dated synthetic automatic response
+    from supported product integration; an adapter requires a separate task.
+
+- [ ] **HSDLC-088 — Integrate an explicit Antigravity App completion bridge**
+  Depends on: HSDLC-087.
+  Implementation authorized after the synthetic probe. CLI transport and owned
+  per-job sidecar preparation/removal pass source validation; an installed real-job
+  rehearsal remains separately authorized and pending. Do not promote the earlier
+  disposable probe to shipped-adapter or worker-survival evidence.
+  Validation (2026-10-19): full suite 1,049 passed / 14 environment or opt-in skips,
+  82.35% coverage; Ruff format/lint, strict mypy on 30 files, skill validation,
+  package/host contracts and independent review passed. Offline wheel/sdist
+  builds and archive-content checks passed; no live settings or messages changed.
+  See [source validation](evidence/antigravity-adapter-validation-20261019.md).
+  Acceptance:
+  - Expose the integration through the installed Hybrid SDLC CLI and document
+    a host-managed App sidecar lifecycle. Preview/apply/remove must be explicit
+    and preserve unrelated settings, plugins and sidecars. Do not auto-enable
+    new capabilities, restart the host or change IDE/CLI configuration.
+  - Bind one persisted job, repository and actual authorized existing chat ID;
+    require explicit host-model continuation permission. Never infer a latest
+    chat, create a fallback or claim IDE support from the App observation.
+  - Wait locally outside model calls with finite bounds. Validate the installed
+    host executable/advertised wrapper without shell interpolation or copying
+    this experiment's user-specific paths into portable defaults. Fail closed
+    on unknown host versions/interfaces or process-containment failures.
+  - Reuse minimized terminal metadata and durable intent/replay safeguards;
+    prevent sidecar restart from resending. Preserve uncertain delivery on
+    timeout, crash, nonzero exit or lost acknowledgment. Removing the sidecar
+    must not cancel its job or imply message retraction.
+  - Cover configuration preservation, exact targeting, wrapper validation,
+    bounds, lifecycle interruption, cancellation, privacy and replay offline.
+    Keep busy/closed-target behavior conservative and unsupported cross-repo
+    concurrency explicit until independently validated.
+  - Update shipped workflow guidance only for implemented behavior. Separately
+    approve an installed real-job rehearsal; record command acceptance, matching
+    automatic response and actual worker evidence independently. Keep Codex
+    queue behavior unchanged and require normal review/CI before integration.
 
 - [x] **HSDLC-086 — Make bounded readiness usable with Strata reasoning**
   Depends on: HSDLC-085.
@@ -1901,6 +1951,37 @@ as the current CLI contract.
   delivery used a separate installed environment. Metria HSDLC-077 remains next,
   with proposal/baseline reconciliation, date-only design and offline profile
   prerequisites retained.
+
+- [x] **HSDLC-089 — Support explicit managed Strata context changes**
+  User request (2026-10-26): raise the local runtime from 16384 to 65536 context
+  tokens without raising the 4096-token output default or bypassing lifecycle
+  validation. Preserve 16K as the default for new installations.
+  Source checkpoint (2026-10-30): focused runtime/startup/CLI regressions
+  212 passed / 1 Windows symlink-privilege skip; mypy on 30 files and Ruff checks
+  passed. Independent review found no remaining code blocker. Offline wheel
+  and sdist builds succeeded. Final full suite: 1075 passed / 14 environment or
+  opt-in skips, 82.41% coverage; runtime/startup/layout regressions 216 passed /
+  1 symlink skip after synchronizing the manual startup mirror. The installed
+  CLI configured 65536 and recreated the stopped owned service; saved context,
+  reasoning 1024 and output 4096 were confirmed. Loaded-model readiness passed
+  in one bounded request; final status healthy, no pending migration or lifecycle
+  uncertainty. GPU use was 23963 / 24576 MiB. A full-context coding benchmark,
+  live rollback and reboot persistence remain untested, not acceptance claims.
+  See [65K validation](evidence/strata-context-65k-20261030.md).
+  Acceptance:
+  - Add a bounded CLI context selection; preserve old runtime markers and exact
+    legacy assets, ownership, endpoint, volume, budgets and unrelated settings.
+  - Require stopped/absent owned containers and idle, resolved activity before
+    changing an existing selection. Reject unknown or incomplete observations.
+  - Apply both container environment and saved model `--max-context` settings;
+    distinguish desired capacity from actual loaded capacity. Do not rebuild
+    images, redownload weights, mutate unrelated services or use permanent
+    `REINSTALL=1` as a shortcut.
+  - Preserve atomic persistence, conservative interruption behavior and explicit
+    rollback. Cover legacy migration, malformed values, running/busy refusal,
+    failed writes, startup idempotence and model-setting preservation in tests.
+  - Independently review, run required gates and record bounded live readiness
+    and memory observations separately from a full-context coding benchmark.
 
 ## Deferred Work — Not Required for the Initial Release
 

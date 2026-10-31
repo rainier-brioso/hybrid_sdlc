@@ -83,8 +83,11 @@ the turn. The bridge is required for automatic notification, not an optional
 extra; MCP submission does not launch it. If prerequisites cannot be met, report
 the limitation and offer synchronous work or an explicitly agreed manual-status
 workflow. Bounded status waits remain for inspection/recovery, not automatic
-wakeup. Other hosts have no verified notification adapter; Antigravity research
-is tracked as HSDLC-087. An accepted patch is not automatically applied or merged.
+wakeup. Antigravity App uses a separate
+[experimental sidecar bridge](antigravity-completion-bridge.md), initially limited
+to Windows App 2.24.0, with explicit setup authority and reviewed configuration
+proposals. Its synthetic transport observation is not an installed real-job
+rehearsal; do not infer IDE support. An accepted patch is not automatically applied or merged.
 Dependent tasks start from a fresh committed baseline containing accepted
 prerequisites. Independent writers require separate worktrees and ownership;
 their combined change still needs integration checks. Serialize local inference

@@ -17,6 +17,7 @@ _MODEL_CONFIG_PATH = Path("/data/config/strata-coder-iq1_m.json")
 _ACTIVE_CONFIG_PATH = Path("/opt/strata/strata-coder-iq1_m.json")
 _FINAL_COMMAND = 'exec .venv/bin/python setup.py "$@"'
 _APPLY_COMMAND = '/opt/strata/.venv/bin/python /opt/hybrid-sdlc/startup.py --apply "$cfg"'
+_LEGACY_STARTUP_SHA256 = "afee97c1d2489597c89334c0d2c3e421a329e4bd331ad794e132f1902b9a7347"
 
 
 def _fail(message: str) -> NoReturn:
@@ -45,9 +46,12 @@ def _read_pinned_entrypoint(path: Path = _ENTRYPOINT_PATH) -> str:
 
 
 def _apply_model_default(
-    config_path: Path = _MODEL_CONFIG_PATH, *, default_budget: object = 1024
+    config_path: Path = _MODEL_CONFIG_PATH,
+    *,
+    default_budget: object = 1024,
+    context_size: int | None = None,
 ) -> None:
-    """Set the default only when absent, preserving user-selected model settings."""
+    """Apply the managed context and reasoning default, preserving all other settings."""
 
     if config_path not in (_MODEL_CONFIG_PATH, _ACTIVE_CONFIG_PATH):
         raise RuntimeError("model config path is outside the supported Strata config location")
@@ -68,11 +72,31 @@ def _apply_model_default(
         raise RuntimeError("Strata model config is missing, unreadable, or invalid JSON") from exc
     if not isinstance(existing, dict):
         raise RuntimeError("Strata model config must contain a JSON object")
-    if "reasoning_budget_tokens" in existing:
-        return
-
     updated = dict(existing)
-    updated["reasoning_budget_tokens"] = default_budget
+    if "reasoning_budget_tokens" not in updated:
+        updated["reasoning_budget_tokens"] = default_budget
+    if context_size is not None:
+        if (
+            isinstance(context_size, bool)
+            or not isinstance(context_size, int)
+            or not 16384 <= context_size <= 131072
+        ):
+            raise RuntimeError("managed context size must be from 16384 through 131072")
+        args = updated.get("args")
+        if not isinstance(args, list) or any(not isinstance(arg, str) for arg in args):
+            raise RuntimeError("Strata model config args must be a list of strings")
+        positions = [index for index, arg in enumerate(args) if arg == "--max-context"]
+        if len(positions) != 1 or positions[0] + 1 >= len(args):
+            raise RuntimeError("Strata model config must contain one --max-context value")
+        try:
+            int(args[positions[0] + 1])
+        except ValueError as exc:
+            raise RuntimeError("Strata model config has an invalid --max-context value") from exc
+        updated_args = list(args)
+        updated_args[positions[0] + 1] = str(context_size)
+        updated["args"] = updated_args
+    if updated == existing:
+        return
     temporary_path: Path | None = None
     try:
         fd, temporary_name = tempfile.mkstemp(
@@ -97,14 +121,14 @@ def _apply_model_default(
                 pass
 
 
-def _apply_startup_defaults(config_path: Path) -> None:
+def _apply_startup_defaults(config_path: Path, context_size: int | None = None) -> None:
     """Cover upstream's first-install regular file and later persisted symlink."""
     if config_path != _MODEL_CONFIG_PATH:
         raise RuntimeError("model config path is outside the supported Strata config location")
     linked = _ACTIVE_CONFIG_PATH.is_symlink()
     if linked and _ACTIVE_CONFIG_PATH.resolve() != _MODEL_CONFIG_PATH.resolve():
         raise RuntimeError("active Strata config symlink has an unexpected target")
-    _apply_model_default(config_path)
+    _apply_model_default(config_path, context_size=context_size)
     if not linked:
         # First setup copies /opt's regular file to /data, but still launches
         # from /opt. Keep its default consistent with the persisted selection.
@@ -112,14 +136,20 @@ def _apply_startup_defaults(config_path: Path) -> None:
             saved = json.loads(config_path.read_text(encoding="utf-8-sig"))
         except (OSError, ValueError) as exc:
             raise RuntimeError("could not read persisted Strata budget") from exc
-        _apply_model_default(_ACTIVE_CONFIG_PATH, default_budget=saved["reasoning_budget_tokens"])
+        _apply_model_default(
+            _ACTIVE_CONFIG_PATH,
+            default_budget=saved["reasoning_budget_tokens"],
+            context_size=context_size,
+        )
 
 
 def main() -> None:
     if len(sys.argv) == 3 and sys.argv[1] == "--apply":
         try:
-            _apply_startup_defaults(Path(sys.argv[2]))
-        except RuntimeError as exc:
+            context_size_text = os.environ.get("HYBRID_SDLC_CONTEXT_SIZE")
+            context_size = int(context_size_text) if context_size_text else None
+            _apply_startup_defaults(Path(sys.argv[2]), context_size=context_size)
+        except (RuntimeError, ValueError) as exc:
             _fail(str(exc))
         return
     if len(sys.argv) > 1 and sys.argv[1] == "--apply":

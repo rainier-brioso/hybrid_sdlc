@@ -288,7 +288,10 @@ Poll to a terminal state. Client-side cancellation/timeout does not prove the
 remote inference request ended. On restrictive Windows Job Object hosts,
 background submission fails closed; use synchronous execution. Supported-host
 Windows survival remains unverified; Codex queue notification has separate dated
-observations, while Antigravity notification remains planned investigation. See
+observations. Antigravity App has a separate
+[experimental sidecar bridge](antigravity-completion-bridge.md) and one
+user-observed synthetic ACK; the shipped adapter's installed real-job rehearsal
+is pending. Do not infer IDE support or worker survival from that probe. See
 [host compatibility](host-compatibility.md).
 
 The host-native stdio server is `hybrid-sdlc mcp`. Registration is explicit and
@@ -330,7 +333,11 @@ runtime configuration or model volumes. Inspect those separately; do not delete
 computed broad directories or ambiguous activity records.
 
 Before reinstalling or uninstalling, finish/cancel jobs and close hosts/MCP
-processes that use the tool environment. From the toolkit source checkout:
+processes that use the tool environment. If App job sidecars were explicitly
+prepared, use their [owned removal workflow](antigravity-completion-bridge.md)
+while the CLI is still installed and review the config-removal proposals.
+Reconcile any running bridge or uncertain delivery separately; manifest removal
+is not process termination. Keep delivery receipts. From the toolkit source checkout:
 
 ```sh
 uv tool install --python 3.12 --force .
