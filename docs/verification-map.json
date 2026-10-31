@@ -44,7 +44,7 @@
         "tests/unit/test_runtime_strata.py::test_status_and_logs_report_owned_container_and_bound_log_output"
       ],
       "protocol_paths": ["docs/runtime-management.md", "docs/strata-server-docker.md"],
-      "evidence_paths": ["docs/evidence/installed-workflow-runtime-20261018.md", "docs/evidence/strata-managed-readiness-20261018.md"],
+      "evidence_paths": ["docs/evidence/installed-workflow-runtime-20261018.md", "docs/evidence/strata-managed-readiness-20261018.md", "docs/evidence/strata-context-65k-20261030.md"],
       "installed_status": "historical_observation",
       "live_status": "historical_observation",
       "prerequisites": ["Docker Desktop or Docker Engine on a supported local context; explicit operator configuration."],
@@ -181,6 +181,24 @@
       "live_status": "historical_observation",
       "prerequisites": ["Existing persisted trusted job; installed/authenticated Codex CLI supporting queue; exact target chat UUID and explicit host-model continuation approval."],
       "limitations": ["The dated direct queue probe and later installed-wheel bridge rehearsal each produced an observed automatic desktop response. Neither establishes clean-machine installation, repeated reliability or real implementation-job orchestration.", "Queue acceptance alone does not prove model completion or desktop visibility; the bridge does not collect model replies or token usage. The rehearsal verified human observation and matching history separately.", "The selected chat retains its context, permissions and integrations; this CLI handoff is not an MCP Tasks notification or a whole-feature controller.", "An uncertain delivery is not automatically retried; receipt removal defeats replay protection. Earlier App Server records describe a removed experimental transport.", "Per-thread advisory locks coordinate bridge calls within one repository; concurrent queueing from different repositories remains unverified."]
+    },
+    {
+      "id": "antigravity-app-completion-bridge",
+      "cli_operations": ["bridge antigravity", "bridge antigravity-sidecar"],
+      "mcp_tools": [],
+      "automated_test_nodeids": [
+        "tests/integration/test_antigravity_bridge_cli.py::test_cli_antigravity_delivers_minimized_metadata_and_preserves_replay_guard",
+        "tests/integration/test_antigravity_bridge_cli.py::test_cli_antigravity_requires_target_and_authority_before_host_access",
+        "tests/integration/test_antigravity_bridge_cli.py::test_cli_antigravity_sidecar_dry_run_is_nonmutating",
+        "tests/integration/test_antigravity_bridge_cli.py::test_cli_antigravity_help_states_experimental_boundary",
+        "tests/unit/test_artifacts.py::test_clean_preserves_antigravity_bridge_replay_guards"
+      ],
+      "protocol_paths": ["docs/antigravity-completion-bridge.md", "docs/hosts/antigravity.md", "skills/local-delegate/SKILL.md"],
+      "evidence_paths": ["docs/evidence/antigravity-notification-investigation-20261019.md", "docs/evidence/antigravity-adapter-validation-20261019.md"],
+      "installed_status": "not_run",
+      "live_status": "historical_observation",
+      "prerequisites": ["Trusted persisted job; supported Windows App 2.24.0 and validated advertised wrapper; exact user-confirmed chat UUID; explicit continuation and sidecar setup authority; separately supported worker lifetime."],
+      "limitations": ["One disposable App sidecar probe returned command success and a user-observed automatic ACK; the shipped CLI adapter has not undergone an installed real-job rehearsal.", "Unknown App versions/platforms and IDE/CLI surfaces fail closed or remain unverified. The probe did not independently collect transcript, turn ID or usage.", "Command acceptance is not model completion, patch approval or suspended MCP-turn resumption. Busy/closed targets, restart recovery, cross-repository concurrency and repeated reliability remain unverified.", "Replay guards are per adapter/repository, not global deduplication across Codex and App. Existing host configuration updates are private proposals for reviewed manual merge; manifest preparation alone is not proof of launch."]
     },
     {
       "id": "distribution-and-meta",

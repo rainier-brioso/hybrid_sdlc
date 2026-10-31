@@ -7,7 +7,8 @@ services:
     environment:
       FAMILY: coder
       MODEL: IQ1_M
-      CONTEXT: "16384"
+      CONTEXT: "__CONTEXT_SIZE__"
+      HYBRID_SDLC_CONTEXT_SIZE: "__CONTEXT_SIZE__"
       VISION: "no"
       KV: int8
       LOW_RAM: "on"

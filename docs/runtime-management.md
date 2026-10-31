@@ -9,7 +9,7 @@ see [Strata Docker setup](strata-server-docker.md).
 
 Install the current Hybrid SDLC package and Docker Compose first. The bundled
 profile targets the existing RTX 3090 evaluation: pinned Strata, Coder IQ1_M,
-16K context, low-RAM mode, int8 KV, no vision, low reasoning effort, 4096 total
+16K context by default, low-RAM mode, int8 KV, no vision, low reasoning effort, 4096 total
 output tokens, and a 1024-token reasoning wrap-up threshold. In the pinned
 Strata release, the reasoning budget belongs in the per-model config
 `/data/config/strata-coder-iq1_m.json`; it is not supported in the shared
@@ -22,8 +22,9 @@ New managed definitions include a read-only startup hook that adds the model
 budget only if absent. It validates the pinned upstream startup script and
 preserves explicit model settings. Existing exact legacy runtime definitions
 remain valid, and repeated `configure` does not migrate or overwrite them.
-Such installations retain their prior startup behavior; no automatic upgrade
-or restart is performed. Do not edit managed Compose or startup assets by hand:
+Such installations retain their prior startup behavior unless an explicit
+supported context-size change migrates their startup assets. No automatic
+upgrade or restart is performed. Do not edit managed Compose or startup assets by hand:
 the lifecycle commands reject unrecognized definitions. Repository-level Aider
 request budgets remain available as explicit overrides for existing services.
 
@@ -45,6 +46,52 @@ context rather than following a changed CLI default.
 Repeating configuration with the same options is harmless. Changing an existing
 service's port or model-volume selection is not supported in this first version;
 the CLI refuses to replace its identity or orphan its containers.
+
+## Context capacity (not output length)
+
+`--context-size` selects the managed model's total context capacity; it does
+not change the 4096-token output default or reasoning budget. Omitting it keeps
+an existing installation's selection, or uses 16384 for a new installation.
+The supported range is 16384 through 131072; a valid selection is not a
+guarantee that it fits a particular GPU or performs well.
+
+Changing an existing selection requires the owned service to be stopped, with
+no active or unresolved managed work. Configuration does not start inference.
+The next explicit start must recreate the stopped container so its environment
+matches the selection. The startup hook also updates the saved model's
+`--max-context` argument, preserving other model settings. Merely changing
+Docker's `CONTEXT` variable or using `docker restart` is insufficient for an
+already installed model in the pinned Strata release.
+This follows the pinned upstream
+[entrypoint](https://github.com/Niko1221/Strata/blob/6f32ec070f23ced9f50e704d854d775da52591ab/docker-entrypoint.sh)
+and [saved model argument format](https://github.com/Niko1221/Strata/blob/6f32ec070f23ced9f50e704d854d775da52591ab/setup.py).
+
+For an existing service on port 8080 (use its actual configured port):
+
+```sh
+hybrid-sdlc runtime strata status --json
+hybrid-sdlc runtime strata diagnose --json
+# Stop only after establishing that no active or unresolved work remains.
+hybrid-sdlc runtime strata stop --json
+hybrid-sdlc runtime strata configure --port 8080 --context-size 65536 --json
+hybrid-sdlc runtime strata start --json
+hybrid-sdlc runtime strata logs --tail 100 --json
+hybrid-sdlc runtime strata diagnose --readiness --json
+```
+
+Do not run the whole sequence blindly against a busy service. If it is already
+stopped, no stop is needed. Fresh setup and a same-settings no-op do not contact
+Docker; changing existing context capacity inspects Docker to establish safe
+container ownership and state. No Docker stop/start is hidden in `configure`.
+
+After applying a change, check status, bounded startup logs, and explicit
+readiness before delegating work. Keep desired configuration, container
+environment and loaded model capacity distinct. Larger context can consume
+more memory and reduce space available for expert caching; record new
+measurements rather than treating the earlier 16K benchmarks as 65K evidence.
+To roll back, stop the owned service, explicitly select the previous size and
+start it through the same guarded path. Never edit ownership or activity files
+to bypass a refusal, and do not remove model volumes.
 
 Configuration alone does not build an image or download a model. The required
 pinned image must already be available to Docker; `start` disables image

@@ -190,7 +190,7 @@ def clean_artifacts(
     """Clean up stale artifacts under .hybrid_sdlc older than the specified duration.
 
     Never deletes outside .hybrid_sdlc/. Skips active locks and live files.
-    Codex bridge delivery receipts are replay guards, not expiring run logs.
+    Bridge delivery receipts are replay guards, not expiring run logs.
     """
     repo_root = repo_root.resolve()
     artifacts_root = repo_root / ".hybrid_sdlc"
@@ -221,7 +221,7 @@ def clean_artifacts(
                 details={"dir": str(root_path)},
             ) from None
 
-        if root_path == artifacts_root / "bridges" / "codex":
+        if root_path == artifacts_root / "bridges":
             # Removing a delivery intent would silently authorize another
             # continuation after a timeout or an already acknowledged send.
             _dirs.clear()

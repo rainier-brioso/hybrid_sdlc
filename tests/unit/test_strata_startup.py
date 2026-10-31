@@ -82,6 +82,59 @@ def test_default_is_atomic_preserves_fields_and_idempotent(model_config: Path) -
     assert not list(model_config.parent.glob("*.tmp"))
 
 
+def test_context_migration_updates_only_the_unique_max_context_argument(
+    model_config: Path,
+) -> None:
+    original = {
+        "exe": "engine",
+        "args": ["--native", "model.gguf", "--max-context", "16384", "--kv", "int8"],
+        "reasoning_budget_tokens": 768,
+        "private": {"keep": True},
+    }
+    model_config.write_text(json.dumps(original), encoding="utf-8")
+    startup._apply_model_default(model_config, context_size=65536)
+    expected = json.loads(json.dumps(original))
+    expected["args"][3] = "65536"
+    assert json.loads(model_config.read_text(encoding="utf-8")) == expected
+    saved = model_config.read_bytes()
+    startup._apply_model_default(model_config, context_size=65536)
+    assert model_config.read_bytes() == saved
+
+
+@pytest.mark.parametrize(
+    "args",
+    [
+        [],
+        ["--max-context"],
+        ["--max-context", "bad"],
+        ["--max-context", "16384", "--max-context", "8192"],
+    ],
+)
+def test_context_migration_rejects_malformed_or_duplicate_flags(
+    model_config: Path, args: list[str]
+) -> None:
+    original = {"exe": "engine", "args": args, "reasoning_budget_tokens": 768}
+    model_config.write_text(json.dumps(original), encoding="utf-8")
+    saved = model_config.read_bytes()
+    with pytest.raises(RuntimeError, match="max-context"):
+        startup._apply_model_default(model_config, context_size=65536)
+    assert model_config.read_bytes() == saved
+
+
+@pytest.mark.parametrize("context_size", [0, 8192, 131073, True])
+def test_context_migration_rejects_out_of_range_values(
+    model_config: Path, context_size: object
+) -> None:
+    model_config.write_text(
+        json.dumps({"exe": "engine", "args": ["--max-context", "16384"]}),
+        encoding="utf-8",
+    )
+    saved = model_config.read_bytes()
+    with pytest.raises(RuntimeError, match="context size"):
+        startup._apply_model_default(model_config, context_size=context_size)  # type: ignore[arg-type]
+    assert model_config.read_bytes() == saved
+
+
 @pytest.mark.parametrize("budget", [0, 2048, None])
 def test_explicit_budget_is_not_changed(model_config: Path, budget: object) -> None:
     model_config.write_text(
@@ -141,6 +194,26 @@ def test_explicit_active_config_value_is_preserved(
     active.write_text('{"reasoning_budget_tokens": 0}', encoding="utf-8")
     startup._apply_startup_defaults(model_config)
     assert active.read_text() == '{"reasoning_budget_tokens": 0}'
+
+
+def test_first_start_applies_context_to_persisted_and_active_configs(
+    model_config: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    active = tmp_path / "opt/strata/strata-coder-iq1_m.json"
+    active.parent.mkdir(parents=True)
+    monkeypatch.setattr(startup, "_ACTIVE_CONFIG_PATH", active)
+    initial = {
+        "exe": "engine",
+        "args": ["--native", "model.gguf", "--max-context", "16384"],
+        "reasoning_budget_tokens": 1024,
+    }
+    model_config.write_text(json.dumps(initial), encoding="utf-8")
+    active.write_text(json.dumps(initial), encoding="utf-8")
+    startup._apply_startup_defaults(model_config, context_size=65536)
+    for path in (model_config, active):
+        saved = json.loads(path.read_text(encoding="utf-8"))
+        assert saved["args"] == ["--native", "model.gguf", "--max-context", "65536"]
+        assert saved["reasoning_budget_tokens"] == 1024
 
 
 def test_unexpected_active_symlink_is_rejected_before_update(

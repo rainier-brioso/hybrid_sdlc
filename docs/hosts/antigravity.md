@@ -1,7 +1,12 @@
 # Google Antigravity
 
-This guide targets Google Antigravity IDE **1.107.0**. It uses the workspace
-skill discovery location documented by Antigravity:
+This guide records historical Google Antigravity IDE integration observations.
+The earlier recorded **1.107.0** is the VSCode OSS base version, not the
+Antigravity product version. On 2026-10-19 the user supplied Antigravity IDE
+**2.5.5** Help/About details; that does not retroactively pin older smoke runs
+or establish App sidecar support in the IDE. See the
+[notification investigation](../evidence/antigravity-notification-investigation-20261019.md).
+It uses the workspace skill discovery location documented by Antigravity:
 
 - Workspace skills: `.agents/skills/<skill-name>/SKILL.md`
 - Workspace MCP definition: `.agents/mcp_config.json` (not discovered in the
@@ -94,12 +99,25 @@ until the job reaches a terminal state. MCP waits are bounded to 60 seconds;
 poll again when the job remains queued or running. Treat cancellation as a
 request and check status until termination is confirmed.
 
-Automatic completion notification is not implemented or verified for Antigravity.
-HSDLC-087 in the [implementation tasks](../implementation_tasks.md) investigates
-supported delivery and continuation interfaces before an adapter is proposed.
-Until then, use synchronous execution or explicitly agreed manual status
-inspection; polling is not a notification mechanism. Do not assume the Codex
-queue bridge works here or promise automatic resume/cross-session notifications.
+For Antigravity **App**, see the
+[experimental completion bridge](../antigravity-completion-bridge.md) for explicit
+per-job sidecar preview/preparation/removal and bounded notification delivery.
+The first supported transport format is Windows App 2.24.0 only; unknown versions
+and platforms fail closed. IDE support is not inferred. HSDLC-087 in the
+[implementation tasks](../implementation_tasks.md) records the investigation;
+HSDLC-088 tracks adapter validation and the pending installed real-job rehearsal.
+The [2026-10-19 investigation](../evidence/antigravity-notification-investigation-20261019.md)
+found a documented App sidecar message interface. A separately authorized App
+2.24.0 synthetic probe returned a successful send command; the user confirmed
+the matching ACK appeared automatically in the selected open idle chat without
+refresh/reopening. This single user-observed result is not independent transcript
+verification, repeated reliability or a shipped real-job bridge. IDE 2.5.5
+support remains unverified. Do not apply App instructions to an IDE or configure
+sidecars without explicit approval.
+Until the needed App version/interface and notification setup are established,
+use synchronous execution or explicitly agreed manual status inspection; polling
+is not a notification mechanism. Do not assume the Codex queue bridge works here
+or promise cross-session survival or waiting-turn resumption.
 Follow the [local delegation skill](../../skills/local-delegate/SKILL.md) to
 validate a task before submission and review the final patch and test evidence.
 

@@ -62,9 +62,10 @@ def test_configure_is_explicit_private_idempotent_and_does_not_call_docker(
     assert (runtime_root / "activity.json").exists()
     assert "gpus: all" in (runtime_root / "compose.yaml").read_text(encoding="utf-8")
     assert "pull_policy: never" in (runtime_root / "compose.yaml").read_text(encoding="utf-8")
+    assert first["context_size"] == 16384
 
 
-def test_configure_explicit_volume_is_external_and_settings_cannot_be_changed(
+def test_configure_explicit_volume_is_external_and_non_context_identity_cannot_change(
     runtime_root: Path,
 ) -> None:
     configure(port=8099, model_volume="existing-strata-models")
@@ -75,6 +76,15 @@ def test_configure_explicit_volume_is_external_and_settings_cannot_be_changed(
     assert configure(port=8099, model_volume="existing-strata-models")["changed"] is False
     with pytest.raises(RuntimeManagementError, match="already configured"):
         configure(port=8100)
+
+
+def test_new_configure_accepts_explicit_context_size(runtime_root: Path) -> None:
+    result = configure(context_size=65536)
+    marker = json.loads((runtime_root / "runtime.json").read_text(encoding="utf-8"))
+    compose = (runtime_root / "compose.yaml").read_text(encoding="utf-8")
+    assert result["context_size"] == marker["context_size"] == 65536
+    assert 'CONTEXT: "65536"' in compose
+    assert 'HYBRID_SDLC_CONTEXT_SIZE: "65536"' in compose
 
 
 def test_new_configure_copies_and_validates_startup_asset(runtime_root: Path) -> None:
@@ -117,6 +127,64 @@ def test_exact_legacy_runtime_remains_usable_without_migration(
         runtime_strata._load_config()
 
 
+def test_unmounted_user_startup_file_is_not_overwritten_by_context_migration(
+    runtime_root: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from hybrid_sdlc import runtime_strata
+
+    configure()
+    marker = json.loads((runtime_root / "runtime.json").read_text(encoding="utf-8"))
+    compose = _render_compose(
+        marker["owner_token"],
+        marker["project"],
+        marker["port"],
+        marker["model_volume"],
+        marker["reuse_model_volume"],
+        use_startup=False,
+    )
+    (runtime_root / "compose.yaml").write_text(compose, encoding="utf-8")
+    user_startup = b"# user-owned file, not mounted by this Compose definition\n"
+    (runtime_root / "startup.py").write_bytes(user_startup)
+    monkeypatch.setattr(runtime_strata, "_local_context", lambda *args, **kwargs: "desktop-linux")
+    monkeypatch.setattr(runtime_strata, "_owned_containers", lambda *args, **kwargs: [])
+    monkeypatch.setattr(runtime_strata, "_docker", lambda *args, **kwargs: "")
+
+    with pytest.raises(RuntimeManagementError, match="without a managed Compose mount"):
+        configure(context_size=65536)
+
+    assert (runtime_root / "startup.py").read_bytes() == user_startup
+
+
+def test_exact_previous_startup_hook_remains_usable_until_context_migration(
+    runtime_root: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    import hashlib
+
+    from hybrid_sdlc import runtime_strata
+
+    configure()
+    marker = json.loads((runtime_root / "runtime.json").read_text(encoding="utf-8"))
+    prior_hook = b"known prior startup hook\n"
+    monkeypatch.setattr(
+        runtime_strata, "_LEGACY_STARTUP_SHA256", hashlib.sha256(prior_hook).hexdigest()
+    )
+    (runtime_root / "startup.py").write_bytes(prior_hook)
+    (runtime_root / "compose.yaml").write_text(
+        _render_compose(
+            marker["owner_token"],
+            marker["project"],
+            marker["port"],
+            marker["model_volume"],
+            marker["reuse_model_volume"],
+            use_context_override=False,
+        ),
+        encoding="utf-8",
+    )
+    runtime_strata._load_config()
+    assert configure()["changed"] is False
+    assert (runtime_root / "startup.py").read_bytes() == prior_hook
+
+
 @pytest.mark.parametrize("bad_port", [0, 65536, True, "8080"])
 def test_configure_rejects_invalid_ports(runtime_root: Path, bad_port: object) -> None:
     with pytest.raises(RuntimeManagementError):
@@ -127,6 +195,198 @@ def test_configure_rejects_invalid_ports(runtime_root: Path, bad_port: object) -
 def test_configure_rejects_invalid_volume_name(runtime_root: Path) -> None:
     with pytest.raises(RuntimeManagementError, match="volume"):
         configure(model_volume="../manual")
+
+
+@pytest.mark.parametrize("bad_context", [1024, 16383, 131073, True, "65536"])
+def test_configure_rejects_invalid_context_size(runtime_root: Path, bad_context: object) -> None:
+    with pytest.raises(RuntimeManagementError, match="Context size"):
+        configure(context_size=bad_context)  # type: ignore[arg-type]
+    assert not (runtime_root / "runtime.json").exists()
+
+
+def test_context_change_rewrites_canonical_runtime_and_marks_recreate(
+    runtime_root: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from hybrid_sdlc import runtime_strata
+
+    configure()
+    initial = json.loads((runtime_root / "runtime.json").read_text(encoding="utf-8"))
+    monkeypatch.setattr(runtime_strata, "_local_context", lambda *args, **kwargs: "desktop-linux")
+    monkeypatch.setattr(runtime_strata, "_owned_containers", lambda *args, **kwargs: ["owned-id"])
+    monkeypatch.setattr(runtime_strata, "_docker", lambda *args, **kwargs: "exited\n")
+
+    result = configure(context_size=65536)
+    updated = json.loads((runtime_root / "runtime.json").read_text(encoding="utf-8"))
+    assert result["changed"] is True
+    assert result["needs_recreate"] is True
+    assert updated["owner_token"] == initial["owner_token"]
+    assert updated["project"] == initial["project"]
+    assert updated["model_volume"] == initial["model_volume"]
+    assert updated["context_size"] == 65536
+    assert updated["needs_recreate"] is True
+    assert "compose_pending" not in updated
+    assert (runtime_root / "startup.py").read_bytes() == (
+        runtime_strata._ASSET_DIR / "startup.py"
+    ).read_bytes()
+    runtime_strata._load_config()
+
+
+def test_context_change_refuses_running_or_unknown_container(
+    runtime_root: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from hybrid_sdlc import runtime_strata
+
+    configure()
+    monkeypatch.setattr(runtime_strata, "_local_context", lambda *args, **kwargs: "desktop-linux")
+    monkeypatch.setattr(runtime_strata, "_owned_containers", lambda *args, **kwargs: ["owned-id"])
+    monkeypatch.setattr(runtime_strata, "_docker", lambda *args, **kwargs: "running\n")
+    with pytest.raises(RuntimeManagementError, match="running or its state is unknown"):
+        configure(context_size=65536)
+    marker = json.loads((runtime_root / "runtime.json").read_text(encoding="utf-8"))
+    assert marker["context_size"] == 16384
+
+
+def test_restart_refuses_to_apply_pending_context_with_old_container(
+    runtime_root: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from hybrid_sdlc import runtime_strata
+
+    configure()
+    monkeypatch.setattr(runtime_strata, "_local_context", lambda *args, **kwargs: "desktop-linux")
+    monkeypatch.setattr(runtime_strata, "_owned_containers", lambda *args, **kwargs: ["owned-id"])
+    monkeypatch.setattr(runtime_strata, "_docker", lambda *args, **kwargs: "exited\n")
+    configure(context_size=65536)
+    monkeypatch.setattr(
+        runtime_strata,
+        "_docker",
+        lambda *args, **kwargs: pytest.fail("restart must refuse before calling Docker"),
+    )
+
+    with pytest.raises(RuntimeManagementError, match="use `runtime strata start`"):
+        restart()
+
+    marker = json.loads((runtime_root / "runtime.json").read_text(encoding="utf-8"))
+    assert marker["context_size"] == 65536
+    assert marker["needs_recreate"] is True
+
+
+def test_start_recreates_stopped_owned_container_and_verifies_context(
+    runtime_root: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from hybrid_sdlc import runtime_strata
+
+    configure()
+    monkeypatch.setattr(runtime_strata, "_local_context", lambda *args, **kwargs: "desktop-linux")
+    monkeypatch.setattr(runtime_strata, "_owned_containers", lambda *args, **kwargs: ["owned-id"])
+    docker_calls: list[list[str]] = []
+    state = "exited"
+
+    def docker(argv: list[str], *_: object, **__: object) -> str:
+        nonlocal state
+        docker_calls.append(argv)
+        if "inspect" in argv and "--format" in argv:
+            template = argv[argv.index("--format") + 1]
+            if template == "{{.State.Status}}":
+                return f"{state}\n"
+            if template == "{{json .Config.Env}}":
+                return json.dumps(["HYBRID_SDLC_CONTEXT_SIZE=65536"])
+        if "volume" in argv and "ls" in argv:
+            return ""
+        if "compose" in argv and "up" in argv:
+            state = "running"
+        return "fake docker ok\n"
+
+    monkeypatch.setattr(runtime_strata, "_docker", docker)
+    configure(context_size=65536)
+    result = start()
+
+    marker = json.loads((runtime_root / "runtime.json").read_text(encoding="utf-8"))
+    compose_start = next(call for call in docker_calls if "compose" in call and "up" in call)
+    assert result["status"] == "started"
+    assert "--force-recreate" in compose_start
+    assert "--no-build" in compose_start and "--pull" in compose_start
+    assert "never" in compose_start
+    assert marker["context_size"] == 65536
+    assert marker["needs_recreate"] is False
+    assert json.loads((runtime_root / "activity.json").read_text())["leases"] == []
+
+
+def test_start_context_mismatch_fails_closed_after_recreate(
+    runtime_root: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from hybrid_sdlc import runtime_strata
+
+    configure()
+    monkeypatch.setattr(runtime_strata, "_local_context", lambda *args, **kwargs: "desktop-linux")
+    monkeypatch.setattr(runtime_strata, "_owned_containers", lambda *args, **kwargs: ["owned-id"])
+
+    def docker(argv: list[str], *_: object, **__: object) -> str:
+        if "inspect" in argv and "--format" in argv:
+            template = argv[argv.index("--format") + 1]
+            if template == "{{.State.Status}}":
+                return "exited\n"
+            if template == "{{json .Config.Env}}":
+                return json.dumps(["HYBRID_SDLC_CONTEXT_SIZE=16384"])
+        return "fake docker ok\n"
+
+    monkeypatch.setattr(runtime_strata, "_docker", docker)
+    configure(context_size=65536)
+    with pytest.raises(RuntimeManagementError, match="does not have the configured context size"):
+        start()
+
+    _, marker, activity, _ = runtime_strata._paths()
+    config = json.loads(marker.read_text(encoding="utf-8"))
+    leases = json.loads(activity.read_text(encoding="utf-8"))["leases"]
+    assert config["needs_recreate"] is True
+    assert [lease["kind"] for lease in leases] == ["lifecycle_unknown"]
+
+
+def test_context_change_fails_closed_on_incomplete_compose_publication(
+    runtime_root: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from hybrid_sdlc import runtime_strata
+
+    configure()
+    monkeypatch.setattr(runtime_strata, "_local_context", lambda *args, **kwargs: "desktop-linux")
+    monkeypatch.setattr(runtime_strata, "_owned_containers", lambda *args, **kwargs: [])
+    monkeypatch.setattr(runtime_strata, "_docker", lambda *args, **kwargs: "")
+    write_compose = runtime_strata._write_compose
+    monkeypatch.setattr(
+        runtime_strata,
+        "_write_compose",
+        lambda *args, **kwargs: (_ for _ in ()).throw(
+            RuntimeManagementError("synthetic write failure")
+        ),
+    )
+    with pytest.raises(RuntimeManagementError, match="synthetic write failure"):
+        configure(context_size=65536)
+    root, marker, _, compose = runtime_strata._paths()
+    pending = json.loads(marker.read_text(encoding="utf-8"))
+    assert pending["compose_pending"] is True
+    assert pending["context_size"] == 65536
+    assert 'CONTEXT: "16384"' in compose.read_text(encoding="utf-8")
+    assert root == runtime_root
+    runtime_strata._load_config()  # interrupted state is recognizable and fail-closed by lifecycle
+    with pytest.raises(RuntimeManagementError, match="not been applied"):
+        with sync_task_lease("http://127.0.0.1:8080/v1"):
+            pytest.fail("pending context must block sync execution")
+    with pytest.raises(RuntimeManagementError, match="not been applied"):
+        with managed_readiness_guard("http://127.0.0.1:8080/v1"):
+            pytest.fail("pending context must block readiness inference")
+    with pytest.raises(RuntimeManagementError, match="not been applied"):
+        reserve_async_task(
+            "http://127.0.0.1:8080/v1",
+            runtime_root,
+            lambda _: pytest.fail("pending context must block job submission"),
+        )
+    with pytest.raises(RuntimeManagementError, match="incomplete"):
+        start()
+
+    monkeypatch.setattr(runtime_strata, "_write_compose", write_compose)
+    recovered = configure(context_size=65536)
+    assert recovered["needs_recreate"] is False
+    assert "compose_pending" not in json.loads(marker.read_text(encoding="utf-8"))
+    assert 'CONTEXT: "65536"' in compose.read_text(encoding="utf-8")
 
 
 @pytest.mark.parametrize(
@@ -525,6 +785,7 @@ def test_compose_renderer_preserves_ordinary_volume_rendering(volume: str, reuse
         .replace("__PROJECT__", "hsdlc-strata-aaaaaaaaaaaa")
         .replace("__PORT__", "8080")
         .replace("__MODEL_VOLUME__", volume)
+        .replace("__CONTEXT_SIZE__", "16384")
     )
     if reuse:
         expected = expected.replace(
@@ -590,18 +851,43 @@ def test_start_stop_restart_use_only_owned_compose_project_and_never_build_or_pu
     runtime_root: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     configure()
+    marker = json.loads((runtime_root / "runtime.json").read_text(encoding="utf-8"))
     calls: list[list[str]] = []
+    started = False
+    state = "created"
 
     def docker(argv: list[str], *_: object, **__: object) -> str:
+        nonlocal started, state
         calls.append(argv)
         if argv == ["context", "show"]:
             return "default\n"
         if argv[:2] == ["context", "inspect"]:
             return '"unix:///var/run/docker.sock"\n'
         if "ps" in argv:
-            return ""
+            return "fake-container\n" if started else ""
+        if "inspect" in argv and "--format" in argv:
+            template = argv[argv.index("--format") + 1]
+            if template == "{{json .Config.Labels}}":
+                return json.dumps(
+                    {
+                        "com.hybrid-sdlc.managed": "true",
+                        "com.hybrid-sdlc.owner": marker["owner_token"],
+                        "com.docker.compose.project": marker["project"],
+                    }
+                )
+            if template == "{{json .Config.Env}}":
+                return json.dumps(["HYBRID_SDLC_CONTEXT_SIZE=16384"])
+            if template == "{{.State.Status}}":
+                return f"{state}\n"
         if "volume" in argv and "ls" in argv:
             return ""
+        if "compose" in argv and "up" in argv:
+            started = True
+            state = "running"
+        if "compose" in argv and "stop" in argv:
+            state = "exited"
+        if "compose" in argv and "restart" in argv:
+            state = "running"
         return "fake docker lifecycle ok\n"
 
     monkeypatch.setattr("hybrid_sdlc.runtime_strata._docker", docker)

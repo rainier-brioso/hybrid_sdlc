@@ -143,6 +143,20 @@ def test_clean_preserves_codex_bridge_replay_guards(tmp_path: Path) -> None:
         assert receipt.is_file()
 
 
+def test_clean_preserves_antigravity_bridge_replay_guards(tmp_path: Path) -> None:
+    import os
+
+    receipt = tmp_path / ".hybrid_sdlc" / "bridges" / "antigravity" / "job-fixture.json"
+    receipt.parent.mkdir(parents=True)
+    receipt.write_text('{"state": "delivery_unknown"}', encoding="utf-8")
+    expired = time.time() - 1000
+    os.utime(receipt, (expired, expired))
+    for dry_run in (True, False):
+        result = clean_artifacts(tmp_path, older_than_seconds=500, dry_run=dry_run)
+        assert not result.deleted
+        assert receipt.is_file()
+
+
 def test_atomic_save_json_no_partial_reads(tmp_path: Path) -> None:
     """Readers must never observe partial JSON during concurrent writes (HSDLC-015).
 

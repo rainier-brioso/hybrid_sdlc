@@ -14,8 +14,9 @@ Neither submission nor MCP registration starts the bridge automatically. If
 these prerequisites are unavailable, disclose the limitation and agree on
 synchronous execution or manual status inspection; neither provides an async
 chat notification. Do not promise process survival that has not been verified
-on the selected host. Antigravity notification remains planned investigation,
-not a supported adapter.
+on the selected host. Antigravity App uses a separate
+[experimental sidecar adapter](antigravity-completion-bridge.md); its synthetic
+probe is not an installed real-job rehearsal and does not change Codex behavior.
 
 ## Setup and use
 
