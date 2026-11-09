@@ -17,6 +17,7 @@ from hybrid_sdlc.antigravity_bridge import (
     run_antigravity_bridge,
     validate_host,
 )
+from hybrid_sdlc.errors import PathTraversalError
 from hybrid_sdlc.job_manager import JobManager, JobStatus, new_job_id
 
 CONVERSATION = "6bddf934-8c2a-4310-a8cc-b3deed89174c"
@@ -428,7 +429,9 @@ def test_uncertain_send_is_durable_and_never_retried(
     assert calls == 1
 
 
-def test_symlinked_bridge_directory_is_rejected(tmp_path: Path) -> None:
+def test_symlinked_bridge_directory_is_rejected(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
     repo = create_passing_repo(tmp_path)
     job_id = _terminal_job(repo)
     outside = tmp_path / "outside"
@@ -438,7 +441,12 @@ def test_symlinked_bridge_directory_is_rejected(tmp_path: Path) -> None:
         bridges.symlink_to(outside, target_is_directory=True)
     except OSError as exc:
         pytest.skip(f"directory symlink creation is unavailable: {exc}")
-    with pytest.raises((AntigravityBridgeError, OSError)):
+
+    def unexpected_host_access(_path: Path) -> list[str]:
+        pytest.fail("Symlinked bridge paths must be rejected before host access")
+
+    monkeypatch.setattr(bridge, "validate_host", unexpected_host_access)
+    with pytest.raises(PathTraversalError, match="symlink or escapes the repository"):
         run_antigravity_bridge(
             repo,
             job_id,
@@ -446,3 +454,4 @@ def test_symlinked_bridge_directory_is_rejected(tmp_path: Path) -> None:
             app_executable=Path("unused.exe"),
             allow_model_continuation=True,
         )
+    assert list(outside.iterdir()) == []
