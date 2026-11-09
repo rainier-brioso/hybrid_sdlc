@@ -1,9 +1,66 @@
 # Managed Strata lifecycle
 
-Hybrid SDLC can optionally manage a separate Strata Docker service. This does
-not adopt an existing container, change repository endpoint settings, or start
-inference automatically. The existing manual deployment remains available;
-see [Strata Docker setup](strata-server-docker.md).
+Hybrid SDLC manages an explicitly selected Docker service or an already
+provisioned native Strata preset. Both backends share the same task leases,
+lifecycle lock and uncertainty records. Configuration does not start inference
+or change repository endpoint settings.
+
+## Native Strata and short commands
+
+The `hsdlc` executable is an alias of `hybrid-sdlc`. These convenience commands
+use the configured backend and retain the canonical command behavior:
+
+```sh
+hsdlc start strata --json
+hsdlc status strata --json
+hsdlc stop strata --json
+hsdlc restart strata --json
+```
+
+The longer forms `hybrid-sdlc runtime strata start|status|stop|restart` remain
+available. `hsdlc status JOB_ID` still reads a job; `strata` is reserved for
+runtime status. Diagnostics and bounded logs remain under `runtime strata`.
+
+Install native Strata separately, verify a saved preset, and provision its model
+and engine before registration. The native backend invokes Strata's owned
+`runtime` commands using its bundled Python directly, with explicit install,
+component and profile directories. It does not invoke a shell launcher or the
+model-acquisition flow. The initial supported contract is the provisioned
+Coder IQ1_M preset at a loopback endpoint; the default expected context is
+131072. Configuration validates the selected preset and effective profile.
+It preserves settings such as INT8 KV, one slot, MTP and VRAM headroom.
+
+For example, using the actual paths of an existing installation:
+
+```powershell
+hybrid-sdlc runtime strata configure --backend native `
+  --install-dir 'C:\AI\Strata-native' `
+  --components-dir 'C:\AI\Strata-components' `
+  --profile-dir 'C:\AI\Strata-native\profiles' `
+  --preset hsdlc-coder-128k --context-size 131072 --json
+```
+
+If Docker Strata is already registered, first stop that owned service and
+explicitly add `--replace-backend` to the native registration command. The CLI
+checks Docker ownership and stopped state, blocks active/unresolved work, and
+retains its definition in `docker-runtime.json`. Its model volume is preserved.
+No automatic switch back to Docker is performed; the archived definition is
+for deliberate operator rollback, not automatic fallback.
+
+Native registration pins the selected local configuration. A changed preset or
+profile fails closed rather than silently changing the expected model/context.
+Stopping uses Strata's exact owner and instance IDs; a replacement instance is
+not stopped on the authority of an earlier observation. A failed/timed-out
+mutation or failed post-start verification retains an uncertainty record.
+Inspect and reconcile that state before another task or disruptive action.
+Hybrid SDLC leases cover its own tasks; another client's activity remains a
+separate observation, and no automatic stall restart is introduced.
+
+The native 128K hardware trial used an RTX 3090/32 GB Windows PC, Strata Terminal
+0.2.13 and engine 0.1.59. A synthetic 70079-token input returned the correct marker
+in 27.85 seconds. That verifies input beyond 65K, not full-window stress,
+sustained speed or feature-edit correctness. Native startup/stop integration
+evidence is recorded separately from that earlier inference trial.
 
 ## Explicit setup
 

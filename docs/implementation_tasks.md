@@ -1985,6 +1985,26 @@ as the current CLI contract.
 
 ## Deferred Work — Not Required for the Initial Release
 
+- [x] **HSDLC-090 — Manage a provisioned native Strata preset through the shared lifecycle**
+  Depends on: HSDLC-089. Preserve the existing Docker behavior and activity
+  registry; explicitly register native installation/component/profile paths and
+  its verified Coder 128K preset. Provide `hsdlc start|stop|status|restart strata`
+  while retaining canonical commands and job-status compatibility. Use native
+  owned runtime commands with exact instance guards, finite subprocess bounds,
+  post-start model/context verification, and uncertainty on ambiguous mutations.
+  Registration must not download assets or edit the preset. Require explicit
+  stopped-Docker migration and retain its definition/volume. Validate mock
+  regression coverage and a separate authorized Windows stop/start cycle;
+  update shipped skill copies and operator documentation. Full-window stress
+  and successful Metria feature edits remain distinct evidence.
+  Validation (2026-11-09): 1123 tests passed, 14 platform/opt-in skips,
+  152 subtests, 81.99% coverage; format, lint and strict source typing passed.
+  An isolated installed wheel exercised the real native stop/start/restart,
+  idempotent start, daemon survival, exact 128K retention and guarded readiness.
+  Reviews identified and closed publication-retry, health-deadline and native
+  daemon-lifetime issues. Normal installed CLI/global registration rollout is
+  separate. See [dated native lifecycle evidence](evidence/native-strata-lifecycle-20261109.md).
+
 - [ ] **HSDLC-D06 — Evaluate an optional fully local persona workflow** after Strata endpoint and task compatibility are validated.
   Planning note (2026-10-04): keep one model loaded and serialize repository analyst, implementation worker, and patch reviewer. Start a fresh client conversation on each role switch and forward only validated, bounded handoffs, not full histories. Use explicit per-request reasoning effort, thinking budgets, and output caps; the proposed starting budgets remain experimental. Enforce analyst/reviewer read-only capabilities in the tool/controller layer, preserve worker execution policies, and add endpoint-wide scheduling before supporting overlapping jobs across repositories. Keep multi-conversation parking disabled initially under the 24 GB WSL limit. Verify Aider forwards provider-specific settings, context reserves output room, truncated/invalid results fail safely, and switching roles does not reload model weights or inherit another role's transcript. Same-model review is not independent evidence of correctness; retain tests and deterministic checks. Host-native cheaper cloud subagent configuration remains separate and must not be overwritten. No implementation or deployment change is authorized by this planning note.
 

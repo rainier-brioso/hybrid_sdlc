@@ -152,6 +152,7 @@ def _paths() -> tuple[Path, Path, Path, Path]:
         "worker-defaults.json",
         "startup.py",
         "activity.lock",
+        "docker-runtime.json",
     ):
         if _is_reparse(root / name):
             raise RuntimeManagementError(
@@ -169,6 +170,17 @@ def _load_config() -> tuple[Path, dict[str, Any], dict[str, Any], Path]:
     config = _read_json(marker)
     if config.get("schema_version") != _SCHEMA:
         raise RuntimeManagementError("Strata runtime configuration has an unsupported version")
+    backend = config.get("backend", "docker")
+    if backend == "native":
+        from hybrid_sdlc import runtime_strata_native
+
+        token = config.get("owner_token")
+        if not isinstance(token, str) or re.fullmatch(r"[0-9a-f]{32}", token) is None:
+            raise RuntimeManagementError("Native Strata ownership token is invalid")
+        runtime_strata_native.validate(config)
+        return root, config, _load_activity(activity), compose
+    if backend != "docker":
+        raise RuntimeManagementError("Unsupported Strata lifecycle backend")
     token = config.get("owner_token")
     port = config.get("port")
     volume = config.get("model_volume")
@@ -312,7 +324,12 @@ def _load_config() -> tuple[Path, dict[str, Any], dict[str, Any], Path]:
             raise RuntimeManagementError("Managed Strata settings file was modified")
     except OSError as exc:
         raise RuntimeManagementError("Managed Strata settings file is missing") from exc
-    records = _read_json(activity)
+    return root, config, _load_activity(activity), compose
+
+
+def _load_activity(path: Path) -> dict[str, Any]:
+    """Load the shared task/uncertainty registry for either runtime backend."""
+    records = _read_json(path)
     if records.get("schema_version") != _SCHEMA or not isinstance(records.get("leases"), list):
         raise RuntimeManagementError(
             "Strata activity registry is corrupt; refusing lifecycle changes"
@@ -325,7 +342,7 @@ def _load_config() -> tuple[Path, dict[str, Any], dict[str, Any], Path]:
             "lifecycle_unknown",
         }:
             raise RuntimeManagementError("Strata activity registry contains an invalid lease")
-    return root, config, records, compose
+    return records
 
 
 def _render_compose(
@@ -415,6 +432,11 @@ def configure(
             existing_files = {item.name for item in root.iterdir()}
             if existing_files - {"activity.lock"}:
                 _, existing, _, _ = _load_config()
+                if existing.get("backend") == "native":
+                    raise RuntimeManagementError(
+                        "Native Strata is selected. Use configure --backend native with its "
+                        "registered paths and preset; Docker is not selected automatically."
+                    )
                 existing_context = existing.get("context_size", _DEFAULT_CONTEXT_SIZE)
                 requested_context = existing_context if context_size is None else context_size
                 if existing["port"] == port and (
@@ -480,6 +502,115 @@ def configure(
             "endpoint": config["endpoint"],
             "context_size": config["context_size"],
             "needs_recreate": False,
+        }
+
+
+def configure_native(
+    *,
+    install_dir: Path,
+    components_dir: Path,
+    profile_dir: Path,
+    preset: str,
+    port: int = 8080,
+    context_size: int = 131072,
+    replace_backend: bool = False,
+) -> dict[str, Any]:
+    """Register an explicitly selected, already provisioned native preset.
+
+    Backend selection shares the same task registry and atomic gate as lifecycle
+    actions. Replacing Docker requires proof that every owned container stopped;
+    its definition and volume are retained for an explicit operator rollback.
+    """
+    from hybrid_sdlc import runtime_strata_native
+
+    root = _ensure_safe_state(create=True)
+    marker = root / "runtime.json"
+    with _locked(root):
+        existing: dict[str, Any] | None = None
+        if marker.exists():
+            existing, compose = _lifecycle_guard(root)
+            if existing.get("backend", "docker") == "docker":
+                if not replace_backend:
+                    raise RuntimeManagementError(
+                        "Docker Strata is configured. Select --replace-backend explicitly "
+                        "to register an existing native preset after stopping Docker Strata."
+                    )
+                context = _local_context(root, existing.get("docker_context"))
+                owned = _owned_containers(existing, compose, context)
+                if owned:
+                    states = _docker(
+                        ["--context", context, "inspect", "--format", "{{.State.Status}}", *owned],
+                        root,
+                    ).splitlines()
+                    if len(states) != len(owned) or any(
+                        state.strip() not in {"created", "exited", "dead"} for state in states
+                    ):
+                        raise RuntimeManagementError(
+                            "Stop every owned Docker Strata container before changing backend."
+                        )
+        else:
+            remaining = {item.name for item in root.iterdir()} - {"activity.lock"}
+            # A failed first marker publication can leave only our empty
+            # registry. Permit retry without deleting or bypassing real work.
+            if remaining and not (
+                remaining == {"activity.json"}
+                and not _is_reparse(root / "activity.json")
+                and _load_activity(root / "activity.json")["leases"] == []
+            ):
+                raise RuntimeManagementError("Unrecognized existing Strata runtime state")
+
+        native = runtime_strata_native.prepare(
+            install_dir=install_dir,
+            components_dir=components_dir,
+            profile_dir=profile_dir,
+            preset=preset,
+            port=port,
+            context_size=context_size,
+        )
+        if existing is not None and existing.get("backend") == "native":
+            comparable = {
+                key: value
+                for key, value in existing.items()
+                if key not in {"schema_version", "owner_token"}
+            }
+            candidate = {
+                key: value
+                for key, value in native.items()
+                if key not in {"schema_version", "owner_token"}
+            }
+            if comparable != candidate:
+                raise RuntimeManagementError(
+                    "A different native preset or installation is already registered; "
+                    "the current registration remains unchanged."
+                )
+            return {
+                "status": "configured",
+                "changed": False,
+                "backend": "native",
+                "endpoint": existing["endpoint"],
+                "context_size": existing["context_size"],
+            }
+
+        if existing is not None:
+            archive = root / "docker-runtime.json"
+            if archive.exists() and _read_json(archive) != existing:
+                raise RuntimeManagementError("An existing Docker rollback definition differs")
+            _atomic_json(archive, existing)
+        else:
+            _atomic_json(root / "activity.json", {"schema_version": _SCHEMA, "leases": []})
+        native.update(
+            schema_version=_SCHEMA,
+            owner_token=existing["owner_token"] if existing else secrets.token_hex(16),
+        )
+        _atomic_json(marker, native)
+        return {
+            "status": "configured",
+            "changed": True,
+            "backend": "native",
+            "endpoint": native["endpoint"],
+            "context_size": native["context_size"],
+            "preset": preset,
+            "config": str(marker),
         }
 
 
@@ -1064,7 +1195,7 @@ def _lifecycle_guard(root: Path) -> tuple[dict[str, Any], Path]:
 def _ensure_no_lifecycle_uncertainty(activity: dict[str, Any]) -> None:
     if any(lease.get("kind") == "lifecycle_unknown" for lease in activity["leases"]):
         raise RuntimeManagementError(
-            "A prior Docker lifecycle command did not return cleanly. Inspect status and logs, "
+            "A prior Strata lifecycle command did not return cleanly. Inspect status and logs, "
             "confirm the service has settled, then resolve the recorded activity entry manually."
         )
 
@@ -1112,6 +1243,16 @@ def _run_lifecycle(action: str) -> dict[str, Any]:
         )
     with _locked(root):
         config, compose = _lifecycle_guard(root)
+        if config.get("backend") == "native":
+            from hybrid_sdlc import runtime_strata_native
+
+            checked = runtime_strata_native.preflight(config, action)
+            operation_lease = _set_lifecycle_uncertain(root, action)
+            # Any exception, including failed post-mutation verification, leaves
+            # the same uncertainty sentinel used by the Docker backend.
+            result = runtime_strata_native.mutate(config, action, checked)
+            _clear_lifecycle_uncertain(root, operation_lease)
+            return result
         if action == "start" and config.get("compose_pending"):
             raise RuntimeManagementError(
                 "The context configuration update is incomplete. Rerun `runtime strata configure` "
@@ -1221,6 +1362,15 @@ def _run_lifecycle(action: str) -> dict[str, Any]:
 
 def status() -> dict[str, Any]:
     root, config, activity, compose = _load_config()
+    if config.get("backend") == "native":
+        from hybrid_sdlc import runtime_strata_native
+
+        return {
+            **runtime_strata_native.status(config),
+            "lifecycle_uncertain": [
+                lease for lease in activity["leases"] if lease.get("kind") == "lifecycle_unknown"
+            ],
+        }
     context = _local_context(root, config.get("docker_context"))
     ids = _owned_containers(config, compose, context)
     states: list[dict[str, str]] = []
@@ -1424,6 +1574,15 @@ def logs(*, tail: int = 100) -> dict[str, Any]:
     if isinstance(tail, bool) or not isinstance(tail, int) or not 1 <= tail <= 10000:
         raise RuntimeManagementError("Log tail must be from 1 through 10000 lines")
     root, config, activity, compose = _load_config()
+    if config.get("backend") == "native":
+        from hybrid_sdlc import runtime_strata_native
+
+        return {
+            **runtime_strata_native.logs(config, tail),
+            "lifecycle_uncertain": [
+                lease for lease in activity["leases"] if lease.get("kind") == "lifecycle_unknown"
+            ],
+        }
     context = _local_context(root, config.get("docker_context"))
     ids = _owned_containers(config, compose, context)
     if not ids:

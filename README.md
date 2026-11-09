@@ -158,7 +158,13 @@ Docker/WSL2 memory availability is distinct from installed host RAM.
 
 Optional installed CLI [lifecycle management](docs/runtime-management.md)
 provides explicit `configure`, `start`, `stop`, `restart`, `status`, `logs`, and
-`diagnose` commands for a separately owned service. It does not adopt the manual
+`diagnose` commands for a separately owned service. Native Strata can be
+registered with its existing provisioned preset, including a verified 128K
+Coder preset. The short commands `hsdlc start strata`, `hsdlc stop strata`,
+`hsdlc status strata` and `hsdlc restart strata` use the explicitly selected
+backend and the same task/uncertainty guards. See
+[native registration](docs/runtime-management.md#native-strata-and-short-commands).
+Docker management does not adopt the manual
 container or prepare its image automatically. Default diagnostics do not
 generate; `--readiness` opts in to guarded inference. Recovery is explicit,
 never an automatic response to one timeout.

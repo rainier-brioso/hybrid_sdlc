@@ -16,6 +16,36 @@ def _mark_readiness_started() -> None:
     print("READINESS_STARTED", flush=True)
 
 
+def _native_health(url: str, timeout: float) -> dict[str, Any]:
+    """Read fixed health identity fields; the parent enforces the wall clock."""
+    health_url = url.rstrip("/").removesuffix("/v1") + "/health"
+    try:
+        # Do not forward proxy configuration or follow redirects away from the
+        # explicitly registered loopback runtime. Bound the response body too.
+        with httpx.Client(timeout=timeout, trust_env=False, follow_redirects=False) as client:
+            with client.stream("GET", health_url) as response:
+                if response.status_code != 200:
+                    return {"available": False, "loaded": None, "error_code": "HEALTH_HTTP_ERROR"}
+                body = bytearray()
+                for chunk in response.iter_bytes(chunk_size=1024):
+                    body.extend(chunk)
+                    if len(body) > 16384:
+                        raise ValueError("oversized health response")
+                payload = json.loads(body)
+        if not isinstance(payload, dict):
+            raise ValueError("invalid health shape")
+        return {
+            "available": True,
+            "error_code": None,
+            **{
+                key: payload.get(key)
+                for key in ("loaded", "status", "service", "model", "max_context")
+            },
+        }
+    except (httpx.HTTPError, ValueError):
+        return {"available": False, "loaded": None, "error_code": "HEALTH_UNAVAILABLE"}
+
+
 def main() -> int:
     try:
         request: Any = json.loads(sys.stdin.buffer.read())
@@ -32,9 +62,12 @@ def main() -> int:
             or not isinstance(timeout, (int, float))
             or not math.isfinite(timeout)
             or timeout <= 0
-            or action not in {"health", "models", "readiness", "strata-readiness"}
+            or action not in {"health", "native-health", "models", "readiness", "strata-readiness"}
         ):
             return 2
+        if action == "native-health":
+            print("RESULT:" + json.dumps(_native_health(url, float(timeout))), flush=True)
+            return 0
         if action == "health":
             health_url = (
                 url.rstrip("/")[:-3] + "/health"
