@@ -14,6 +14,7 @@ from hybrid_sdlc.runtime_strata import RuntimeManagementError
 
 def test_native_configure_forwards_explicit_paths_and_defaults(
     monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
 ) -> None:
     received: dict[str, Any] = {}
 
@@ -29,11 +30,11 @@ def test_native_configure_forwards_explicit_paths_and_defaults(
         "--backend",
         "native",
         "--install-dir",
-        "C:/strata",
+        str(tmp_path / "strata"),
         "--components-dir",
-        "C:/components",
+        str(tmp_path / "components"),
         "--profile-dir",
-        "C:/profiles",
+        str(tmp_path / "profiles"),
         "--preset",
         "test",
         "--replace-backend",
@@ -42,9 +43,9 @@ def test_native_configure_forwards_explicit_paths_and_defaults(
     result = CliRunner().invoke(cli, args)
     assert result.exit_code == 0, result.output
     assert received == {
-        "install_dir": Path("C:/strata"),
-        "components_dir": Path("C:/components"),
-        "profile_dir": Path("C:/profiles"),
+        "install_dir": tmp_path / "strata",
+        "components_dir": tmp_path / "components",
+        "profile_dir": tmp_path / "profiles",
         "preset": "test",
         "port": 8080,
         "context_size": 131072,
@@ -54,11 +55,11 @@ def test_native_configure_forwards_explicit_paths_and_defaults(
 
 
 @pytest.mark.parametrize("missing", ["--components-dir", "--profile-dir", "--preset"])
-def test_native_configure_requires_all_native_values(missing: str) -> None:
+def test_native_configure_requires_all_native_values(missing: str, tmp_path: Path) -> None:
     values = {
-        "--install-dir": "C:/install",
-        "--components-dir": "C:/components",
-        "--profile-dir": "C:/profiles",
+        "--install-dir": str(tmp_path / "install"),
+        "--components-dir": str(tmp_path / "components"),
+        "--profile-dir": str(tmp_path / "profiles"),
         "--preset": "fast",
     }
     values.pop(missing)
@@ -70,7 +71,7 @@ def test_native_configure_requires_all_native_values(missing: str) -> None:
     assert "required for native backend" in result.output
 
 
-def test_native_rejects_relative_paths_and_reused_volume() -> None:
+def test_native_rejects_relative_paths_and_reused_volume(tmp_path: Path) -> None:
     base = [
         "runtime",
         "strata",
@@ -80,9 +81,9 @@ def test_native_rejects_relative_paths_and_reused_volume() -> None:
         "--install-dir",
         "install",
         "--components-dir",
-        "C:/components",
+        str(tmp_path / "components"),
         "--profile-dir",
-        "C:/profiles",
+        str(tmp_path / "profiles"),
         "--preset",
         "fast",
     ]
@@ -98,11 +99,11 @@ def test_native_rejects_relative_paths_and_reused_volume() -> None:
             "--backend",
             "native",
             "--install-dir",
-            "C:/install",
+            str(tmp_path / "install"),
             "--components-dir",
-            "C:/components",
+            str(tmp_path / "components"),
             "--profile-dir",
-            "C:/profiles",
+            str(tmp_path / "profiles"),
             "--preset",
             "fast",
             "--reuse-model-volume",
