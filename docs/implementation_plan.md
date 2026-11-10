@@ -44,6 +44,19 @@ not establish IDE compatibility, repeated reliability or waiting-turn resumption
 
 ## 1. Architectural Decisions & Resolution of Review Findings
 
+### Native Strata lifecycle (HSDLC-090)
+
+Add an explicitly registered native runtime backend alongside Docker, sharing
+the existing task leases, lifecycle lock and ambiguous-operation sentinel.
+Register a provisioned native preset without rewriting it or acquiring assets;
+invoke the native owned runtime API with direct Python argument arrays and
+guard stops by exact owner/instance identity. Preserve the selected context,
+including the 131072-token Coder preset verified in the Windows trial. Provide
+`hsdlc start|stop|status|restart strata` while keeping canonical commands and job
+status behavior. Backend migration requires explicit authority and a stopped
+owned Docker service; retain its rollback definition and volume. Startup and
+readiness remain distinct, and no automatic stall recovery is introduced.
+
 Managed Strata context selection is explicit (`runtime strata configure
 --context-size`), defaulting to 16384 and preserving existing selections when
 omitted. HSDLC-089 adds stopped/idle migration, container recreation and saved

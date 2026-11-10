@@ -32,6 +32,7 @@ If the repository config or required profile is missing, prepare the smallest pr
 Use the available CLI to inspect runtime state:
 
 - `hybrid-sdlc runtime strata status --json`
+- The status identifies the explicitly selected Docker or native backend. The short aliases `hsdlc start strata`, `hsdlc stop strata`, `hsdlc restart strata` and `hsdlc status strata` use that same registration and its guards. Native registration references an already provisioned local preset; verify its expected model and context. Native start uses Strata's owned runtime API and does not acquire models. Registering a native preset or replacing the Docker backend requires the user's setup authority; never infer it from an open port. For Docker, verify the image and model volume are provisioned before routine startup. Preserve native preset settings and do not start the old Docker service beside it. See `docs/runtime-management.md` for explicit registration.
 - `hybrid-sdlc runtime strata diagnose --json` for non-generating endpoint/model and health checks.
 - Read the validated managed-runtime user configuration only when needed to identify its configured endpoint/model. Do not expose credentials or guess defaults.
 

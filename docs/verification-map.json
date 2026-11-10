@@ -28,7 +28,10 @@
         "runtime strata restart",
         "runtime strata status",
         "runtime strata diagnose",
-        "runtime strata logs"
+        "runtime strata logs",
+        "start strata",
+        "stop strata",
+        "restart strata"
       ],
       "mcp_tools": [],
       "automated_test_nodeids": [
@@ -41,13 +44,18 @@
         "tests/integration/test_runtime_strata_cli.py::test_unconfigured_actions_return_structured_failure",
         "tests/integration/test_runtime_strata_cli.py::test_log_tail_is_forwarded_without_following",
         "tests/unit/test_runtime_strata.py::test_start_stop_restart_use_only_owned_compose_project_and_never_build_or_pull",
-        "tests/unit/test_runtime_strata.py::test_status_and_logs_report_owned_container_and_bound_log_output"
+        "tests/unit/test_runtime_strata.py::test_status_and_logs_report_owned_container_and_bound_log_output",
+        "tests/unit/test_native_strata_coordination.py::test_native_mutations_are_blocked_by_managed_task",
+        "tests/unit/test_native_strata_coordination.py::test_native_failed_mutation_keeps_uncertainty",
+        "tests/unit/test_native_strata_coordination.py::test_switch_from_docker_requires_explicit_opt_in_and_stopped_containers",
+        "tests/unit/test_native_strata_health.py::test_native_health_slow_drip_has_total_deadline",
+        "tests/unit/test_native_strata_start_client.py::test_native_start_client_keeps_owned_daemon_for_status_reconciliation"
       ],
       "protocol_paths": ["docs/runtime-management.md", "docs/strata-server-docker.md"],
-      "evidence_paths": ["docs/evidence/installed-workflow-runtime-20261018.md", "docs/evidence/strata-managed-readiness-20261018.md", "docs/evidence/strata-context-65k-20261030.md"],
+      "evidence_paths": ["docs/evidence/installed-workflow-runtime-20261018.md", "docs/evidence/strata-managed-readiness-20261018.md", "docs/evidence/strata-context-65k-20261030.md", "docs/evidence/native-strata-lifecycle-20261109.md"],
       "installed_status": "historical_observation",
       "live_status": "historical_observation",
-      "prerequisites": ["Docker Desktop or Docker Engine on a supported local context; explicit operator configuration."],
+      "prerequisites": ["Explicit operator configuration: either Docker on a supported local context or a provisioned native Strata installation and saved preset."],
       "limitations": ["Automated runtime tests use temporary state, fake Docker and mocked or loopback HTTP; they do not start Docker or Strata.", "The slow-drip loopback check observes partial-body delivery, probe timeout and disconnection; it is not real Strata telemetry.", "The dated installed-wheel managed readiness observation verifies one successful response, not repeated reliability, clean-machine provisioning or whole-feature execution."]
     },
     {

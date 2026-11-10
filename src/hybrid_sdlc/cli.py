@@ -31,6 +31,7 @@ from hybrid_sdlc.models import ProbeResult, RunStatus
 from hybrid_sdlc.review import read_review_status, record_review
 from hybrid_sdlc.runtime_strata import RuntimeManagementError
 from hybrid_sdlc.runtime_strata import configure as configure_strata_runtime
+from hybrid_sdlc.runtime_strata import configure_native as configure_native_strata_runtime
 from hybrid_sdlc.runtime_strata import diagnose as diagnose_strata_runtime
 from hybrid_sdlc.runtime_strata import logs as strata_runtime_logs
 from hybrid_sdlc.runtime_strata import restart as restart_strata_runtime
@@ -127,7 +128,7 @@ def runtime_group() -> None:
 
 @runtime_group.group("strata")
 def runtime_strata_group() -> None:
-    """Manage this user's opt-in Docker Strata service."""
+    """Manage this user's opt-in Strata inference service."""
 
 
 def _runtime_result(result: dict[str, object], *, json_mode: bool) -> None:
@@ -153,13 +154,36 @@ def _runtime_error(exc: RuntimeManagementError, *, json_mode: bool) -> NoReturn:
 
 
 @runtime_strata_group.command("configure")
+@click.option(
+    "--backend", type=click.Choice(["docker", "native"]), default="docker", show_default=True
+)
 @click.option("--port", type=click.IntRange(1, 65535), default=8080, show_default=True)
 @click.option(
     "--context-size",
     type=click.IntRange(16384, 131072),
     default=None,
-    help="Context window in tokens (default for a new runtime: 16384).",
+    help="Context window in tokens (Docker default: 16384; native default: 131072).",
 )
+@click.option(
+    "--install-dir",
+    type=click.Path(path_type=Path),
+    default=None,
+    help="Absolute native Strata installation directory.",
+)
+@click.option(
+    "--components-dir",
+    type=click.Path(path_type=Path),
+    default=None,
+    help="Absolute native components directory.",
+)
+@click.option(
+    "--profile-dir",
+    type=click.Path(path_type=Path),
+    default=None,
+    help="Absolute native profile directory.",
+)
+@click.option("--preset", default=None, help="Native runtime preset name.")
+@click.option("--replace-backend", is_flag=True, help="Replace an existing backend configuration.")
 @click.option(
     "--reuse-model-volume",
     "model_volume",
@@ -167,14 +191,53 @@ def _runtime_error(exc: RuntimeManagementError, *, json_mode: bool) -> NoReturn:
 )
 @click.option("--json", "json_mode", is_flag=True, help="Output machine-readable JSON.")
 def runtime_strata_configure(
-    port: int, context_size: int | None, model_volume: str | None, json_mode: bool
+    backend: str,
+    port: int,
+    context_size: int | None,
+    install_dir: Path | None,
+    components_dir: Path | None,
+    profile_dir: Path | None,
+    preset: str | None,
+    replace_backend: bool,
+    model_volume: str | None,
+    json_mode: bool,
 ) -> None:
-    """Prepare managed settings; changing context reads Docker state but never starts service."""
+    """Configure the selected Strata backend without starting the service."""
 
     try:
-        result = configure_strata_runtime(
-            port=port, model_volume=model_volume, context_size=context_size
-        )
+        native_values = (install_dir, components_dir, profile_dir, preset)
+        if backend == "native":
+            if (
+                install_dir is None
+                or components_dir is None
+                or profile_dir is None
+                or preset is None
+            ):
+                raise click.UsageError(
+                    "--install-dir, --components-dir, --profile-dir, and --preset are required for native backend"
+                )
+            directories = (install_dir, components_dir, profile_dir)
+            if any(not path.is_absolute() for path in directories if path is not None):
+                raise click.UsageError("Native directory arguments must be absolute paths")
+            if model_volume is not None:
+                raise click.UsageError(
+                    "--reuse-model-volume is only supported with the Docker backend"
+                )
+            result = configure_native_strata_runtime(
+                install_dir=install_dir,
+                components_dir=components_dir,
+                profile_dir=profile_dir,
+                preset=preset,
+                port=port,
+                context_size=context_size or 131072,
+                replace_backend=replace_backend,
+            )
+        else:
+            if any(value is not None for value in native_values) or replace_backend:
+                raise click.UsageError("Native-specific options require --backend native")
+            result = configure_strata_runtime(
+                port=port, model_volume=model_volume, context_size=context_size
+            )
     except RuntimeManagementError as exc:
         _runtime_error(exc, json_mode=json_mode)
     _runtime_result(result, json_mode=json_mode)
@@ -191,7 +254,7 @@ def _runtime_action(action: Callable[[], dict[str, object]], json_mode: bool) ->
 @runtime_strata_group.command("start")
 @click.option("--json", "json_mode", is_flag=True, help="Output machine-readable JSON.")
 def runtime_strata_start(json_mode: bool) -> None:
-    """Start the managed service without building or pulling its image."""
+    """Start the selected provisioned Strata backend."""
 
     _runtime_action(start_strata_runtime, json_mode)
 
@@ -215,9 +278,38 @@ def runtime_strata_restart(json_mode: bool) -> None:
 @runtime_strata_group.command("status")
 @click.option("--json", "json_mode", is_flag=True, help="Output machine-readable JSON.")
 def runtime_strata_status_cmd(json_mode: bool) -> None:
-    """Report the managed Docker container state without probing model readiness."""
+    """Report the configured Strata service state without probing model readiness."""
 
     _runtime_action(strata_runtime_status, json_mode)
+
+
+@cli.group("start")
+def start_group() -> None:
+    """Start managed services."""
+
+
+@cli.group("stop")
+def stop_group() -> None:
+    """Stop managed services."""
+
+
+@cli.group("restart")
+def restart_group() -> None:
+    """Restart managed services."""
+
+
+def _register_strata_action(group: click.Group, action_name: str, doc: str) -> None:
+    @group.command("strata", help=doc)
+    @click.option("--json", "json_mode", is_flag=True, help="Output machine-readable JSON.")
+    def command(json_mode: bool) -> None:
+        _runtime_action(globals()[action_name], json_mode)
+
+
+_register_strata_action(start_group, "start_strata_runtime", "Start the configured Strata service.")
+_register_strata_action(stop_group, "stop_strata_runtime", "Stop the configured Strata service.")
+_register_strata_action(
+    restart_group, "restart_strata_runtime", "Restart the configured Strata service."
+)
 
 
 @runtime_strata_group.command("diagnose")
@@ -701,6 +793,17 @@ def status_cmd(
     json_mode: bool,
 ) -> None:
     """Show one job's status, or list validated jobs in the repository."""
+
+    if job_id == "strata":
+        if wait_for_completion:
+            _async_error(
+                "--wait is not supported for Strata status",
+                code="INVALID_STATUS_OPTIONS",
+                exit_code=ExitCode.POLICY_ERROR,
+                json_mode=json_mode,
+            )
+        _runtime_action(strata_runtime_status, json_mode)
+        return
 
     if wait_for_completion and job_id is None:
         _async_error(

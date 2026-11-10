@@ -269,9 +269,11 @@ def _bounded_model_probe(url: str, required_model: str, timeout_seconds: float) 
     )
 
 
-def _bounded_health_probe(url: str, timeout_seconds: float) -> dict[str, Any]:
+def _bounded_health_probe(
+    url: str, timeout_seconds: float, *, native: bool = False
+) -> dict[str, Any]:
     """Read only health metadata with a process-level wall-clock deadline."""
-    child = _run_probe_worker("health", url, None, timeout_seconds)
+    child = _run_probe_worker("native-health" if native else "health", url, None, timeout_seconds)
     if child is None:
         return {"available": False, "loaded": None, "error_code": "HEALTH_WORKER_ERROR"}
     if child.timed_out:
