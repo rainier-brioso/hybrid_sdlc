@@ -13,6 +13,20 @@ can run or resume a task.
 
 ## Shared MCP API surface
 
+### Separate Antigravity App notification evidence
+
+On 2026-10-19 a disposable Windows App 2.24.0 sidecar sent one synthetic completion
+to the user-selected existing idle chat. The command succeeded and the user
+reported the matching automatic ACK without refresh or reopening; no independent
+transcript/turn-ID verification or token usage was collected. See the
+[evidence](evidence/antigravity-notification-investigation-20261019.md).
+The [experimental App bridge](antigravity-completion-bridge.md) is a separate
+CLI integration with offline coverage; its installed real-job rehearsal is
+pending. This does not update the older IDE MCP evidence or prove worker survival,
+repeatability, busy/closed targets, other versions or suspended-turn resumption.
+
+### Shared tool boundary
+
 The separate experimental [CLI completion bridge](codex-completion-bridge.md)
 does not change this MCP host matrix. It queues terminal metadata to an explicitly
 selected existing Codex chat, requires host-model continuation approval, and

@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import contextlib
 import functools
+import hashlib
 import inspect
 import json
 import math
@@ -30,7 +31,12 @@ _STARTUP_ENTRYPOINT_LINE = (
     '    entrypoint: ["/opt/strata/.venv/bin/python", "/opt/hybrid-sdlc/startup.py"]\n'
 )
 _STARTUP_MOUNT_LINE = "      - ./startup.py:/opt/hybrid-sdlc/startup.py:ro\n"
+_CONTEXT_ENV_LINE = '      HYBRID_SDLC_CONTEXT_SIZE: "__CONTEXT_SIZE__"\n'
 _SCHEMA = 1
+_DEFAULT_CONTEXT_SIZE = 16384
+_MIN_CONTEXT_SIZE = 16384
+_MAX_CONTEXT_SIZE = 131072
+_LEGACY_STARTUP_SHA256 = "afee97c1d2489597c89334c0d2c3e421a329e4bd331ad794e132f1902b9a7347"
 _PROJECT_PATTERN = re.compile(r"^[a-z][a-z0-9_-]{0,62}$")
 _VOLUME_PATTERN = re.compile(r"^[a-zA-Z0-9][a-zA-Z0-9_.-]{0,62}$")
 _YAML_NUMERIC_VOLUME = re.compile(
@@ -167,6 +173,10 @@ def _load_config() -> tuple[Path, dict[str, Any], dict[str, Any], Path]:
     port = config.get("port")
     volume = config.get("model_volume")
     project = config.get("project")
+    context_size = config.get("context_size", _DEFAULT_CONTEXT_SIZE)
+    compose_pending = config.get("compose_pending", False)
+    needs_recreate = config.get("needs_recreate", False)
+    previous_context_size = config.get("previous_context_size")
     if (
         not isinstance(token, str)
         or re.fullmatch(r"[0-9a-f]{32}", token) is None
@@ -179,6 +189,20 @@ def _load_config() -> tuple[Path, dict[str, Any], dict[str, Any], Path]:
         or _PROJECT_PATTERN.fullmatch(project) is None
         or project != f"hsdlc-strata-{token[:12]}"
         or not isinstance(config.get("reuse_model_volume"), bool)
+        or isinstance(context_size, bool)
+        or not isinstance(context_size, int)
+        or not _MIN_CONTEXT_SIZE <= context_size <= _MAX_CONTEXT_SIZE
+        or not isinstance(compose_pending, bool)
+        or not isinstance(needs_recreate, bool)
+        or (
+            compose_pending
+            and (
+                isinstance(previous_context_size, bool)
+                or not isinstance(previous_context_size, int)
+                or not _MIN_CONTEXT_SIZE <= previous_context_size <= _MAX_CONTEXT_SIZE
+            )
+        )
+        or (not compose_pending and previous_context_size is not None)
         or config.get("endpoint") != f"http://127.0.0.1:{port}/v1"
         or (
             config.get("docker_context") is not None
@@ -186,7 +210,19 @@ def _load_config() -> tuple[Path, dict[str, Any], dict[str, Any], Path]:
         )
     ):
         raise RuntimeManagementError("Strata runtime configuration failed validation")
-    expected = _render_compose(token, project, port, volume, bool(config.get("reuse_model_volume")))
+    pending_previous_size: int | None = None
+    if compose_pending:
+        if isinstance(previous_context_size, bool) or not isinstance(previous_context_size, int):
+            raise RuntimeManagementError("Strata pending context migration is invalid")
+        pending_previous_size = previous_context_size
+    expected = _render_compose(
+        token,
+        project,
+        port,
+        volume,
+        bool(config.get("reuse_model_volume")),
+        context_size=context_size,
+    )
     try:
         actual = compose.read_text(encoding="utf-8")
     except (OSError, UnicodeError) as exc:
@@ -194,16 +230,82 @@ def _load_config() -> tuple[Path, dict[str, Any], dict[str, Any], Path]:
     legacy = _render_compose(
         token, project, port, volume, bool(config.get("reuse_model_volume")), use_startup=False
     )
-    if actual not in (expected, legacy):
+    accepted_compose = {expected}
+    if context_size == _DEFAULT_CONTEXT_SIZE:
+        accepted_compose.add(legacy)
+        accepted_compose.add(
+            _render_compose(
+                token,
+                project,
+                port,
+                volume,
+                bool(config.get("reuse_model_volume")),
+                context_size=context_size,
+                use_context_override=False,
+            )
+        )
+    if compose_pending:
+        assert pending_previous_size is not None
+        accepted_compose.add(
+            _render_compose(
+                token,
+                project,
+                port,
+                volume,
+                bool(config.get("reuse_model_volume")),
+                context_size=pending_previous_size,
+                use_startup=False,
+            )
+        )
+        accepted_compose.add(
+            _render_compose(
+                token,
+                project,
+                port,
+                volume,
+                bool(config.get("reuse_model_volume")),
+                context_size=pending_previous_size,
+            )
+        )
+        accepted_compose.add(
+            _render_compose(
+                token,
+                project,
+                port,
+                volume,
+                bool(config.get("reuse_model_volume")),
+                context_size=pending_previous_size,
+                use_context_override=False,
+            )
+        )
+    if actual not in accepted_compose:
         raise RuntimeManagementError(
             "Managed Compose file was modified; refusing Docker operations"
         )
-    if actual == expected:
+    startup_path = root / "startup.py"
+    has_startup_mount = _STARTUP_MOUNT_LINE.rstrip("\n") in actual
+    if has_startup_mount:
         try:
-            if (root / "startup.py").read_bytes() != (_ASSET_DIR / "startup.py").read_bytes():
-                raise RuntimeManagementError("Managed Strata startup file was modified")
+            startup_bytes = startup_path.read_bytes()
         except OSError as exc:
             raise RuntimeManagementError("Managed Strata startup file is missing") from exc
+        current_startup = (_ASSET_DIR / "startup.py").read_bytes()
+        legacy_startup = hashlib.sha256(startup_bytes).hexdigest() == _LEGACY_STARTUP_SHA256
+        if startup_bytes != current_startup and not (
+            legacy_startup and (context_size == _DEFAULT_CONTEXT_SIZE or compose_pending)
+        ):
+            raise RuntimeManagementError("Managed Strata startup file was modified")
+    elif not compose_pending and context_size != _DEFAULT_CONTEXT_SIZE:
+        raise RuntimeManagementError("A non-default context requires the managed startup hook")
+    elif startup_path.exists():
+        try:
+            startup_bytes = startup_path.read_bytes()
+        except OSError as exc:
+            raise RuntimeManagementError("Managed Strata startup file is unreadable") from exc
+        if startup_bytes != (_ASSET_DIR / "startup.py").read_bytes():
+            raise RuntimeManagementError(
+                "A startup file exists without a managed Compose mount; refusing to replace it"
+            )
     defaults = root / "worker-defaults.json"
     try:
         if defaults.read_bytes() != (_ASSET_DIR / "worker-defaults.json").read_bytes():
@@ -233,7 +335,9 @@ def _render_compose(
     volume: str,
     reuse_model_volume: bool,
     *,
+    context_size: int = _DEFAULT_CONTEXT_SIZE,
     use_startup: bool = True,
+    use_context_override: bool = True,
 ) -> str:
     try:
         template = (_ASSET_DIR / "compose.yaml").read_text(encoding="utf-8")
@@ -243,6 +347,9 @@ def _render_compose(
         # Recognize only the exact previous shipped layout, never arbitrary
         # operator edits. Existing installations are not silently migrated.
         template = template.replace(_STARTUP_ENTRYPOINT_LINE, "").replace(_STARTUP_MOUNT_LINE, "")
+        use_context_override = False
+    if not use_context_override:
+        template = template.replace(_CONTEXT_ENV_LINE, "")
     # Keep ordinary names in their historical plain-scalar form so existing
     # runtime markers continue to validate against their canonical Compose file.
     # Quote YAML numeric, date, null, and boolean scalars to keep them strings.
@@ -269,6 +376,7 @@ def _render_compose(
         .replace("__PROJECT__", project)
         .replace("__PORT__", str(port))
         .replace("__MODEL_VOLUME__", yaml_volume)
+        .replace("__CONTEXT_SIZE__", str(context_size))
     )
     if yaml_volume != volume:
         rendered = rendered.replace(f"- {yaml_volume}:/data", f'- "{volume}:/data"')
@@ -280,13 +388,26 @@ def _render_compose(
     return rendered
 
 
-def configure(*, port: int = 8080, model_volume: str | None = None) -> dict[str, Any]:
-    """Explicitly create a managed runtime definition without contacting Docker."""
+def configure(
+    *,
+    port: int = 8080,
+    model_volume: str | None = None,
+    context_size: int | None = None,
+) -> dict[str, Any]:
+    """Create a runtime definition or safely migrate its configured context size."""
 
     if isinstance(port, bool) or not isinstance(port, int) or not 1 <= port <= 65535:
         raise RuntimeManagementError("Port must be an integer from 1 through 65535")
     if model_volume is not None and _VOLUME_PATTERN.fullmatch(model_volume) is None:
         raise RuntimeManagementError("Model volume must be a valid Docker volume name")
+    if context_size is not None and (
+        isinstance(context_size, bool)
+        or not isinstance(context_size, int)
+        or not _MIN_CONTEXT_SIZE <= context_size <= _MAX_CONTEXT_SIZE
+    ):
+        raise RuntimeManagementError(
+            f"Context size must be an integer from {_MIN_CONTEXT_SIZE} through {_MAX_CONTEXT_SIZE}"
+        )
     root = _ensure_safe_state(create=True)
     marker, activity, compose = root / "runtime.json", root / "activity.json", root / "compose.yaml"
     with _locked(root):
@@ -294,10 +415,22 @@ def configure(*, port: int = 8080, model_volume: str | None = None) -> dict[str,
             existing_files = {item.name for item in root.iterdir()}
             if existing_files - {"activity.lock"}:
                 _, existing, _, _ = _load_config()
+                existing_context = existing.get("context_size", _DEFAULT_CONTEXT_SIZE)
+                requested_context = existing_context if context_size is None else context_size
                 if existing["port"] == port and (
                     model_volume is None or existing["model_volume"] == model_volume
                 ):
-                    return {"status": "configured", "changed": False, "config": str(marker)}
+                    if requested_context == existing_context and not existing.get(
+                        "compose_pending"
+                    ):
+                        return {
+                            "status": "configured",
+                            "changed": False,
+                            "config": str(marker),
+                            "context_size": existing_context,
+                            "needs_recreate": bool(existing.get("needs_recreate", False)),
+                        }
+                    return _update_context_size(root, existing, requested_context, lock_held=True)
                 raise RuntimeManagementError(
                     "Strata is already configured with different settings. This version does not "
                     "support reconfiguration; the existing runtime definition remains unchanged."
@@ -305,6 +438,7 @@ def configure(*, port: int = 8080, model_volume: str | None = None) -> dict[str,
         token = secrets.token_hex(16)
         project = f"hsdlc-strata-{token[:12]}"
         volume = model_volume or f"hsdlc-strata-data-{token[:12]}"
+        new_context_size = _DEFAULT_CONTEXT_SIZE if context_size is None else context_size
         config = {
             "schema_version": _SCHEMA,
             "owner_token": token,
@@ -313,13 +447,22 @@ def configure(*, port: int = 8080, model_volume: str | None = None) -> dict[str,
             "model_volume": volume,
             "reuse_model_volume": model_volume is not None,
             "endpoint": f"http://127.0.0.1:{port}/v1",
+            "context_size": new_context_size,
+            "needs_recreate": False,
         }
         (root / "worker-defaults.json").write_bytes(
             (_ASSET_DIR / "worker-defaults.json").read_bytes()
         )
         (root / "startup.py").write_bytes((_ASSET_DIR / "startup.py").read_bytes())
         _atomic_json(activity, {"schema_version": _SCHEMA, "leases": []})
-        composed = _render_compose(token, project, port, volume, model_volume is not None)
+        composed = _render_compose(
+            token,
+            project,
+            port,
+            volume,
+            model_volume is not None,
+            context_size=new_context_size,
+        )
         temp = compose.with_name(f".{compose.name}.{secrets.token_hex(8)}.tmp")
         try:
             temp.write_text(composed, encoding="utf-8")
@@ -335,7 +478,133 @@ def configure(*, port: int = 8080, model_volume: str | None = None) -> dict[str,
             "changed": True,
             "config": str(marker),
             "endpoint": config["endpoint"],
+            "context_size": config["context_size"],
+            "needs_recreate": False,
         }
+
+
+def _update_context_size(
+    root: Path, config: dict[str, Any], context_size: int, *, lock_held: bool = False
+) -> dict[str, Any]:
+    """Persist a context change as pending before atomically replacing runtime assets."""
+
+    current_size = config.get("context_size", _DEFAULT_CONTEXT_SIZE)
+    previous_size = config.get("previous_context_size", current_size)
+    was_pending = bool(config.get("compose_pending"))
+    if was_pending and context_size != current_size:
+        raise RuntimeManagementError(
+            "A context change is incomplete; rerun configure with the recorded target context size.",
+            details={"context_size": current_size},
+        )
+    if context_size == current_size and not was_pending:
+        return {"status": "configured", "changed": False, "context_size": current_size}
+
+    lock_scope = contextlib.nullcontext() if lock_held else _locked(root)
+    with lock_scope:
+        _, current, activity, compose = _load_config()
+        _ensure_no_lifecycle_uncertainty(activity)
+        activity = _reconcile_and_guard_activity(root, activity)
+        if activity["leases"]:
+            raise RuntimeManagementError(
+                "Cannot change Strata context while a task is queued, running, or unresolved.",
+                details={"active_tasks": activity["leases"]},
+            )
+        token = str(current["owner_token"])
+        project = str(current["project"])
+        port = int(current["port"])
+        volume = str(current["model_volume"])
+        reuse_volume = bool(current["reuse_model_volume"])
+        context = _local_context(root, current.get("docker_context"))
+        if current.get("docker_context") is None:
+            current["docker_context"] = context
+        containers = _owned_containers(current, compose, context)
+        if containers:
+            rows = _docker(
+                ["--context", context, "inspect", "--format", "{{.State.Status}}", *containers],
+                root,
+            ).splitlines()
+            states = [row.strip() for row in rows if row.strip()]
+            if len(states) != len(containers):
+                raise RuntimeManagementError("Docker returned incomplete container state data")
+            if any(state not in {"created", "exited", "dead"} for state in states):
+                raise RuntimeManagementError(
+                    "Cannot change Strata context while an owned container is running or its state is unknown.",
+                    details={"container_states": states},
+                )
+
+        if current.get("compose_pending") and context_size != current.get("context_size"):
+            raise RuntimeManagementError("Incomplete context migration target does not match")
+        old_size = current.get(
+            "previous_context_size", current.get("context_size", _DEFAULT_CONTEXT_SIZE)
+        )
+        current["context_size"] = context_size
+        current["needs_recreate"] = bool(containers)
+        current["compose_pending"] = True
+        current["previous_context_size"] = old_size
+        _atomic_json(root / "runtime.json", current)
+        _write_bytes(root / "startup.py", (_ASSET_DIR / "startup.py").read_bytes())
+        _write_compose(
+            compose,
+            _render_compose(
+                token,
+                project,
+                port,
+                volume,
+                reuse_volume,
+                context_size=context_size,
+                use_startup=(root / "startup.py").exists(),
+            ),
+        )
+        current.pop("compose_pending", None)
+        current.pop("previous_context_size", None)
+        _atomic_json(root / "runtime.json", current)
+        return {
+            "status": "configured",
+            "changed": context_size != previous_size,
+            "context_size": context_size,
+            "needs_recreate": bool(containers),
+            "message": (
+                "Context is configured. Start the managed service to recreate its stopped container."
+                if containers
+                else "Context is configured. Start the managed service to apply it."
+            ),
+        }
+
+
+def _write_compose(path: Path, content: str) -> None:
+    temporary = path.with_name(f".{path.name}.{secrets.token_hex(8)}.tmp")
+    try:
+        with temporary.open("x", encoding="utf-8") as stream:
+            stream.write(content)
+            stream.flush()
+            os.fsync(stream.fileno())
+        if os.name != "nt":
+            temporary.chmod(0o600)
+        os.replace(temporary, path)
+    except OSError as exc:
+        raise RuntimeManagementError("Could not safely update the managed Compose file") from exc
+    finally:
+        with contextlib.suppress(FileNotFoundError):
+            temporary.unlink()
+
+
+def _write_bytes(path: Path, content: bytes) -> None:
+    temporary = path.with_name(f".{path.name}.{secrets.token_hex(8)}.tmp")
+    try:
+        with temporary.open("xb") as stream:
+            stream.write(content)
+            stream.flush()
+            os.fsync(stream.fileno())
+        if os.name != "nt":
+            temporary.chmod(0o600)
+        os.replace(temporary, path)
+    except OSError as exc:
+        raise RuntimeManagementError(
+            "Could not safely update the managed Strata startup hook"
+        ) from exc
+    finally:
+        with contextlib.suppress(FileNotFoundError):
+            temporary.unlink()
 
 
 def normalize_managed_loopback(url: str, configured_port: int) -> bool:
@@ -400,11 +669,13 @@ def sync_task_lease(url: str) -> Iterator[None]:
         yield
         return
     root, config, _ = candidate
+    _ensure_context_is_applied(config)
     lease_id = secrets.token_hex(16)
     with _locked(root):
         _, current, activity, _ = _load_config()
         if current["owner_token"] != config["owner_token"]:
             raise RuntimeManagementError("Managed Strata identity changed while reserving task")
+        _ensure_context_is_applied(current)
         _ensure_no_lifecycle_uncertainty(activity)
         leases = activity["leases"]
         leases.append({"lease_id": lease_id, "kind": "sync", "created_at": time.time()})
@@ -427,10 +698,12 @@ def managed_readiness_guard(url: str) -> Iterator[bool]:
         yield False
         return
     root, config, _ = candidate
+    _ensure_context_is_applied(config)
     with _locked(root):
         _, current, activity, _ = _load_config()
         if current["owner_token"] != config["owner_token"]:
             raise RuntimeManagementError("Managed Strata identity changed during readiness check")
+        _ensure_context_is_applied(current)
         activity = _reconcile_and_guard_activity(root, activity)
         if activity["leases"]:
             raise RuntimeManagementError(
@@ -454,10 +727,12 @@ def reserve_async_task(url: str, repo_root: Path, create_job: Callable[[str], An
 
         return create_job(new_job_id())
     root, config, _ = candidate
+    _ensure_context_is_applied(config)
     with _locked(root):
         _, current, activity, _ = _load_config()
         if current["owner_token"] != config["owner_token"]:
             raise RuntimeManagementError("Managed Strata identity changed while submitting task")
+        _ensure_context_is_applied(current)
         _ensure_no_lifecycle_uncertainty(activity)
         from hybrid_sdlc.job_manager import new_job_id
 
@@ -794,6 +1069,20 @@ def _ensure_no_lifecycle_uncertainty(activity: dict[str, Any]) -> None:
         )
 
 
+def _ensure_context_is_applied(config: dict[str, Any]) -> None:
+    if config.get("compose_pending") or config.get("needs_recreate"):
+        raise RuntimeManagementError(
+            "The configured Strata context has not been applied to the managed service. "
+            "Run `hybrid-sdlc runtime strata start` after the service is stopped.",
+            code="RUNTIME_CONTEXT_PENDING",
+            details={
+                "context_size": config.get("context_size", _DEFAULT_CONTEXT_SIZE),
+                "compose_pending": bool(config.get("compose_pending")),
+                "needs_recreate": bool(config.get("needs_recreate")),
+            },
+        )
+
+
 def _set_lifecycle_uncertain(root: Path, action: str) -> str:
     _, _, activity, _ = _load_config()
     lease_id = secrets.token_hex(16)
@@ -823,11 +1112,34 @@ def _run_lifecycle(action: str) -> dict[str, Any]:
         )
     with _locked(root):
         config, compose = _lifecycle_guard(root)
+        if action == "start" and config.get("compose_pending"):
+            raise RuntimeManagementError(
+                "The context configuration update is incomplete. Rerun `runtime strata configure` "
+                "with the recorded context size before starting the service."
+            )
+        if action == "restart" and (config.get("compose_pending") or config.get("needs_recreate")):
+            raise RuntimeManagementError(
+                "The context setting changed. Stop the service if needed, then use `runtime strata start` "
+                "to recreate its container with the configured context."
+            )
         context = _local_context(root, config.get("docker_context"))
         if config.get("docker_context") is None:
             config["docker_context"] = context
             _atomic_json(root / "runtime.json", config)
-        _owned_containers(config, compose)
+        owned = _owned_containers(config, compose)
+        if action == "start" and config.get("needs_recreate") and owned:
+            rows = _docker(
+                ["--context", context, "inspect", "--format", "{{.State.Status}}", *owned],
+                root,
+            ).splitlines()
+            states = [row.strip() for row in rows if row.strip()]
+            if len(states) != len(owned) or any(
+                state not in {"created", "exited", "dead"} for state in states
+            ):
+                raise RuntimeManagementError(
+                    "Cannot apply the pending context while an owned container is running or its state is unknown.",
+                    details={"container_states": states},
+                )
         if action == "start":
             _verify_model_volume(config, context, root)
             _verify_pinned_image(context, root)
@@ -838,6 +1150,7 @@ def _run_lifecycle(action: str) -> dict[str, Any]:
             # --no-build and --pull never guarantee no image build/download;
             # first startup can download model weights into the named volume.
             if action == "start":
+                recreate = bool(config.get("needs_recreate"))
                 output = _docker(
                     [
                         *_compose_prefix(config, compose, context),
@@ -846,7 +1159,7 @@ def _run_lifecycle(action: str) -> dict[str, Any]:
                         "--no-build",
                         "--pull",
                         "never",
-                        "--no-recreate",
+                        "--force-recreate" if recreate else "--no-recreate",
                         "strata-server",
                     ],
                     root,
@@ -868,6 +1181,37 @@ def _run_lifecycle(action: str) -> dict[str, Any]:
             # A failed or timed-out client may leave the Docker daemon applying the request.
             # Preserve the sentinel so managed task activity fails closed pending inspection.
             raise
+        if action == "start" and _CONTEXT_ENV_LINE.split(":", 1)[0].strip() in compose.read_text(
+            encoding="utf-8"
+        ):
+            ids = _owned_containers(config, compose, context)
+            if not ids:
+                raise RuntimeManagementError(
+                    "Started Strata service has no owned container to verify"
+                )
+            rows = _docker(
+                ["--context", context, "inspect", "--format", "{{json .Config.Env}}", *ids],
+                root,
+            ).splitlines()
+            if len(rows) != len(ids):
+                raise RuntimeManagementError(
+                    "Docker returned incomplete container environment data"
+                )
+            expected_env = f"HYBRID_SDLC_CONTEXT_SIZE={config['context_size']}"
+            try:
+                environments = [json.loads(row) for row in rows]
+            except json.JSONDecodeError as exc:
+                raise RuntimeManagementError(
+                    "Docker returned invalid container environment data"
+                ) from exc
+            if any(not isinstance(env, list) or expected_env not in env for env in environments):
+                raise RuntimeManagementError(
+                    "Started Strata container does not have the configured context size.",
+                    details={"expected_context_size": config["context_size"]},
+                )
+            if config.get("needs_recreate"):
+                config["needs_recreate"] = False
+                _atomic_json(root / "runtime.json", config)
         _clear_lifecycle_uncertain(root, operation_lease)
         return {
             "status": action + "ed" if action != "stop" else "stopped",
@@ -902,6 +1246,9 @@ def status() -> dict[str, Any]:
         "status": "configured" if not states else states[0]["state"],
         "endpoint": config["endpoint"],
         "project": config["project"],
+        "context_size": config.get("context_size", _DEFAULT_CONTEXT_SIZE),
+        "needs_recreate": bool(config.get("needs_recreate", False)),
+        "context_update_pending": bool(config.get("compose_pending", False)),
         "containers": states,
         "lifecycle_uncertain": [
             lease for lease in activity["leases"] if lease.get("kind") == "lifecycle_unknown"

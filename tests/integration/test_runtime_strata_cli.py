@@ -636,6 +636,26 @@ def test_configure_uses_packaged_assets_not_repository_compose(
     assert "strata-server" in compose
 
 
+def test_configure_exposes_explicit_context_size(runtime_root: Path) -> None:
+    result = CliRunner().invoke(
+        cli, ["runtime", "strata", "configure", "--context-size", "65536", "--json"]
+    )
+    assert result.exit_code == 0, result.output
+    payload = json.loads(result.output)
+    assert payload["context_size"] == 65536
+    marker = json.loads((runtime_root / "runtime.json").read_text(encoding="utf-8"))
+    assert marker["context_size"] == 65536
+    assert 'CONTEXT: "65536"' in (runtime_root / "compose.yaml").read_text(encoding="utf-8")
+
+
+def test_configure_rejects_context_size_outside_supported_range(runtime_root: Path) -> None:
+    result = CliRunner().invoke(
+        cli, ["runtime", "strata", "configure", "--context-size", "8192", "--json"]
+    )
+    assert result.exit_code != 0
+    assert not runtime_root.exists()
+
+
 def test_repeat_configure_preserves_identity(runtime_root: Path) -> None:
     runner = CliRunner()
     first = runner.invoke(cli, ["runtime", "strata", "configure", "--json"])

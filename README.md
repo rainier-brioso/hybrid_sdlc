@@ -13,19 +13,22 @@ flowchart LR
     Worker["Aider + local model, e.g. Strata<br/>Edit code and run tests"]
     Result["Saved result<br/>Patch + test evidence"]
     Bridge["Codex async completion bridge<br/>Wait locally, then codex queue"]
+    AppBridge["Experimental Antigravity App sidecar<br/>Wait locally, then agentapi"]
     Review["Chat reviews the exact patch<br/>Integrate only when authorized"]
 
     Chat --> Runner --> Worker --> Result
     Result -->|"Synchronous result"| Chat
     Result -.->|"Codex async workflow, authorized"| Bridge
     Bridge -.->|"Completion message to the selected chat"| Chat
+    Result -.->|"App async workflow, authorized"| AppBridge
+    AppBridge -.->|"Completion message to the selected chat"| Chat
     Chat --> Review
 ```
 
 For synchronous work, the waiting chat receives the result directly. For the
 **Codex async workflow**, the [completion bridge](docs/codex-completion-bridge.md)
 is part of orchestration and required for automatic chat notification. It is
-our only verified notification mechanism today: it watches saved job status
+the installed-rehearsed Codex notification route: it watches saved job status
 locally, then sends a completion message to an explicitly selected existing chat
 using `codex queue`. The host can start a follow-up response without repeated
 model calls to check status. Before submitting, arrange continuation authorization,
@@ -44,9 +47,13 @@ is a cue to inspect the result, **not** approval to apply or merge the patch.
 Queue acceptance and an actual chat response are distinct; the bridge reports
 the former, not proof of the latter.
 
-Antigravity automatic notification is not implemented or verified. Its
-host-specific delivery/continuation investigation is planned as HSDLC-087 in the
-[implementation tasks](docs/implementation_tasks.md).
+An [experimental Antigravity App bridge](docs/antigravity-completion-bridge.md)
+adds explicit per-job sidecar preparation and bounded delivery for Windows App
+2.24.0. A separate synthetic transport probe produced a user-observed automatic
+ACK; the shipped adapter's installed real-job rehearsal is still pending. Unknown
+versions/platforms fail closed. This does not establish Antigravity IDE support
+or remove Windows background-worker restrictions. Both host bridges require an
+exact authorized chat and preserve uncertain deliveries without automatic resend.
 
 ## What the toolkit provides
 
@@ -155,6 +162,14 @@ provides explicit `configure`, `start`, `stop`, `restart`, `status`, `logs`, and
 container or prepare its image automatically. Default diagnostics do not
 generate; `--readiness` opts in to guarded inference. Recovery is explicit,
 never an automatic response to one timeout.
+
+Managed context capacity is configurable with `runtime strata configure
+--context-size 65536`; this does not raise the 4096-token output default.
+Existing services must be stopped and idle before changing capacity, then
+explicitly started through the CLI to apply it. See the
+[context migration and validation steps](docs/runtime-management.md#context-capacity-not-output-length).
+The default remains 16K; the recorded 16K benchmarks do not establish 65K
+performance.
 
 The [llama.cpp deployment](docs/llama-server-docker.md) is retained; its remaining
 live smoke rerun is paused during Strata evaluation. Docker/native parity and
