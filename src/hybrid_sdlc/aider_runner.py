@@ -18,6 +18,7 @@ from datetime import UTC, datetime
 from pathlib import Path
 from types import SimpleNamespace
 
+from hybrid_sdlc.aider_diagnostics import empty_patch_metadata
 from hybrid_sdlc.artifacts import atomic_save_json, redact_secrets
 from hybrid_sdlc.command_profiles import CommandProfile, resolve_profile_executable
 from hybrid_sdlc.config import load_config, normalize_aider_edit_files, validate_endpoint_url
@@ -623,7 +624,10 @@ def _run_bounded_loop_in_checkout(
                 err = StuckLoopError(
                     "Model produced no repository changes",
                     code="LOOP_ZERO_DIFF",
-                    details={"attempt": attempt_idx},
+                    details={
+                        "attempt": attempt_idx,
+                        "aider_diagnostics": empty_patch_metadata(aider_result, attempt_idx),
+                    },
                 )
                 failure_record = err.to_failure_record()
                 break
