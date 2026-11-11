@@ -68,6 +68,21 @@ credential-free endpoint is unaffected.
 
 ## Reviewed boundaries and existing evidence
 
+An empty Aider patch (`LOOP_ZERO_DIFF`) retains metadata under
+`failure.details.aider_diagnostics`: attempt index, process exit/duration,
+timeout/cancellation/truncation flags, capped retained-output byte counts, and
+fixed warning indicators. No stdout/stderr excerpt, prompt, reasoning, model
+reply, path or arbitrary exception text is copied into this diagnostic block.
+Its serialized size is under 1 KiB. Warning scanning examines at most the first
+65536 characters of each retained stream; counts cap at 40 MiB per stream.
+`indicator_scan_incomplete` identifies partial observation. Recognized Aider
+0.86.2 warnings are advisory text indicators, not trusted provider finish
+reasons: arbitrary output can contain them, and missing warnings prove nothing.
+The cause remains `unknown`. Candidate tests were not run; an empty `attempts`
+list must not be interpreted as successful candidate verification. This adds
+evidence to the failure record without changing retries, task limits or edit
+format. Existing timeout metadata remains separate. Raw capture is not enabled.
+
 | Area | Implemented boundary | Evidence / limitation |
 | --- | --- | --- |
 | Path inputs | Canonical repository identity, confined resolved paths, Windows ADS rejection | `security.py`; `tests/unit/test_security.py`; symlink privilege limits remain explicit |
