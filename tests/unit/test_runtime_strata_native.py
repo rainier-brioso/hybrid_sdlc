@@ -240,3 +240,194 @@ def test_logs_are_bounded_and_tail_is_checked(tmp_path: Path) -> None:
     assert len(result["logs"]) == 65536
     with pytest.raises(HybridSDLCError, match="tail"):
         native.logs(config, True)
+
+
+def lost_owner(config: dict[str, Any]) -> dict[str, Any]:
+    return {
+        "schema_version": 1,
+        "ok": False,
+        "profile": config["profile_id"],
+        "state": "stale",
+        "error": "owner_host_lost",
+        "exit_code": 6,
+    }
+
+
+def test_lost_owner_status_can_reach_guarded_start(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    config = provision(tmp_path)
+    monkeypatch.setattr(native, "_invoke", _REAL_INVOKE)
+    monkeypatch.setattr(
+        native,
+        "run_bounded_subprocess",
+        lambda *a, **k: SubprocessResult(6, json.dumps(lost_owner(config)), "", False, 0, False),
+    )
+    report = native.status(config)
+    assert report["status"] == "stale"
+    assert report["recovery_available"] is True
+    assert report["error_code"] == "owner_host_lost"
+    assert "hsdlc start strata" in report["next_action"]
+    plan = native.preflight(config, "start")
+    assert plan == {"action": "start", "status": "stale", "recovery": True}
+    for action in ("stop", "restart"):
+        with pytest.raises(HybridSDLCError):
+            native.preflight(config, action)
+
+    calls: list[list[str]] = []
+    monkeypatch.setattr(
+        native, "_run", lambda cfg, argv, timeout: calls.append(argv) or {"ok": True}
+    )
+    monkeypatch.setattr(native, "_status", lambda cfg: {"status": "running"})
+    health_calls: list[bool] = []
+    monkeypatch.setattr(native, "_health", lambda cfg: health_calls.append(True))
+    assert native.mutate(config, "start", plan)["status"] == "running"
+    assert calls == [
+        ["runtime", "start", "--profile", config["profile_id"], "--wait", "180", "--output", "json"]
+    ]
+    assert health_calls == [True]
+
+
+@pytest.mark.parametrize(
+    "change",
+    [
+        {"profile": "other"},
+        {"error": "other"},
+        {"state": "failed"},
+        {"ok": True},
+        {"schema_version": True},
+        {"exit_code": "6"},
+    ],
+)
+def test_nonzero_status_requires_exact_lost_owner_envelope(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, change: dict[str, Any]
+) -> None:
+    config = provision(tmp_path)
+    monkeypatch.setattr(native, "_invoke", _REAL_INVOKE)
+    data = {**lost_owner(config), **change}
+    monkeypatch.setattr(
+        native,
+        "run_bounded_subprocess",
+        lambda *a, **k: SubprocessResult(6, json.dumps(data), "", False, 0, False),
+    )
+    with pytest.raises(HybridSDLCError):
+        native.status(config)
+
+
+@pytest.mark.parametrize(
+    "exit_code,timed_out,truncated,cancelled",
+    [
+        (1, False, False, False),
+        (6, True, False, False),
+        (6, False, True, False),
+        (6, False, False, True),
+    ],
+)
+def test_unclean_lost_owner_response_never_enables_recovery(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    exit_code: int,
+    timed_out: bool,
+    truncated: bool,
+    cancelled: bool,
+) -> None:
+    config = provision(tmp_path)
+    monkeypatch.setattr(native, "_invoke", _REAL_INVOKE)
+    monkeypatch.setattr(
+        native,
+        "run_bounded_subprocess",
+        lambda *a, **k: SubprocessResult(
+            exit_code, json.dumps(lost_owner(config)), "", truncated, 0, timed_out, cancelled
+        ),
+    )
+    with pytest.raises(HybridSDLCError):
+        native.status(config)
+
+
+def test_lost_owner_mutation_response_is_not_success(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    config = provision(tmp_path)
+    monkeypatch.setattr(native, "_invoke", _REAL_INVOKE)
+    monkeypatch.setattr(
+        native,
+        "_start_client",
+        lambda *a, **k: SubprocessResult(6, json.dumps(lost_owner(config)), "", False, 0, False),
+    )
+    with pytest.raises(HybridSDLCError):
+        native._run(
+            config, ["runtime", "start", "--profile", config["profile_id"], "--output", "json"], 60
+        )
+
+
+def test_unknown_stale_status_does_not_enable_start(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    config = provision(tmp_path)
+    monkeypatch.setattr(
+        native,
+        "_run",
+        lambda *a, **k: {"ok": True, "profile": config["profile_id"], "state": "stale"},
+    )
+    assert native.status(config).get("recovery_available") is None
+    with pytest.raises(HybridSDLCError, match="unsafe for start"):
+        native.preflight(config, "start")
+
+
+@pytest.mark.parametrize("lease", [{"kind": "sync"}, {"kind": "lifecycle_unknown"}])
+def test_recovery_keeps_coordinator_activity_guards(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, lease: dict[str, str]
+) -> None:
+    from hybrid_sdlc import runtime_strata as coordinator
+
+    config = provision(tmp_path)
+    (tmp_path / "runtime.json").write_text("{}")
+    monkeypatch.setattr(coordinator, "_ensure_safe_state", lambda: tmp_path)
+    monkeypatch.setattr(
+        coordinator,
+        "_load_config",
+        lambda: (tmp_path, config, {"leases": [lease]}, tmp_path / "compose.yaml"),
+    )
+    monkeypatch.setattr(
+        coordinator, "_reconcile_and_guard_activity", lambda root, activity: activity
+    )
+    monkeypatch.setattr(
+        native, "preflight", lambda *a: pytest.fail("must block before native recovery")
+    )
+    with pytest.raises(HybridSDLCError):
+        coordinator.start()
+
+
+def test_failed_recovery_retains_uncertainty_and_blocks_second_start(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from hybrid_sdlc import runtime_strata as coordinator
+
+    config = provision(tmp_path)
+    (tmp_path / "runtime.json").write_text("{}")
+    activity_path = tmp_path / "activity.json"
+    activity_path.write_text('{"schema_version":1,"leases":[]}')
+    monkeypatch.setattr(coordinator, "_ensure_safe_state", lambda: tmp_path)
+    monkeypatch.setattr(
+        coordinator,
+        "_load_config",
+        lambda: (
+            tmp_path,
+            config,
+            json.loads(activity_path.read_text()),
+            tmp_path / "compose.yaml",
+        ),
+    )
+    monkeypatch.setattr(
+        native, "preflight", lambda *a: {"action": "start", "status": "stale", "recovery": True}
+    )
+
+    def refuse(*args: Any) -> None:
+        raise coordinator.RuntimeManagementError("Strata refused owner recovery")
+
+    monkeypatch.setattr(native, "mutate", refuse)
+    with pytest.raises(HybridSDLCError, match="refused owner recovery"):
+        coordinator.start()
+    assert json.loads(activity_path.read_text())["leases"][0]["kind"] == "lifecycle_unknown"
+    with pytest.raises(HybridSDLCError, match="did not return cleanly"):
+        coordinator.start()

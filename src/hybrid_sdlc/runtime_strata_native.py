@@ -166,15 +166,41 @@ def _invoke(
             )
     except (OSError, ProcessExecutionError) as exc:
         raise RuntimeManagementError("Native Strata command could not be executed") from exc
-    if result.timed_out or result.cancelled or result.is_truncated or result.exit_code != 0:
+    if result.timed_out or result.cancelled or result.is_truncated:
         _fail("Native Strata command did not complete cleanly")
     try:
         data = json.loads(result.stdout)
     except (json.JSONDecodeError, TypeError) as exc:
         raise RuntimeManagementError("Native Strata returned malformed JSON") from exc
+    # Strata deliberately returns exit 6/ok:false for a lost owner. Only the
+    # exact status envelope is readable as recovery evidence; mutations and
+    # every other unsuccessful response still fail closed.
+    lost_owner = (
+        len(args) == 6
+        and args[:3] == ["runtime", "status", "--profile"]
+        and args[4:] == ["--output", "json"]
+    )
+    if lost_owner and result.exit_code == 6 and _lost_owner_status(data, args[3]):
+        return cast(dict[str, Any], data)
+    if result.exit_code != 0:
+        _fail("Native Strata command did not complete cleanly")
     if not isinstance(data, dict) or data.get("ok") is not True:
         _fail("Native Strata returned an unsuccessful or invalid result")
     return cast(dict[str, Any], data)
+
+
+def _lost_owner_status(data: Any, profile: str) -> bool:
+    return (
+        isinstance(data, dict)
+        and type(data.get("schema_version")) is int
+        and data["schema_version"] == 1
+        and data.get("ok") is False
+        and data.get("profile") == profile
+        and data.get("state") == "stale"
+        and data.get("error") == "owner_host_lost"
+        and type(data.get("exit_code")) is int
+        and data["exit_code"] == 6
+    )
 
 
 def _source_config(profile: dict[str, Any]) -> Path:
@@ -395,7 +421,7 @@ def _status(config: dict[str, Any]) -> dict[str, Any]:
             "starting": "starting",
             "stopped": "exited",
             "failed": "failed",
-            "stale": "unknown",
+            "stale": "stale",
         }[state],
         "endpoint": config["endpoint"],
         "context_size": config["context_size"],
@@ -419,6 +445,13 @@ def _status(config: dict[str, Any]) -> dict[str, Any]:
             if k in data
         },
     }
+    if _lost_owner_status(data, config["profile_id"]):
+        out["recovery_available"] = True
+        out["error_code"] = "owner_host_lost"
+        out["next_action"] = (
+            "Run `hsdlc start strata` to request Strata's guarded owner recovery. "
+            "Strata refuses recovery when ownership cannot be verified."
+        )
     for flag in ("api_identity_verified", "launch_attested", "generation_ready"):
         if flag in data and type(data[flag]) is not bool:
             _fail("Native Strata status contains invalid identity flags")
@@ -472,6 +505,12 @@ def preflight(config: dict[str, Any], action: str) -> dict[str, Any]:
     if action == "start" and current["status"] == "running":
         _health(config)
         return {"action": action, "status": "running", "noop": True}
+    if (
+        action == "start"
+        and current["status"] == "stale"
+        and current.get("recovery_available") is True
+    ):
+        return {"action": action, "status": "stale", "recovery": True}
     if action == "start" and current["status"] not in {"exited"}:
         _fail("Native Strata profile state is unsafe for start")
     if action == "stop" and current["status"] not in {"running", "exited"}:

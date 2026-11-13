@@ -56,6 +56,21 @@ Inspect and reconcile that state before another task or disruptive action.
 Hybrid SDLC leases cover its own tasks; another client's activity remains a
 separate observation, and no automatic stall restart is introduced.
 
+If native `status` reports `status: stale`, `error_code: owner_host_lost` and
+`recovery_available: true`, use `hsdlc start strata` to request recovery of the
+registered profile. Strata's own start command verifies its old owner lease
+and private child ownership records, handles verified leftovers, and refuses
+unverifiable ownership. Hybrid SDLC does not delete state or kill saved PIDs.
+Recovery retains the registered model/context and verifies the resulting
+owned instance and health before reporting success. This is an explicit start,
+not an automatic reaction to idle time or inference failures.
+
+Only that exact lost-owner response enables recovery. Other stale states,
+active Hybrid SDLC tasks, and unresolved lifecycle operations still block it.
+`stop` and `restart` do not recover stale ownership; use `start`. A failed or
+timed-out recovery retains the normal uncertainty record and requires inspection
+before another attempt. No automatic retry is performed.
+
 The native 128K hardware trial used an RTX 3090/32 GB Windows PC, Strata Terminal
 0.2.13 and engine 0.1.59. A synthetic 70079-token input returned the correct marker
 in 27.85 seconds. That verifies input beyond 65K, not full-window stress,
@@ -343,8 +358,9 @@ A failed or timed-out lifecycle operation can leave Docker still completing
 the request. The registry retains an unresolved-operation marker rather than
 allowing new managed tasks or another lifecycle change during that uncertainty.
 Status and bounded logs remain available for investigation. There is no
-automatic retry or recovery command in this version; do not delete the marker
-without confirming what Docker and the service are actually doing.
+automatic retry or command to clear that uncertainty marker; native lost-owner
+recovery does not clear it either. Do not delete the marker without confirming
+what the selected runtime and service are actually doing.
 
 This is cooperative coordination, not an OS sandbox. It does not track direct
 API requests from unrelated clients, prevent someone using Docker manually,

@@ -21,7 +21,12 @@ from types import SimpleNamespace
 from hybrid_sdlc.aider_diagnostics import empty_patch_metadata
 from hybrid_sdlc.artifacts import atomic_save_json, redact_secrets
 from hybrid_sdlc.command_profiles import CommandProfile, resolve_profile_executable
-from hybrid_sdlc.config import load_config, normalize_aider_edit_files, validate_endpoint_url
+from hybrid_sdlc.config import (
+    AiderSampling,
+    load_config,
+    normalize_aider_edit_files,
+    validate_endpoint_url,
+)
 from hybrid_sdlc.errors import (
     AiderAdapterError,
     BaselineTestFailureError,
@@ -183,13 +188,19 @@ def validate_aider_token_budgets(max_tokens: object, reasoning_budget_tokens: ob
 def _temporary_model_settings(
     max_tokens: int | None,
     reasoning_budget_tokens: int | None,
+    sampling: AiderSampling | None = None,
 ) -> Iterator[Path | None]:
-    """Yield temporary Aider YAML settings; omit the file when budgets are unset.
+    """Yield temporary Aider YAML settings; omit it when all overrides are unset.
 
     JSON is a YAML subset, avoiding a runtime YAML dependency. This writes only
     explicitly configured values and never reads ambient Aider settings.
     """
-    if max_tokens is None and reasoning_budget_tokens is None:
+    sampling_values = (
+        AiderSampling.model_validate(sampling).model_dump(exclude_none=True)
+        if sampling is not None
+        else {}
+    )
+    if max_tokens is None and reasoning_budget_tokens is None and not sampling_values:
         yield None
         return
 
@@ -198,6 +209,13 @@ def _temporary_model_settings(
         params["max_tokens"] = max_tokens
     if reasoning_budget_tokens is not None:
         params["extra_body"] = {"reasoning_budget_tokens": reasoning_budget_tokens}
+    for key, value in sampling_values.items():
+        if key in {"temperature", "top_p"}:
+            params[key] = value
+        else:
+            extra_body = params.setdefault("extra_body", {})
+            assert isinstance(extra_body, dict)
+            extra_body[key] = value
     content = json.dumps([{"name": "aider/extra_params", "extra_params": params}], indent=2)
     with tempfile.TemporaryDirectory(prefix="hybrid-sdlc-aider-settings-") as directory:
         settings_path = Path(directory) / "model-settings.yml"
@@ -246,6 +264,7 @@ def _run_aider_attempt(
     cancel_event: threading.Event | None,
     process_observer: Callable[[int, datetime | None], None] | None,
     protected_roots: tuple[Path, ...] = (),
+    sampling: AiderSampling | None = None,
 ) -> SubprocessResult:
     """Build and run Aider while the optional settings file is alive."""
     validate_endpoint_url(endpoint_url)
@@ -253,7 +272,7 @@ def _run_aider_attempt(
         _temporary_instruction_file(
             task_instruction, (repo_root.resolve(), *(root.resolve() for root in protected_roots))
         ) as instruction_file,
-        _temporary_model_settings(max_tokens, reasoning_budget_tokens) as settings_file,
+        _temporary_model_settings(max_tokens, reasoning_budget_tokens, sampling) as settings_file,
     ):
         aider_argv = build_aider_argv(
             endpoint_url=endpoint_url,
@@ -428,12 +447,15 @@ def _run_bounded_loop_in_checkout(
     target_files: list[Path] | None = None,
     aider_max_tokens: int | None = None,
     aider_reasoning_budget_tokens: int | None = None,
+    aider_sampling: AiderSampling | None = None,
     aider_python: Path | None = None,
     repo_map_cache_dir: Path | None = None,
     policy_provenance: PolicyProvenance | None = None,
 ) -> RunResult:
     """Execute the bounded editing and testing state machine."""
     validate_aider_token_budgets(aider_max_tokens, aider_reasoning_budget_tokens)
+    if aider_sampling is not None:
+        aider_sampling = AiderSampling.model_validate(aider_sampling)
     repo_root = repo_root.resolve()
     run_id = f"run_{int(time.time())}_{uuid.uuid4().hex[:8]}"
     start_iso = datetime.now(UTC).isoformat()
@@ -567,6 +589,7 @@ def _run_bounded_loop_in_checkout(
                 target_files=resolved_target_files,
                 max_tokens=aider_max_tokens,
                 reasoning_budget_tokens=aider_reasoning_budget_tokens,
+                sampling=aider_sampling,
                 attempt_timeout_seconds=attempt_timeout_seconds,
                 buffer_cap_bytes=buffer_cap_bytes,
                 cancel_event=cancel_event,
@@ -864,6 +887,7 @@ def _run_bounded_loop_reserved(
     target_files: list[Path] | None = None,
     aider_max_tokens: int | None = None,
     aider_reasoning_budget_tokens: int | None = None,
+    aider_sampling: AiderSampling | None = None,
     aider_python: Path | None = None,
     policy_path: str | None = None,
     policy_provenance: PolicyProvenance | None = None,
@@ -871,6 +895,8 @@ def _run_bounded_loop_reserved(
 ) -> RunResult:
     """Run the bounded workflow in a detached worktree based on source HEAD."""
     validate_aider_token_budgets(aider_max_tokens, aider_reasoning_budget_tokens)
+    if aider_sampling is not None:
+        aider_sampling = AiderSampling.model_validate(aider_sampling)
     _validate_aider_python(aider_python, aider_cmd)
     source_root = repo_root.resolve()
     source_spec = resolve_confined_path(spec_path, repo_root=source_root, must_exist=True)
@@ -904,6 +930,7 @@ def _run_bounded_loop_reserved(
                     attempt_timeout_seconds=attempt_timeout_seconds,
                     aider_max_tokens=aider_max_tokens,
                     aider_reasoning_budget_tokens=aider_reasoning_budget_tokens,
+                    aider_sampling=aider_sampling,
                 ),
                 expected=policy_provenance,
             )
@@ -961,6 +988,7 @@ def _run_bounded_loop_reserved(
             target_files=relative_target_files,
             aider_max_tokens=aider_max_tokens,
             aider_reasoning_budget_tokens=aider_reasoning_budget_tokens,
+            aider_sampling=aider_sampling,
             aider_python=aider_python,
             repo_map_cache_dir=repo_map_cache_dir,
             policy_provenance=policy_provenance,
@@ -1118,6 +1146,7 @@ def run_bounded_loop(
     target_files: list[Path] | None = None,
     aider_max_tokens: int | None = None,
     aider_reasoning_budget_tokens: int | None = None,
+    aider_sampling: AiderSampling | None = None,
     aider_python: Path | None = None,
     policy_path: str | None = None,
     policy_provenance: PolicyProvenance | None = None,
@@ -1146,6 +1175,7 @@ def run_bounded_loop(
                 attempt_timeout_seconds=attempt_timeout_seconds,
                 aider_max_tokens=aider_max_tokens,
                 aider_reasoning_budget_tokens=aider_reasoning_budget_tokens,
+                aider_sampling=aider_sampling,
             ),
             expected=policy_provenance,
         )
@@ -1175,6 +1205,7 @@ def run_bounded_loop(
             target_files=target_files,
             aider_max_tokens=aider_max_tokens,
             aider_reasoning_budget_tokens=aider_reasoning_budget_tokens,
+            aider_sampling=aider_sampling,
             aider_python=aider_python,
             policy_path=policy_path,
             policy_provenance=policy_provenance,
@@ -1202,5 +1233,6 @@ def run_bounded_loop(
         target_files=target_files,
         aider_max_tokens=aider_max_tokens,
         aider_reasoning_budget_tokens=aider_reasoning_budget_tokens,
+        aider_sampling=aider_sampling,
         aider_python=aider_python,
     )

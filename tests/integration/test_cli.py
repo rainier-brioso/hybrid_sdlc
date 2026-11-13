@@ -408,6 +408,7 @@ def test_cli_run_task_forwards_explicit_commit_and_reports_isolated_result(
         'aider_repo_map_tokens = 0\naider_edit_files = ["README.md"]\n'
         f'aider_python = "{aider_python.as_posix()}"\n'
         "aider_max_tokens = 4096\naider_reasoning_budget_tokens = 512\n"
+        "aider_sampling = { temperature = 1.0, repetition_penalty = 1.05 }\n"
         "[command_profiles.pytest]\nargv = ['pytest']\n",
         encoding="utf-8",
     )
@@ -472,6 +473,10 @@ def test_cli_run_task_forwards_explicit_commit_and_reports_isolated_result(
     assert captured["target_files"] == [Path("README.md")]
     assert captured["aider_max_tokens"] == 8192
     assert captured["aider_reasoning_budget_tokens"] == 1024
+    assert captured["aider_sampling"].model_dump(exclude_none=True) == {
+        "temperature": 1.0,
+        "repetition_penalty": 1.05,
+    }
     assert captured["aider_python"] == aider_python
     assert payload["commit_hash"] == "a" * 40
     assert payload["worktree_path"] == str(tmp_path / "isolated")
