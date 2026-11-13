@@ -180,6 +180,7 @@ async def run_spec_task_sync(
             target_files=[Path(path) for path in config.aider_edit_files],
             aider_max_tokens=config.aider_max_tokens,
             aider_reasoning_budget_tokens=config.aider_reasoning_budget_tokens,
+            aider_sampling=config.aider_sampling,
             aider_python=config.aider_python,
             **run_options,
         )

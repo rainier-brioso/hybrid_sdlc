@@ -137,6 +137,43 @@ Hybrid SDLC writes only configured values to a short-lived Aider model-settings 
 
 For synchronous CLI runs, `--aider-max-tokens` and `--aider-reasoning-budget-tokens` override the repository TOML values. MCP tools use the repository configuration; the five tool schemas do not add budget arguments.
 
+## Explicit Aider request sampling
+
+Sampling is optional and configured in the repository TOML for synchronous CLI,
+MCP and background worker execution. Put top-level scalar settings before this
+table; subsequent command profiles retain their own table headers.
+
+```toml
+aider_max_tokens = 16384
+aider_reasoning_budget_tokens = 1024
+
+[aider_sampling]
+temperature = 1.0
+repetition_penalty = 1.05
+penalty_last_n = 256
+# Optional: top_p = 0.95
+# Optional: top_k = 20
+```
+
+These are experimental request values, not universal defaults or a guarantee
+against loops. Omitted sampling fields do not override Aider/provider behavior;
+explicit temperature zero remains valid. For an unknown custom model Aider can
+send temperature zero unless a request override is supplied, so changing only
+server defaults may have no effect.
+
+Supported fields are finite temperature (0–2), top_p (>0–1), integer top_k
+(1–64), positive finite repetition_penalty, and positive integer penalty_last_n.
+Booleans, numeric strings and unknown keys are rejected. Use canonical names
+`repetition_penalty` and `penalty_last_n`, not Strata's aliases `repeat_penalty`
+and `repeat_last_n`. The latter three provider-specific fields travel in
+`extra_body`, merged with the reasoning budget; temperature/top_p travel as
+standard request fields. Verify compatibility with the selected endpoint.
+Sampling does not change context capacity, output/reasoning ceilings, retry
+limits, edit format or acceptance. No server/preset edit or restart is needed.
+The [dated Kotlin sampling trial](evidence/aider-sampling-kotlin-20261112.md)
+records successful request forwarding but a rejected, non-compiling candidate;
+these example values are not established as reliable model defaults.
+
 ## Trust Model & Named Command Profiles
 
 > [!WARNING]

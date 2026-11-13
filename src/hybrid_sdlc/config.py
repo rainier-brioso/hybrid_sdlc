@@ -95,6 +95,18 @@ class ServerCandidateConfig(BaseModel):
         return validate_endpoint_url(v)
 
 
+class AiderSampling(BaseModel):
+    """Explicit request overrides; absent fields preserve Aider/provider behavior."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    temperature: float | None = Field(default=None, strict=True, ge=0, le=2, allow_inf_nan=False)
+    top_p: float | None = Field(default=None, strict=True, gt=0, le=1, allow_inf_nan=False)
+    top_k: int | None = Field(default=None, strict=True, ge=1, le=64)
+    repetition_penalty: float | None = Field(default=None, strict=True, gt=0, allow_inf_nan=False)
+    penalty_last_n: int | None = Field(default=None, strict=True, ge=1)
+
+
 class ToolkitConfig(BaseModel):
     """Top-level toolkit configuration."""
 
@@ -114,6 +126,7 @@ class ToolkitConfig(BaseModel):
     aider_edit_files: list[str] = Field(default_factory=list, strict=True)
     aider_max_tokens: int | None = Field(default=None, strict=True, ge=1)
     aider_reasoning_budget_tokens: int | None = Field(default=None, strict=True, ge=0)
+    aider_sampling: AiderSampling | None = None
     aider_python: Path | None = None
     command_profiles: dict[str, CommandProfile] = Field(default_factory=dict)
 
