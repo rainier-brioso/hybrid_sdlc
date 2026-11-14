@@ -44,6 +44,26 @@ not establish IDE compatibility, repeated reliability or waiting-turn resumption
 
 ## 1. Architectural Decisions & Resolution of Review Findings
 
+### Required task deliverables (HSDLC-091)
+
+The real-task trial exposed an incomplete result that passed its existing
+test command after omitting required test-file edits. Extend the explicitly
+selected version 1 task policy with optional `required_changed_paths`: each
+declared path must be allowed, have a net change in the final exported
+candidate and remain a confined regular file. Preserve existing policies and
+no-policy behavior. The final execution gate, immutable scoped-commit tree
+and policy-pinned fresh acceptance replay must all enforce the declaration.
+Retain incomplete artifacts with structured failure and no automatic retry.
+
+This detects structural omissions, not test quality or semantic completion.
+Keep the host's required-assertion review and distinct execution, review,
+integration and physical acceptance states. Finish the mirrored skill's
+guidance for compiling scaffolds, focused source context, small method/test
+slices and reuse of explicit bounded-sequence authority. Tests-only recovery
+of a retained partial candidate requires its own authorized isolated baseline;
+it never retroactively accepts the original incomplete result. Existing trial
+evidence informs this workflow; the current work changes Hybrid SDLC only.
+
 ### Native Strata lifecycle (HSDLC-090)
 
 Add an explicitly registered native runtime backend alongside Docker, sharing

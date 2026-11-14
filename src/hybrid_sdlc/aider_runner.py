@@ -62,6 +62,7 @@ from hybrid_sdlc.task_policy import (
     PolicyProvenance,
     TaskScope,
     load_task_scope,
+    validate_required_deliverables,
     validate_task_policy,
     validate_task_scope_paths,
 )
@@ -1000,6 +1001,7 @@ def _run_bounded_loop_reserved(
             assert exported is not None
             try:
                 validate_task_scope_paths(task_scope, exported.changed_paths)
+                validate_required_deliverables(task_scope, exported.changed_paths, record.path)
             except TaskScopeViolationError as exc:
                 result = _scope_failure_result(result, exc)
 
@@ -1026,6 +1028,12 @@ def _run_bounded_loop_reserved(
             if task_scope is not None:
                 try:
                     validate_task_scope_paths(task_scope, exported.changed_paths)
+                    validate_required_deliverables(
+                        task_scope,
+                        exported.changed_paths,
+                        record.path,
+                        treeish=commit_hash,
+                    )
                 except TaskScopeViolationError as exc:
                     result = _scope_failure_result(result, exc)
         assert exported is not None

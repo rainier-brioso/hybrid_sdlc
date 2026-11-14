@@ -23,6 +23,7 @@ oversized policy input (over 64 KiB) are rejected with structured policy errors.
   "spec_path": "docs/tasks/import-parse.md",
   "test_profile": "unit",
   "intended_paths": ["src/import_parser.py", "tests/test_import_parser.py"],
+  "required_changed_paths": ["src/import_parser.py", "tests/test_import_parser.py"],
   "excluded_paths": ["src/storage.py"],
   "limits": {
     "max_retries": 2,
@@ -43,6 +44,14 @@ control characters are supported. Duplicate entries and a path appearing in
 both lists are rejected. New files need not exist yet. This deliberately small
 language avoids platform-dependent glob interpretation; broader patterns need
 an explicit future format decision.
+
+`required_changed_paths` is an optional additive version 1.0.0 field, defaulting
+to an empty list. Every entry must be a unique literal path from `intended_paths`
+and cannot be excluded. Declare only files that this task must actually change;
+context-only or preserved files belong only in `intended_paths`. Existing policy
+files without this field and calls without a selected policy retain their
+previous behavior. Older installations that do not support this field reject
+it as unknown; upgrade the CLI before selecting such a policy.
 
 Limits confirm ceilings, not overrides: existing configuration/request values
 remain effective and must not exceed the policy. Retry and task/attempt timeout
@@ -119,6 +128,33 @@ scope rejection also refreshes the candidate evidence before returning failure.
 Without a selected policy, legacy execution behavior remains unchanged.
 If execution had already timed out, failed or been cancelled, the scope failure
 also retains the prior status and structured failure details.
+
+## Required deliverables
+
+With `required_changed_paths`, each declared path must appear in the complete
+net exported change and remain a confined regular file in the candidate. An
+unchanged file, deletion, renamed-away source, symlink or ignored untracked
+file does not satisfy the requirement. Rename destinations can satisfy it when
+they are permitted and remain regular files. New regular files are supported.
+The final check includes changes made by baseline and candidate test commands;
+it does not stop a retry before the final candidate is known.
+
+An incomplete candidate returns structured `TASK_DELIVERABLE_MISSING` failure
+even when its test command passed. The exact patch and recovery artifacts are
+retained; a scoped commit is refused. The commit path separately validates the
+exact immutable staged tree, and fresh acceptance verification reloads the
+pinned policy and repeats the required-file checks. No automatic extra retry,
+patch integration, policy discovery or task-scope expansion is introduced.
+Existing CLI exit semantics remain: malformed policies fail preflight with
+policy exit 3; a completed `run-task` with an incomplete result exits 6
+(`TASK_FAILED`). Inspect the structured failure code to identify the omission.
+
+This is a structural completeness check. A changed test file can contain weak
+or missing assertions, and an allowed file change need not be meaningful.
+The CLI does not infer requirements from Markdown, detect a test framework or
+prove coverage from test counts. Review the required behavior and assertions
+against the contract before accepting the artifact. Source-only and tests-only
+tasks can declare only their own required output paths.
 
 ## Boundary
 

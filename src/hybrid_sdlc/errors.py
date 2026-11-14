@@ -97,6 +97,12 @@ class TaskScopeViolationError(RepositoryError):
     default_exit_code = ExitCode.POLICY_ERROR
 
 
+class TaskDeliverableMissingError(TaskScopeViolationError):
+    """A policy-required changed file is missing or not a regular file."""
+
+    default_code = "TASK_DELIVERABLE_MISSING"
+
+
 class ServerProbeError(HybridSDLCError):
     """Failure probing or communicating with local model server."""
 

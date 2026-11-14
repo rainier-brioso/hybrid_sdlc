@@ -33,6 +33,10 @@ exported patch and any optional scoped-commit tree. This rejects out-of-scope
 results; it does not prevent repository commands from writing files. Ignored
 untracked files remain outside the export. See the policy guide for failure
 evidence, rename handling and the remaining sandbox/review boundaries.
+An optional policy `required_changed_paths` list also rejects omitted
+deliverables even when the test command passes: each required path must have
+a net change and remain a regular file. It does not prove meaningful tests
+or assertions; see the policy guide's required-deliverables contract.
 
 ## Credential-free endpoint URLs and instruction privacy
 

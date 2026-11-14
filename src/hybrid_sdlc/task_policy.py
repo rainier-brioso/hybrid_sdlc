@@ -13,7 +13,12 @@ from typing import Any, TypedDict
 
 from pydantic import BaseModel, ConfigDict, Field, StrictInt, StrictStr, ValidationError
 
-from hybrid_sdlc.errors import ExitCode, HybridSDLCError, TaskScopeViolationError
+from hybrid_sdlc.errors import (
+    ExitCode,
+    HybridSDLCError,
+    TaskDeliverableMissingError,
+    TaskScopeViolationError,
+)
 from hybrid_sdlc.security import resolve_confined_path
 
 _MAX_POLICY_BYTES = 64 * 1024
@@ -47,6 +52,7 @@ class _Policy(BaseModel):
     test_profile: StrictStr
     intended_paths: list[StrictStr] = Field(min_length=1)
     excluded_paths: list[StrictStr] = Field(default_factory=list)
+    required_changed_paths: list[StrictStr] = Field(default_factory=list)
     limits: _Limits
 
 
@@ -76,6 +82,7 @@ class TaskScope(BaseModel):
 
     intended_paths: frozenset[str]
     excluded_paths: frozenset[str]
+    required_changed_paths: frozenset[str] = frozenset()
 
 
 def load_task_scope(repo_root: Path, provenance: PolicyProvenance) -> TaskScope:
@@ -94,6 +101,7 @@ def load_task_scope(repo_root: Path, provenance: PolicyProvenance) -> TaskScope:
         return TaskScope(
             intended_paths=frozenset(policy.intended_paths),
             excluded_paths=frozenset(policy.excluded_paths),
+            required_changed_paths=frozenset(policy.required_changed_paths),
         )
     except TaskPolicyError:
         raise
@@ -116,6 +124,88 @@ def validate_task_scope_paths(scope: TaskScope, paths: list[str] | tuple[str, ..
         )
 
 
+def validate_required_deliverables(
+    scope: TaskScope,
+    changed_paths: list[str] | tuple[str, ...],
+    repo_root: Path,
+    *,
+    treeish: str | None = None,
+) -> None:
+    """Require declared paths to be changed and regular files in the candidate.
+
+    When ``treeish`` is supplied, Git's immutable tree is authoritative. This is
+    used immediately before scoped commit creation to avoid trusting worktree
+    contents that differ from the tree being committed.
+    """
+    if not scope.required_changed_paths:
+        return
+    changed = set(changed_paths)
+    missing_changes = sorted(scope.required_changed_paths - changed)
+    if missing_changes:
+        raise TaskDeliverableMissingError(
+            "Task did not change all required deliverable paths",
+            details={"missing_changed_paths": missing_changes},
+        )
+
+    if treeish is not None:
+        missing_files: list[str] = []
+        for relative in sorted(scope.required_changed_paths):
+            try:
+                entries = _git(repo_root, "ls-tree", "-z", treeish, "--", relative).split(b"\0")
+            except TaskPolicyError as exc:
+                raise TaskDeliverableMissingError(
+                    "Could not verify required deliverables in the candidate Git tree",
+                    details={"path": relative},
+                ) from exc
+            matching = [
+                entry
+                for entry in entries
+                if entry and entry.partition(b"\t")[2] == relative.encode("utf-8")
+            ]
+            if len(matching) != 1:
+                missing_files.append(relative)
+                continue
+            metadata = matching[0].partition(b"\t")[0].split()
+            if (
+                len(metadata) != 3
+                or metadata[0] not in (b"100644", b"100755")
+                or metadata[1] != b"blob"
+            ):
+                missing_files.append(relative)
+        if missing_files:
+            raise TaskDeliverableMissingError(
+                "Required deliverable paths are not regular files in the candidate Git tree",
+                details={"invalid_paths": missing_files},
+            )
+        return
+
+    missing_files = []
+    root = repo_root.resolve()
+    for relative in sorted(scope.required_changed_paths):
+        candidate = root / Path(relative)
+        try:
+            current = root
+            safe = True
+            for part in Path(relative).parts:
+                current = current / part
+                info = current.lstat()
+                if stat.S_ISLNK(info.st_mode) or getattr(info, "st_file_attributes", 0) & 0x400:
+                    safe = False
+                    break
+            if not safe or not stat.S_ISREG(candidate.lstat().st_mode):
+                missing_files.append(relative)
+                continue
+            resolved = candidate.resolve(strict=True)
+            resolved.relative_to(root)
+        except (OSError, ValueError):
+            missing_files.append(relative)
+    if missing_files:
+        raise TaskDeliverableMissingError(
+            "Required deliverable paths are missing or are not confined regular files",
+            details={"invalid_paths": missing_files},
+        )
+
+
 def _git(root: Path, *args: str) -> bytes:
     try:
         return subprocess.run(
@@ -128,6 +218,10 @@ def _git(root: Path, *args: str) -> bytes:
 
 
 def _literal_path(value: str, *, field: str) -> str:
+    try:
+        value.encode("utf-8", errors="strict")
+    except UnicodeEncodeError as exc:
+        raise TaskPolicyError(f"Invalid {field} in task policy") from exc
     if (
         not value
         or "\\" in value
@@ -231,10 +325,18 @@ def _parse_policy(data: bytes) -> _Policy:
 def _validate_path_lists(policy: _Policy) -> None:
     intended = [_literal_path(path, field="intended_paths entry") for path in policy.intended_paths]
     excluded = [_literal_path(path, field="excluded_paths entry") for path in policy.excluded_paths]
+    required = [
+        _literal_path(path, field="required_changed_paths entry")
+        for path in policy.required_changed_paths
+    ]
     if len(set(intended)) != len(intended) or len(set(excluded)) != len(excluded):
         raise TaskPolicyError("Task policy path lists must not contain duplicates")
+    if len(set(required)) != len(required):
+        raise TaskPolicyError("Task policy required_changed_paths must not contain duplicates")
     if set(intended).intersection(excluded):
         raise TaskPolicyError("A task policy path cannot be both intended and excluded")
+    if not set(required).issubset(intended) or set(required).intersection(excluded):
+        raise TaskPolicyError("Required changed paths must be intended and not excluded")
 
 
 def _check_limits(policy: _Policy, *, max_retries: int, config: Any) -> None:

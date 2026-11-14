@@ -33,10 +33,20 @@ from hybrid_sdlc.aider_runner import (
 from hybrid_sdlc.artifacts import redact_secrets
 from hybrid_sdlc.command_profiles import resolve_profile_executable
 from hybrid_sdlc.config import load_config
-from hybrid_sdlc.errors import CommandPolicyError, ExitCode, HybridSDLCError
+from hybrid_sdlc.errors import (
+    CommandPolicyError,
+    ExitCode,
+    HybridSDLCError,
+    TaskScopeViolationError,
+)
 from hybrid_sdlc.models import RunResult, RunStatus
 from hybrid_sdlc.security import verify_repo_root
-from hybrid_sdlc.task_policy import PolicyProvenance, load_task_scope, validate_task_scope_paths
+from hybrid_sdlc.task_policy import (
+    PolicyProvenance,
+    load_task_scope,
+    validate_required_deliverables,
+    validate_task_scope_paths,
+)
 from hybrid_sdlc.worktrees import (
     WorktreeRecord,
     _verified_rollback_record,
@@ -462,6 +472,7 @@ def _verify_candidate(
             )
             scope = load_task_scope(source, provenance)
             validate_task_scope_paths(scope, list(before_result.changed_paths))
+            validate_required_deliverables(scope, before_result.changed_paths, record.path)
             scope_checked = True
         resolved_executable = resolve_profile_executable(profile, source)
         isolated_executable = _isolated_test_executable(
@@ -488,7 +499,7 @@ def _verify_candidate(
             verification_error = "missing_file"
         elif isinstance(exc, OSError):
             verification_error = "operating_system"
-        elif isinstance(exc, ReviewError):
+        elif isinstance(exc, (ReviewError, TaskScopeViolationError)):
             verification_error = "review_policy"
         elif isinstance(exc, subprocess.SubprocessError):
             verification_error = "subprocess"

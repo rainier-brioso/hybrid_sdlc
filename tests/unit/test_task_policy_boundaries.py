@@ -9,9 +9,11 @@ import pytest
 
 from hybrid_sdlc.task_policy import (
     TaskPolicyError,
+    TaskScope,
     _check_limits,
     _parse_policy,
     _validate_path_lists,
+    validate_required_deliverables,
 )
 
 
@@ -31,6 +33,100 @@ def _document() -> dict[str, object]:
             "aider_reasoning_budget_tokens": 1024,
         },
     }
+
+
+def test_required_changed_paths_are_optional_for_existing_policies() -> None:
+    policy = _parse_policy(json.dumps(_document()).encode())
+    assert policy.required_changed_paths == []
+    assert (
+        TaskScope(intended_paths=frozenset(), excluded_paths=frozenset()).required_changed_paths
+        == frozenset()
+    )
+
+
+@pytest.mark.parametrize(
+    "required",
+    [
+        ["src/parser.py", "src/parser.py"],
+        ["src/other.py"],
+        ["src/storage.py"],
+        ["src\\parser.py"],
+        ["../parser.py"],
+    ],
+)
+def test_required_paths_must_be_literal_unique_intended_and_not_excluded(
+    required: list[str],
+) -> None:
+    document = _document()
+    document["required_changed_paths"] = required
+    with pytest.raises(TaskPolicyError):
+        _validate_path_lists(_parse_policy(json.dumps(document).encode()))
+
+
+def test_required_deliverable_must_be_changed_even_if_file_already_exists(tmp_path) -> None:
+    scope = TaskScope(
+        intended_paths=frozenset({"src/Required.py"}),
+        excluded_paths=frozenset(),
+        required_changed_paths=frozenset({"src/Required.py"}),
+    )
+    path = tmp_path / "src" / "Required.py"
+    path.parent.mkdir()
+    path.write_text("existing", encoding="utf-8")
+    from hybrid_sdlc.errors import TaskDeliverableMissingError
+
+    with pytest.raises(TaskDeliverableMissingError) as caught:
+        validate_required_deliverables(scope, [], tmp_path)
+    assert caught.value.code == "TASK_DELIVERABLE_MISSING"
+    assert caught.value.exit_code == 3
+
+
+@pytest.mark.parametrize("relative", ["src/Required.py", "src/aÃ±adir.py"])
+def test_required_deliverable_accepts_exact_case_unicode_regular_file(
+    tmp_path, relative: str
+) -> None:
+    scope = TaskScope(
+        intended_paths=frozenset({relative}),
+        excluded_paths=frozenset(),
+        required_changed_paths=frozenset({relative}),
+    )
+    candidate = tmp_path / relative
+    candidate.parent.mkdir(parents=True, exist_ok=True)
+    candidate.write_text("new contents", encoding="utf-8")
+    validate_required_deliverables(scope, [relative], tmp_path)
+
+
+def test_required_deliverable_rejects_case_mismatch(tmp_path) -> None:
+    scope = TaskScope(
+        intended_paths=frozenset({"src/Required.py"}),
+        excluded_paths=frozenset(),
+        required_changed_paths=frozenset({"src/Required.py"}),
+    )
+    (tmp_path / "src").mkdir()
+    (tmp_path / "src" / "required.py").write_text("new", encoding="utf-8")
+    from hybrid_sdlc.errors import TaskDeliverableMissingError
+
+    with pytest.raises(TaskDeliverableMissingError):
+        validate_required_deliverables(scope, ["src/required.py"], tmp_path)
+
+
+def test_renaming_away_required_path_does_not_satisfy_deliverable(tmp_path) -> None:
+    from hybrid_sdlc.errors import TaskDeliverableMissingError
+
+    scope = TaskScope(
+        intended_paths=frozenset({"src/Required.py", "src/Renamed.py"}),
+        excluded_paths=frozenset(),
+        required_changed_paths=frozenset({"src/Required.py"}),
+    )
+    renamed = tmp_path / "src" / "Renamed.py"
+    renamed.parent.mkdir()
+    renamed.write_text("renamed content", encoding="utf-8")
+    with pytest.raises(TaskDeliverableMissingError) as caught:
+        validate_required_deliverables(
+            scope,
+            ["src/Required.py", "src/Renamed.py"],
+            tmp_path,
+        )
+    assert caught.value.details == {"invalid_paths": ["src/Required.py"]}
 
 
 def _effective(**overrides: object) -> SimpleNamespace:
@@ -137,6 +233,7 @@ def test_policy_limits_require_json_integers(field: str, value: object) -> None:
         "src/tab\tname.py",
         "src/nul\x00.py",
         "src/delete\x7f.py",
+        "src/\ud800.py",
     ],
 )
 @pytest.mark.parametrize("field", ["intended_paths", "excluded_paths"])

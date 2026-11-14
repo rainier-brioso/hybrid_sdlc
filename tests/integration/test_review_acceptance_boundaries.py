@@ -185,3 +185,28 @@ def test_acceptance_verification_rechecks_pinned_task_scope(tmp_path: Path, allo
     assert result.evidence.scope_checked is allowed
     if not allowed:
         assert not result.evidence.verification_completed
+
+
+def test_review_replay_blocks_candidate_missing_required_deliverable(tmp_path: Path) -> None:
+    source = tmp_path / "source"
+    _run, run_path, patch, baseline = make_candidate(
+        source,
+        test_code="pass",
+        policy_paths=["candidate.txt", "required.txt"],
+        required_paths=["required.txt"],
+    )
+    result = record_review(
+        run_record=run_path,
+        repo_root=source,
+        expected_baseline=baseline,
+        expected_patch_sha256=hashlib.sha256(patch).hexdigest(),
+        expected_revision=0,
+        reviewer_kind="human",
+        reviewer="reviewer-one",
+        judgment="accepted",
+        profile_name="review",
+    )
+    assert result.judgment == "blocked"
+    assert result.evidence is not None
+    assert result.evidence.verification_error == "review_policy"
+    assert not result.evidence.verification_completed

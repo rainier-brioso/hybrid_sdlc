@@ -30,6 +30,67 @@ uncertainty with an authorized bounded prototype before writing a long plan.
 Ask the user about product preferences or authority that evidence cannot settle.
 Do not generate competing implementations or review panels by default.
 
+### Size local-model edits from evidence
+
+For unfamiliar code, split work by the smallest independently testable behavior,
+not by the number of requested feature screens or files. Prefer implementing an
+existing method with its callers, types and tests already compiling in the
+baseline over asking the model to invent a multi-file API and implementation in
+one response. For a sequence of behaviors, commit prerequisites, then give each
+dependent task a fresh baseline and one narrow contract.
+
+When a new API is needed, prepare a small compiling scaffold first: stable types
+and signatures, fail-closed placeholders for deferred behavior, and focused
+baseline tests. State exactly what is implemented and what remains unsupported.
+Do not make a scaffold appear feature-complete, weaken tests, or ask the worker
+to write the scaffold and the full algorithm at once. A passing scaffold proves
+compilation and fixtures only; it does not count as delivered behavior.
+
+Name the existing implementation and test paths in the contract and configure
+`aider_edit_files` to supply those relevant files as initial context when repo
+map/default discovery would omit them. This improves context; it is not a write
+allowlist or sandbox. State the exact method and tests the worker may change,
+what it must preserve, and what stays for a later task. Keep one configured
+offline/test gate passing both before and after the edit, with meaningful
+boundary and regression tests. Review the full exported patch and verify the
+same artifact in a fresh checkout before acceptance.
+
+Turn each contract requirement into a review checklist: every required path,
+behavior and acceptance assertion must be represented in the patch and its
+verification. A passing existing suite can remain green when the worker omitted
+the new tests and behavior, so compare candidate evidence to the baseline and
+inspect the required test paths and assertions directly. Reject or block a
+candidate that omits required tests or behavior; do not integrate it or
+automatically retry the same task. Test counts are evidence, not an acceptance
+rule: a valid change may revise an existing test without increasing the count.
+
+For an explicitly selected task policy, declare files that must change in
+`required_changed_paths`. The CLI checks that each declared file has a net
+change and remains regular in the final candidate, before scoped commit and
+during acceptance verification. It does not inspect assertion quality or
+derive required files from prose. Do not auto-select a policy; present this
+mechanical gate as part of the concrete task proposal and select it with
+authority. Preserved context files belong only in the allowed scope.
+
+If a compiling production candidate omits required tests, retain and review
+that exact candidate, then consider a separate tests-only task only with
+explicit authority for its setup and provisional baseline. Pin that baseline to
+the exact production source hash; do not auto-commit rejected production code
+or retroactively accept the original run. Keep the follow-up isolated until
+review and fresh verification finish. If new tests expose a defect, report the
+failing candidate; do not change production code in the tests-only task merely
+to make its gate pass. This is an evidence-informed option, not an automatic
+retry rule.
+
+If repeated attempts return similar compiler failures, stop when the runner's
+bounded retry rule fires. Inspect the exact patch and diagnostics, then improve
+the scaffold, source context or task decomposition in a newly committed
+contract. Do not resubmit the unchanged task, enlarge output/context ceilings,
+disable verification, or silently switch providers. Preserve accepted
+prerequisites in a committed baseline before starting a dependent task.
+See the recorded [local Strata task-sizing trials](evidence/local-delegation-working-slices-20261114.md)
+for the limits and outcomes behind this workflow.
+
 ## Write one contract per execution
 
 Use a repository-owned location such as `docs/features/<feature>/tasks/`;
@@ -68,6 +129,16 @@ from prose or silently discover another file. Policies declare exact intended
 paths and exclusions, checked against the complete final exported patch.
 
 ## Execute, review and integrate
+
+When the user authorizes a bounded task sequence, record the approved
+repository/branch, task scopes and action types in its checkpoint. Distinguish
+preparation commits, accepted-implementation commits, local execution,
+integration and publication. Reuse that explicit authority for covered steps
+instead of asking the same permission before every task. Scope or action
+changes need renewed authority. A request to implement still does not by itself
+authorize commits or publication; prepare a concrete, reviewable sequence
+before requesting authorization for it. This guidance is host orchestration,
+not a new CLI auto-commit or permission engine.
 
 1. Analyst supplies the bounded contract and confirmed configuration.
 2. One local worker edits/tests in an isolated checkout under existing limits.

@@ -37,7 +37,7 @@ def _git(root: Path, *args: str) -> None:
     subprocess.run(["git", *args], cwd=root, check=True, capture_output=True)
 
 
-def _task_repo(root: Path) -> str:
+def _task_repo(root: Path, *, required_paths: list[str] | None = None) -> str:
     root.mkdir(parents=True, exist_ok=True)
     _git(root, "init", "-q")
     _git(root, "config", "user.name", "Policy test")
@@ -56,7 +56,7 @@ def _task_repo(root: Path) -> str:
         "task_id": "POLICY-001",
         "spec_path": "docs/tasks/task.md",
         "test_profile": "pytest",
-        "intended_paths": ["generated.py"],
+        "intended_paths": list(dict.fromkeys(["generated.py", *(required_paths or [])])),
         "excluded_paths": [],
         "limits": {
             "max_retries": config.max_retries,
@@ -64,12 +64,22 @@ def _task_repo(root: Path) -> str:
             "attempt_timeout_seconds": config.attempt_timeout_seconds,
         },
     }
+    if required_paths is not None:
+        policy["required_changed_paths"] = required_paths
     policy_text = json.dumps(policy)
     (root / "task-policy.json").write_text(policy_text, encoding="utf-8")
     (root / "docs" / "tasks" / "task.policy.json").write_text(policy_text, encoding="utf-8")
     _git(root, "add", ".")
     _git(root, "commit", "-qm", "Add policy fixture")
     return "docs/tasks/task.md"
+
+
+def _use_short_worktree_root(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+    from hybrid_sdlc import worktrees
+
+    runtime_root = tmp_path.parent / "runtime-temp"
+    runtime_root.mkdir(exist_ok=True)
+    monkeypatch.setattr(worktrees.tempfile, "gettempdir", lambda: str(runtime_root))
 
 
 def test_cli_accepts_explicit_committed_policy_and_passes_provenance(
@@ -154,6 +164,57 @@ def test_cli_rejects_modified_policy_before_endpoint_probe(
 
     assert result.exit_code == 3
     assert json.loads(result.output)["code"] == "TASK_POLICY_INVALID"
+
+
+def test_cli_json_preserves_task_failure_exit_for_missing_required_deliverable(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    spec_path = _task_repo(tmp_path)
+    monkeypatch.setattr(
+        "hybrid_sdlc.cli.resolve_profile_executable", lambda *args: Path(sys.executable)
+    )
+    monkeypatch.setattr(
+        "hybrid_sdlc.cli.select_active_endpoint",
+        lambda **kwargs: (ServerCandidateConfig(url="http://127.0.0.1:8089/v1"), None),
+    )
+    monkeypatch.setattr("hybrid_sdlc.cli.validate_aider_target_files", lambda *args: [])
+
+    def missing_deliverable(**kwargs: object) -> RunResult:
+        return RunResult(
+            run_id="run-missing-deliverable",
+            task_id="POLICY-001",
+            spec_path=spec_path,
+            repo_root=str(tmp_path),
+            status=RunStatus.FAILURE,
+            started_at="2026-10-14T00:00:00Z",
+            finished_at="2026-10-14T00:00:01Z",
+            total_duration_seconds=1,
+            failure=FailureRecord(
+                code="TASK_DELIVERABLE_MISSING",
+                message="Task did not change all required deliverable paths",
+                details={"missing_changed_paths": ["required.txt"]},
+            ),
+        )
+
+    monkeypatch.setattr("hybrid_sdlc.cli.run_bounded_loop", missing_deliverable)
+    result = CliRunner().invoke(
+        cli,
+        [
+            "run-task",
+            spec_path,
+            "--repo-root",
+            str(tmp_path),
+            "--task-id",
+            "POLICY-001",
+            "--test-profile",
+            "pytest",
+            "--policy-file",
+            "docs/tasks/task.policy.json",
+            "--json",
+        ],
+    )
+    assert result.exit_code == 6
+    assert json.loads(result.output)["failure"]["code"] == "TASK_DELIVERABLE_MISSING"
 
 
 def test_submit_rejects_uncommitted_policy_before_endpoint_or_job_allocation(
@@ -828,6 +889,7 @@ def test_runner_refreshes_candidate_after_late_commit_scope_rejection(
         profile=config.command_profiles["pytest"],
         endpoint_url="http://127.0.0.1:8089/v1",
         model_name="synthetic-local-model",
+        resolved_test_executable=Path(sys.executable),
         aider_cmd=[
             sys.executable,
             "-c",
@@ -869,3 +931,93 @@ def test_runner_refreshes_candidate_after_late_commit_scope_rejection(
         check=True,
     ).stdout
     assert staged == b""
+
+
+def test_runner_fails_inspectably_when_final_candidate_omits_required_file(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    _use_short_worktree_root(monkeypatch, tmp_path)
+    spec_path = _task_repo(tmp_path, required_paths=["generated.py", "required.txt"])
+    config = load_config(repo_root=tmp_path)
+    result = run_bounded_loop(
+        repo_root=tmp_path,
+        spec_path=spec_path,
+        task_id="POLICY-001",
+        profile=config.command_profiles["pytest"],
+        endpoint_url="http://127.0.0.1:8089/v1",
+        model_name="synthetic-local-model",
+        resolved_test_executable=Path(sys.executable),
+        aider_cmd=[
+            sys.executable,
+            "-c",
+            "from pathlib import Path; Path('generated.py').write_text('value=1\\n')",
+        ],
+        policy_path="docs/tasks/task.policy.json",
+        test_profile="pytest",
+        commit_requested=True,
+    )
+
+    assert result.status is RunStatus.FAILURE
+    assert result.failure is not None
+    assert result.failure.code == "TASK_DELIVERABLE_MISSING"
+    assert result.failure.details["missing_changed_paths"] == ["required.txt"]
+    assert result.commit_hash is None
+    assert result.review_patch is not None
+    assert b"generated.py" in Path(result.review_patch).read_bytes()
+    assert result.final_diff is not None
+    assert result.final_diff.changed_files == ["generated.py"]
+
+
+def test_runner_accepts_all_changed_required_files(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    _use_short_worktree_root(monkeypatch, tmp_path)
+    spec_path = _task_repo(tmp_path, required_paths=["generated.py", "required.txt"])
+    config = load_config(repo_root=tmp_path)
+    result = run_bounded_loop(
+        repo_root=tmp_path,
+        spec_path=spec_path,
+        task_id="POLICY-001",
+        profile=config.command_profiles["pytest"],
+        endpoint_url="http://127.0.0.1:8089/v1",
+        model_name="synthetic-local-model",
+        resolved_test_executable=Path(sys.executable),
+        aider_cmd=[
+            sys.executable,
+            "-c",
+            "from pathlib import Path; Path('generated.py').write_text('value=1\\n'); Path('required.txt').write_text('ok\\n')",
+        ],
+        policy_path="docs/tasks/task.policy.json",
+        test_profile="pytest",
+    )
+    assert result.status is RunStatus.SUCCESS
+    assert result.failure is None
+
+
+def test_required_changed_path_deletion_does_not_satisfy_gate(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    _use_short_worktree_root(monkeypatch, tmp_path)
+    spec_path = _task_repo(tmp_path, required_paths=["generated.py"])
+    # The target exists in the baseline, but a deletion is not a deliverable file.
+    (tmp_path / "generated.py").write_text("old\n", encoding="utf-8")
+    _git(tmp_path, "add", "generated.py")
+    _git(tmp_path, "commit", "-qm", "Add required baseline file")
+    config = load_config(repo_root=tmp_path)
+    result = run_bounded_loop(
+        repo_root=tmp_path,
+        spec_path=spec_path,
+        task_id="POLICY-001",
+        profile=config.command_profiles["pytest"],
+        endpoint_url="http://127.0.0.1:8089/v1",
+        model_name="synthetic-local-model",
+        resolved_test_executable=Path(sys.executable),
+        aider_cmd=[sys.executable, "-c", "from pathlib import Path; Path('generated.py').unlink()"],
+        policy_path="docs/tasks/task.policy.json",
+        test_profile="pytest",
+    )
+    assert result.status is RunStatus.FAILURE
+    assert result.failure is not None
+    assert result.failure.code == "TASK_DELIVERABLE_MISSING"
+    assert result.failure.details["invalid_paths"] == ["generated.py"]
