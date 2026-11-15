@@ -150,6 +150,31 @@ def test_commit_is_inert_without_explicit_opt_in(
     assert _git(repo, "rev-parse", "HEAD") == record.baseline_commit
 
 
+def test_required_deliverable_is_checked_against_immutable_commit_tree(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from hybrid_sdlc.errors import TaskDeliverableMissingError
+    from hybrid_sdlc.task_policy import TaskScope
+
+    repo, record = _create_isolated(tmp_path, monkeypatch)
+    scope = TaskScope(
+        intended_paths=frozenset({"README.md", "required.txt"}),
+        excluded_paths=frozenset(),
+        required_changed_paths=frozenset({"required.txt"}),
+    )
+
+    from hybrid_sdlc.task_policy import validate_required_deliverables
+
+    with pytest.raises(TaskDeliverableMissingError):
+        validate_required_deliverables(
+            scope,
+            ["required.txt"],
+            record.path,
+            treeish=record.baseline_commit,
+        )
+    assert _git(repo, "rev-parse", "HEAD") == record.baseline_commit
+
+
 def test_preexisting_staged_changes_are_rejected_without_committing(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:

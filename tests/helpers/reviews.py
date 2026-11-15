@@ -21,7 +21,11 @@ def git(root: Path, *args: str) -> str:
 
 
 def make_candidate(
-    root: Path, *, test_code: str, policy_paths: list[str] | None = None
+    root: Path,
+    *,
+    test_code: str,
+    policy_paths: list[str] | None = None,
+    required_paths: list[str] | None = None,
 ) -> tuple[RunResult, Path, bytes, str]:
     root.mkdir()
     git(root, "init")
@@ -50,6 +54,8 @@ def make_candidate(
                 "attempt_timeout_seconds": 180,
             },
         }
+        if required_paths is not None:
+            policy["required_changed_paths"] = required_paths
         (root / "task.policy.json").write_text(json.dumps(policy), encoding="utf-8")
         git(root, "add", "task.md", "task.policy.json")
     git(root, "commit", "-m", "fixture baseline")

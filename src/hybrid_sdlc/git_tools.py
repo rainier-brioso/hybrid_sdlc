@@ -17,7 +17,11 @@ from filelock import FileLock, Timeout
 from hybrid_sdlc.artifacts import redact_secrets
 from hybrid_sdlc.errors import RepositoryError, WorktreeDirtyError, WorktreeLockError
 from hybrid_sdlc.models import DiffSummary
-from hybrid_sdlc.task_policy import TaskScope, validate_task_scope_paths
+from hybrid_sdlc.task_policy import (
+    TaskScope,
+    validate_required_deliverables,
+    validate_task_scope_paths,
+)
 from hybrid_sdlc.worktrees import (
     WorktreeRecord,
     _index_has_gitlinks,
@@ -209,6 +213,12 @@ def _create_scoped_commit_locked(
             validate_task_scope_paths(
                 task_scope,
                 [os.fsdecode(raw_path) for raw_path in tree_paths.split(b"\0") if raw_path],
+            )
+            validate_required_deliverables(
+                task_scope,
+                [os.fsdecode(raw_path) for raw_path in tree_paths.split(b"\0") if raw_path],
+                checkout,
+                treeish=tree,
             )
         commit = git("commit-tree", tree, "-p", record.baseline_commit, "-m", commit_message)
         commit_hash = commit.stdout.strip()

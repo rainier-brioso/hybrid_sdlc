@@ -1983,6 +1983,35 @@ as the current CLI contract.
   - Independently review, run required gates and record bounded live readiness
     and memory observations separately from a full-context coding benchmark.
 
+## Evidence-driven local task completion
+
+- [x] **HSDLC-091 — Enforce declared required deliverables and finish task-sizing guidance**
+  Depends on: HSDLC-074, HSDLC-085.
+  Acceptance:
+  - Add optional `required_changed_paths` to explicitly selected version 1 task
+    policies, preserving absent-field and no-policy behavior. Validate canonical
+    literal unique paths that are allowed and not excluded.
+  - Require net-changed, confined regular files in the full exported candidate,
+    including test-generated changes; retain structured failure/recovery evidence
+    and refuse scoped commits for omitted/deleted/non-regular deliverables.
+  - Recheck the immutable scoped-commit tree and policy-pinned fresh acceptance
+    candidate. Cover omitted tests despite a green command, valid additions,
+    deletions, rename sources, unsafe paths and final-candidate boundaries.
+  - Finish self-contained mirrored skill/planning guidance for compiling scaffolds,
+    focused file context, bounded implementation/test slices, explicit authorization
+    reuse, missing-assertion review and isolated tests-only recovery. Document
+    structural validation separately from semantic test quality and product acceptance.
+  - Review and run required regression gates; record Metria trials only as existing
+    evidence. Do not modify its checkpoint, code, runtime configuration or budgets.
+  Validation (2026-11-14): 140 focused regressions passed; full Windows/Python 3.12
+  suite 1190 passed / 14 platform or opt-in skips, 82.31% coverage, in 268.12s.
+  Formatting, lint, typing across 32 source files and independent review passed.
+  Regressions cover CLI JSON failure/exit 6, omitted/deleted/renamed deliverables,
+  preserved artifacts and refused commits, exact immutable-tree validation,
+  and blocked fresh acceptance with `review_policy` evidence. Skill copies are
+  synchronized; existing no-policy and omitted-field behavior remains covered.
+  No new inference, Strata configuration change or Metria write was performed.
+
 ## Deferred Work — Not Required for the Initial Release
 
 - [x] **HSDLC-090 — Manage a provisioned native Strata preset through the shared lifecycle**
